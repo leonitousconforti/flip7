@@ -4,10 +4,10 @@ type public Hand = Card list
 
 module public Hand =
     let public IsBust (hand: Hand) : bool =
-        let rec isBust (hand: Hand) (seen: Set<ValueCard>) : bool =
+        let rec isBust (hand: Hand) (seen: Set<Card.ValueCard>) : bool =
             match hand with
             | [] -> false
-            | ActionCard(SecondChance) :: tail -> false
+            | ActionCard(Card.SecondChance) :: tail -> false
             | ActionCard(_) :: tail -> isBust tail seen
             | ModifierCard(_) :: tail -> isBust tail seen
             | ValueCard(vc) :: tail when Set.contains vc seen -> true
