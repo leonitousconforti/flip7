@@ -6,7 +6,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Library.fs" />
+    <Compile Include="ScoreBuckets.fs" />
+    <Compile Include="Card.fs" />
+    <Compile Include="Hand.fs" />
+    <Compile Include="Deck.fs" />
   </ItemGroup>
 
 </Project>
