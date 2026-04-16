@@ -1,0 +1,114 @@
+# Editor configuration, see http://editorconfig.org
+root=true
+
+# All files
+[*]
+tab_width=4
+indent_size=4
+charset=utf-8
+end_of_line=lf
+indent_style=space
+insert_final_newline=true
+trim_trailing_whitespace=true
+
+# Xml files
+[*.xml]
+tab_width=2
+indent_size=2
+indent_style=space
+
+# FSProj files
+[{*.fsproj}]
+tab_width=2
+indent_size=2
+indent_style=tab
+
+# Filetypes that need to be formatted by Fantomas:
+[*.{fs,fsx,fsi}]
+
+# indentation size, default=4
+tab_width=4
+indent_size=4
+indent_style=space
+
+# line length before it gets broken down into multiple lines, default=120
+max_line_length=140
+
+# breaks a single line array or list if it exceeds this size
+# requires fsharp_array_or_list_multiline_formatter=character_width to take effect
+# default 40
+fsharp_max_array_or_list_width=100
+
+# maximum with of a value binding, does not include keyword "let"
+# default 80
+fsharp_max_value_binding_width=140
+
+# maximum width for function and member binding (rh-side)
+# default 40
+fsharp_max_function_binding_width=80
+
+# maximum width for expressions like X.DoY().GetZ(10).Help()
+# default 50
+fsharp_max_dot_get_expression_width=80
+
+# cramped: the default way in F# to format brackets.
+# aligned: alternative way of formatting records, arrays and lists. This will align the braces at the same column level.
+# stroustrup: allow for easier reordering of members and keeping the code succinct.
+fsharp_multiline_bracket_style=stroustrup
+
+# insert a newline before a computation expression that spans multiple lines
+# default true
+fsharp_newline_before_multiline_computation_expression=false
+
+# whether a newline should be placed before members
+# false: type Range =
+#            { From: float }
+#            member this.Length = this.To - this.From
+# true: type Range =
+#            { From: float }
+#
+#            member this.Length = this.To - this.From
+# default false
+fsharp_newline_between_type_definition_and_members=true
+
+# if a function sign exceeds max_line_length, then:
+# false: do not place the equal-sign on a single line
+# true: place the equal-sign on a single line
+# default false
+fsharp_align_function_signature_to_indentation=true
+
+# see docs: https://fsprojects.github.io/fantomas/docs/end-users/Configuration.html#fsharp_alternative_long_member_definitions
+# default false
+fsharp_alternative_long_member_definitions=true
+
+# places closing paren in lambda on a newline in multiline lambdas
+# default false
+fsharp_multi_line_lambda_closing_newline=true
+
+# allows the 'else'-branch to be aligned at same level as 'else' if the ret type allows it
+# default false
+fsharp_experimental_keep_indent_in_branch=true
+
+# multiline, nested expressions must be surrounded by blank lines
+# default true
+fsharp_blank_lines_around_nested_multiline_expressions=false
+
+# max number of consecutive blank lines to keep
+# default 100
+fsharp_keep_max_number_of_blank_lines=3
+
+# breaks a single-line record declaration
+# i.e. if this gets too wide: { X = 10; Y = 12 }
+# requires fsharp_record_multiline_formatter=character_width to take effect
+# default 40
+fsharp_max_record_width=80
+
+# see docs: https://fsprojects.github.io/fantomas/docs/end-users/Configuration.html#fsharp_experimental_elmish
+# default false
+fsharp_experimental_elmish=true
+
+# breaks a record into one item per line if items exceed this number
+# i.e. if set to 1, this will be on three lines: { X = 10; Y = 12 }
+# requires fsharp_record_multiline_formatter=number_of_items to take effect
+# default 1
+fsharp_max_record_number_of_items=3
