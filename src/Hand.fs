@@ -19,14 +19,16 @@ module public Hand =
         |> ScoreBuckets.Total
 
     let public IsBust (hand: Hand) : bool =
-        let rec isBust (hand: Hand) (seen: Set<Card.ValueCard>) : bool =
+        let rec isBust (hand: Hand) (seen: Set<Card.ValueCard>) (busted: bool) : bool =
             match hand with
-            | [] -> false
+            | [] -> busted
             | ActionCard(Card.SecondChance) :: tail -> false
-            | ActionCard(_) :: tail -> isBust tail seen
-            | ModifierCard(_) :: tail -> isBust tail seen
-            | ValueCard(vc) :: tail when Set.contains vc seen -> true
-            | ValueCard(vc) :: tail -> isBust tail (Set.add vc seen)
+            | ActionCard(_) :: tail -> isBust tail seen busted
+            | ModifierCard(_) :: tail -> isBust tail seen busted
+            | ValueCard(vc) :: tail ->
+                let newSeen = Set.add vc seen
+                let newBusted = busted || Set.contains vc seen
+                isBust tail newSeen newBusted
 
         in
-        isBust hand Set.empty
+        isBust hand Set.empty false

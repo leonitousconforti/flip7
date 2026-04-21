@@ -6,7 +6,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Tests.fs" />
+    <Compile Include="ScoreBucketsTests.fs" />
+    <Compile Include="CardTests.fs" />
+    <Compile Include="HandTests.fs" />
+    <Compile Include="DeckTests.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\src\flip7.src.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
