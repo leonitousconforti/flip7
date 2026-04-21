@@ -3,6 +3,21 @@ namespace Flip7
 type public Hand = Card list
 
 module public Hand =
+    let public HasFlip7Bonus: Hand -> bool =
+        List.filter (fun card -> card.IsValueCard) >> List.length >> (>=) 7
+
+    let public Score (hand: Hand) : uint =
+        let maybeBonusPoints = {
+            ScoreBuckets.Zero with
+                BonusPoints = if HasFlip7Bonus hand then 15u else 0u
+        }
+
+        hand
+        |> List.map (fun card -> card.Value)
+        |> List.fold (+) ScoreBuckets.Zero
+        |> (+) maybeBonusPoints
+        |> ScoreBuckets.Total
+
     let public IsBust (hand: Hand) : bool =
         let rec isBust (hand: Hand) (seen: Set<Card.ValueCard>) : bool =
             match hand with
@@ -15,19 +30,3 @@ module public Hand =
 
         in
         isBust hand Set.empty
-
-    let public HasFlip7Bonus: Hand -> bool =
-        List.filter (fun card -> card.IsValueCard) >> List.length >> (>=) 7
-
-    let public Score (hand: Hand) : uint =
-        let maybeBonusPoints =
-            if HasFlip7Bonus hand then
-                { ScoreBuckets.Zero with BonusPoints = 15u }
-            else
-                ScoreBuckets.Zero
-
-        hand
-        |> List.map (fun card -> card.Value)
-        |> List.fold (+) ScoreBuckets.Zero
-        |> (+) maybeBonusPoints
-        |> ScoreBuckets.Total

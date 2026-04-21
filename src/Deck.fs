@@ -57,18 +57,52 @@ module public Deck =
 
     let public IsEmpty: Deck -> bool = Map.forall (fun _ count -> count = 0u)
 
-    let rec public draw (deck: Deck) (discards: Deck) (count: uint) =
-        let localDeck, localDiscards =
-            match IsEmpty deck with
-            | true -> discards, Empty
-            | false -> deck, discards
+    let public Count: Deck -> uint = Map.fold (fun acc _ count -> acc + count) 0u
 
-        assert (IsEmpty localDeck |> not)
+    let rec internal Draw (deck: Deck) (discards: Deck) (count: uint) : Deck * Deck * Card list =
+        if IsEmpty deck then
+            Draw discards Empty count
+        else
+
+        assert (count > 0u)
+        assert (Count deck + Count discards >= count)
+        assert (IsEmpty deck |> not)
 
         let drawnCard =
-            localDeck
+            deck
             |> Map.toList
             |> List.collect (fun (card, count) -> List.replicate (int count) card)
             |> List.randomShuffle
+            |> List.head
 
-        0
+        let newDeck =
+            Map.change
+                drawnCard
+                (fun count ->
+                    assert (Option.isSome count)
+                    assert (Option.get count > 0u)
+                    Some(count.Value - 1u)
+                )
+                deck
+
+        match count with
+        | 1u -> newDeck, discards, [ drawnCard ]
+        | _ ->
+            let lastDeck, lastDiscards, lastDrawnCards = Draw newDeck discards (count - 1u)
+            lastDeck, lastDiscards, drawnCard :: lastDrawnCards
+
+    let public Draw1 (deck: Deck) (discards: Deck) = Draw deck discards 1u
+    let public Draw3 (deck: Deck) (discards: Deck) = Draw deck discards 3u
+
+    let public pdf (deck: Deck) : Map<Card, float> =
+        let totalCards = float (Count deck)
+        Map.map (fun _ count -> float count / totalCards) deck
+
+    let public cdf (deck: Deck) : Map<Card, float> =
+        deck
+        |> pdf
+        |> Map.toList
+        |> List.sortBy fst
+        |> List.scan (fun acc (card, prob) -> (card, prob + snd acc)) (ValueCard Card.Zero, 0.0)
+        |> List.tail
+        |> Map.ofList

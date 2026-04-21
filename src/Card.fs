@@ -55,7 +55,7 @@ type public Card =
         | ModifierCard Card.Plus8 -> { ScoreBuckets.Zero with ModifierPoints = 8u }
         | ModifierCard Card.Plus10 -> { ScoreBuckets.Zero with ModifierPoints = 10u }
         | ModifierCard Card.Double -> { ScoreBuckets.Zero with Multiplier = 2u }
-        | _ -> ScoreBuckets.Zero
+        | ActionCard _ -> ScoreBuckets.Zero
 
     override self.ToString() : string =
         match self with

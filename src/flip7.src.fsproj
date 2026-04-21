@@ -14,6 +14,7 @@
     <Compile Include="Card.fs" />
     <Compile Include="Hand.fs" />
     <Compile Include="Deck.fs" />
+    <Compile Include="Strategy.fs" />
   </ItemGroup>
 
 </Project>
