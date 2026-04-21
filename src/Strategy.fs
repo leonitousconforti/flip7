@@ -1,6 +1,6 @@
 namespace Flip7
 
-type HitOrStand =
+type public HitOrStand =
     | Hit
     | Stand
 
