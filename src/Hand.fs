@@ -4,7 +4,7 @@ type public Hand = Card list
 
 module public Hand =
     let public HasFlip7Bonus: Hand -> bool =
-        List.filter (fun card -> card.IsValueCard) >> List.length >> (>=) 7
+        List.filter (fun card -> card.IsValueCard) >> List.length >> (<=) 7
 
     let public Score (hand: Hand) : uint =
         let maybeBonusPoints = {
