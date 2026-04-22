@@ -81,9 +81,40 @@ let ``pdf of two-card-type deck - probabilities reflect counts`` () =
     Assert.InRange(pdf[ValueCard Card.Three], 0.75 - 1e-9, 0.75 + 1e-9)
 
 [<Fact>]
-let ``cdf last entry is 1`` () =
+let ``cdf of Full deck - last entry is 1`` () =
     let lastValue = Deck.cdf Deck.Full |> Map.toList |> List.last |> snd
     Assert.InRange(lastValue, 0.9999, 1.0001)
+
+[<Fact>]
+let ``cdf of Full deck - values are monotonically non-decreasing`` () =
+    let values = Deck.cdf Deck.Full |> Map.toList |> List.sortBy fst |> List.map snd
+    let pairs = List.pairwise values
+    Assert.True(List.forall (fun (a, b) -> b >= a) pairs)
+
+[<Fact>]
+let ``cdf of Empty deck - all values are 0.0`` () =
+    let cdf = Deck.cdf Deck.Empty
+    Assert.True(Map.forall (fun _ v -> v = 0.0) cdf)
+
+[<Fact>]
+let ``cdf of single-card deck - cards before Five are 0.0, Five and after are 1.0`` () =
+    let cdf = Deck.Empty |> Map.add (ValueCard Card.Five) 1u |> Deck.cdf
+    let sorted = cdf |> Map.toList |> List.sortBy fst
+    let beforeFive = sorted |> List.takeWhile (fun (card, _) -> card < ValueCard Card.Five) |> List.map snd
+    let fiveAndAfter = sorted |> List.skipWhile (fun (card, _) -> card < ValueCard Card.Five) |> List.map snd
+    Assert.True(List.forall (fun v -> v = 0.0) beforeFive)
+    Assert.True(List.forall (fun v -> abs (v - 1.0) < 1e-9) fiveAndAfter)
+
+[<Fact>]
+let ``cdf of two-card-type deck - cumulative values are correct`` () =
+    let cdf =
+        Deck.Empty
+        |> Map.add (ValueCard Card.One) 1u
+        |> Map.add (ValueCard Card.Three) 3u
+        |> Deck.cdf
+    Assert.InRange(cdf[ValueCard Card.One], 0.25 - 1e-9, 0.25 + 1e-9)
+    Assert.InRange(cdf[ValueCard Card.Two], 0.25 - 1e-9, 0.25 + 1e-9)
+    Assert.InRange(cdf[ValueCard Card.Three], 1.0 - 1e-9, 1.0 + 1e-9)
 
 [<Fact>]
 let ``Draw returns the requested number of cards`` () =
