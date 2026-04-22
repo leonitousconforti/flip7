@@ -20,6 +20,7 @@
             pkgs.nixfmt
             pkgs.dotnet-sdk_10
           ];
+          DOTNET_ROOT = "${pkgs.dotnet-sdk_10}/share/dotnet";
         };
       });
     };
