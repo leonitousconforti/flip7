@@ -53,6 +53,13 @@ type public Card =
 
     member public self.Value: ScoreBuckets =
         match self with
+        | ActionCard _ -> ScoreBuckets.Zero
+        | ModifierCard Card.Plus2 -> { ScoreBuckets.Zero with ModifierPoints = 2u }
+        | ModifierCard Card.Plus4 -> { ScoreBuckets.Zero with ModifierPoints = 4u }
+        | ModifierCard Card.Plus6 -> { ScoreBuckets.Zero with ModifierPoints = 6u }
+        | ModifierCard Card.Plus8 -> { ScoreBuckets.Zero with ModifierPoints = 8u }
+        | ModifierCard Card.Plus10 -> { ScoreBuckets.Zero with ModifierPoints = 10u }
+        | ModifierCard Card.Double -> { ScoreBuckets.Zero with Multiplier = 2u }
         | ValueCard Card.Zero -> { ScoreBuckets.Zero with ValuePoints = 0u }
         | ValueCard Card.One -> { ScoreBuckets.Zero with ValuePoints = 1u }
         | ValueCard Card.Two -> { ScoreBuckets.Zero with ValuePoints = 2u }
@@ -66,16 +73,18 @@ type public Card =
         | ValueCard Card.Ten -> { ScoreBuckets.Zero with ValuePoints = 10u }
         | ValueCard Card.Eleven -> { ScoreBuckets.Zero with ValuePoints = 11u }
         | ValueCard Card.Twelve -> { ScoreBuckets.Zero with ValuePoints = 12u }
-        | ModifierCard Card.Plus2 -> { ScoreBuckets.Zero with ModifierPoints = 2u }
-        | ModifierCard Card.Plus4 -> { ScoreBuckets.Zero with ModifierPoints = 4u }
-        | ModifierCard Card.Plus6 -> { ScoreBuckets.Zero with ModifierPoints = 6u }
-        | ModifierCard Card.Plus8 -> { ScoreBuckets.Zero with ModifierPoints = 8u }
-        | ModifierCard Card.Plus10 -> { ScoreBuckets.Zero with ModifierPoints = 10u }
-        | ModifierCard Card.Double -> { ScoreBuckets.Zero with Multiplier = 2u }
-        | ActionCard _ -> ScoreBuckets.Zero
 
     override self.ToString() : string =
         match self with
+        | ActionCard Card.Deal3 -> "Deal3"
+        | ActionCard Card.Freeze -> "Freeze"
+        | ActionCard Card.SecondChance -> "SecondChance"
+        | ModifierCard Card.Plus2 -> "Plus2"
+        | ModifierCard Card.Plus4 -> "Plus4"
+        | ModifierCard Card.Plus6 -> "Plus6"
+        | ModifierCard Card.Plus8 -> "Plus8"
+        | ModifierCard Card.Plus10 -> "Plus10"
+        | ModifierCard Card.Double -> "Double"
         | ValueCard Card.Zero -> "0"
         | ValueCard Card.One -> "1"
         | ValueCard Card.Two -> "2"
@@ -89,12 +98,3 @@ type public Card =
         | ValueCard Card.Ten -> "10"
         | ValueCard Card.Eleven -> "11"
         | ValueCard Card.Twelve -> "12"
-        | ModifierCard Card.Plus2 -> "Plus2"
-        | ModifierCard Card.Plus4 -> "Plus4"
-        | ModifierCard Card.Plus6 -> "Plus6"
-        | ModifierCard Card.Plus8 -> "Plus8"
-        | ModifierCard Card.Plus10 -> "Plus10"
-        | ModifierCard Card.Double -> "Double"
-        | ActionCard Card.Deal3 -> "Deal3"
-        | ActionCard Card.Freeze -> "Freeze"
-        | ActionCard Card.SecondChance -> "SecondChance"
