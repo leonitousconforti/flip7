@@ -1,11 +1,26 @@
 namespace Flip7
 
+/// <summary>
+/// A hand in flip7 is merely a list of cards.
+/// </summary>
 type public Hand = Card list
 
 module public Hand =
+    /// <summary>
+    /// You are awarded the flip7 bonus if you have 7 or more distinct value
+    /// cards in your hand.
+    /// </summary>
     let public HasFlip7Bonus: Hand -> bool =
-        List.filter (fun card -> card.IsValueCard) >> List.length >> (<=) 7
+        List.filter (fun card -> card.IsValueCard)
+        >> List.distinct
+        >> List.length
+        >> (<=) 7
 
+    /// <summary>
+    /// The score of a hand can be calculated using the ScoreBuckets of each
+    /// card in the hand. Since addition and subtraction are defined for
+    /// ScoreBuckets, it is a simple sum.
+    /// </summary>
     let public Score (hand: Hand) : uint =
         let maybeBonusPoints = {
             ScoreBuckets.Zero with
@@ -18,6 +33,10 @@ module public Hand =
         |> (+) maybeBonusPoints
         |> ScoreBuckets.Total
 
+    /// <summary>
+    /// A hand is a bust if it contains any duplicate value cards and doesn't
+    /// have the SecondChance action card.
+    /// </summary>
     let public IsBust (hand: Hand) : bool =
         let rec isBust (hand: Hand) (seen: Set<Card.ValueCard>) (busted: bool) : bool =
             match hand with
