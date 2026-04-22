@@ -24,7 +24,7 @@ type public ScoreBuckets = {
     /// points, modifier points, and bonus points together before multiplying by
     /// the multiplier.
     /// </summary>
-    static member Total(scoreBuckets: ScoreBuckets) : uint =
+    static member public Total(scoreBuckets: ScoreBuckets) : uint =
         (scoreBuckets.ValuePoints
          + scoreBuckets.ModifierPoints
          + scoreBuckets.BonusPoints)
@@ -34,7 +34,7 @@ type public ScoreBuckets = {
     /// The zero score, which has no points and a multiplier of 1. This is the
     /// starting point for all hands and is the identity element for addition.
     /// </summary>
-    static member Zero: ScoreBuckets = {
+    static member public Zero: ScoreBuckets = {
         ModifierPoints = 0u
         ValuePoints = 0u
         BonusPoints = 0u
@@ -46,21 +46,21 @@ type public ScoreBuckets = {
     /// top seven cards, plus one of all the modifier cards, plus the 15pts for
     /// getting the flip7 bonus, times two for the double multiplier.
     /// </summary>
-    static member Max: ScoreBuckets = {
+    static member public Max: ScoreBuckets = {
         ModifierPoints = 12 + 11 + 10 + 9 + 8 + 7 + 6 |> uint
         ValuePoints = 10 + 8 + 6 + 4 + 2 |> uint
         BonusPoints = 15 |> uint
         Multiplier = 2 |> uint
     }
 
-    static member (+)(a: ScoreBuckets, b: ScoreBuckets) : ScoreBuckets = {
+    static member public (+)(a: ScoreBuckets, b: ScoreBuckets) : ScoreBuckets = {
         ModifierPoints = a.ModifierPoints + b.ModifierPoints
         ValuePoints = a.ValuePoints + b.ValuePoints
         BonusPoints = a.BonusPoints + b.BonusPoints
         Multiplier = a.Multiplier * b.Multiplier
     }
 
-    static member (-)(a: ScoreBuckets, b: ScoreBuckets) : ScoreBuckets = {
+    static member public (-)(a: ScoreBuckets, b: ScoreBuckets) : ScoreBuckets = {
         ModifierPoints = a.ModifierPoints - b.ModifierPoints
         ValuePoints = a.ValuePoints - b.ValuePoints
         BonusPoints = a.BonusPoints - b.BonusPoints
