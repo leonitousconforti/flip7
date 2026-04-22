@@ -1,8 +1,15 @@
 namespace Flip7
 
+/// <summary>
+/// A deck in flip7 is a mapping from each card to the number of copies of that
+/// card remaining in the deck.
+/// </summary>
 type Deck = Map<Card, uint>
 
 module public Deck =
+    /// <summary>
+    /// The empty deck.
+    /// </summary>
     let public Empty: Deck =
         Map.ofList [
             ValueCard Card.Zero, 0u
@@ -29,6 +36,9 @@ module public Deck =
             ActionCard Card.SecondChance, 0u
         ]
 
+    /// <summary>
+    /// The full deck.
+    /// </summary>
     let public Full: Deck =
         Map.ofList [
             ValueCard Card.Zero, 1u
@@ -55,8 +65,14 @@ module public Deck =
             ActionCard Card.SecondChance, 3u
         ]
 
+    /// <summary>
+    /// A deck is empty if it contains zero copies of every card.
+    /// </summary>
     let public IsEmpty: Deck -> bool = Map.forall (fun _ count -> count = 0u)
 
+    /// <summary>
+    /// Counts the total number of cards in the deck.
+    /// </summary>
     let public Count: Deck -> uint = Map.fold (fun acc _ count -> acc + count) 0u
 
     let rec internal Draw (deck: Deck) (discards: Deck) (count: uint) : Deck * Deck * Card list =
@@ -94,10 +110,18 @@ module public Deck =
     let public Draw1 (deck: Deck) (discards: Deck) = Draw deck discards 1u
     let public Draw3 (deck: Deck) (discards: Deck) = Draw deck discards 3u
 
+    /// <summary>
+    /// The probability distribution function of the deck, which maps each card
+    /// to the probability of drawing that card from the deck.
+    /// </summary>
     let public pdf (deck: Deck) : Map<Card, float> =
         let totalCards = if IsEmpty deck then 1.0 else float (Count deck)
         Map.map (fun _ count -> float count / totalCards) deck
 
+    /// <summary>
+    /// The cumulative distribution function of the deck, which maps each card
+    /// to the probability of drawing that card or a lower card from the deck.
+    /// </summary>
     let public cdf (deck: Deck) : Map<Card, float> =
         deck
         |> pdf
@@ -106,3 +130,40 @@ module public Deck =
         |> List.scan (fun acc (card, prob) -> (card, prob + snd acc)) (ValueCard Card.Zero, 0.0)
         |> List.tail
         |> Map.ofList
+
+    /// <summary>
+    /// The expected value of points you would get from drawing a card from the
+    /// deck, if you were to draw a card at random from the deck.
+    /// </summary>
+    let public ev: Deck -> float =
+        pdf
+        >> Map.toList
+        >> List.sumBy (fun (card, prob) ->
+            let score = card.Value |> ScoreBuckets.Total
+            float prob * float score
+        )
+
+    /// <summary>
+    /// The card you would expect to draw from the deck, if you were to draw a
+    /// card at random from the deck.
+    /// </summary>
+    let public ec: Deck -> Card = pdf >> Map.toList >> List.maxBy snd >> fst
+
+    /// <summary>
+    /// The variance of the points you would get from drawing a card from the
+    /// deck, if you were to draw a card at random from the deck.
+    /// </summary>
+    let public var (deck: Deck) : float =
+        let expectedValue = ev deck
+        pdf deck
+        |> Map.toList
+        |> List.sumBy (fun (card, prob) ->
+            let score = card.Value |> ScoreBuckets.Total
+            prob * (float score - expectedValue) ** 2.0
+        )
+
+    /// <summary>
+    /// The standard deviation of the points you would get from drawing a card
+    /// from the deck, if you were to draw a card at random from the deck.
+    /// </summary>
+    let public std: Deck -> float = var >> sqrt

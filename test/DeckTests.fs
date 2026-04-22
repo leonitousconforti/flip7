@@ -100,8 +100,14 @@ let ``cdf of Empty deck - all values are 0.0`` () =
 let ``cdf of single-card deck - cards before Five are 0.0, Five and after are 1.0`` () =
     let cdf = Deck.Empty |> Map.add (ValueCard Card.Five) 1u |> Deck.cdf
     let sorted = cdf |> Map.toList |> List.sortBy fst
-    let beforeFive = sorted |> List.takeWhile (fun (card, _) -> card < ValueCard Card.Five) |> List.map snd
-    let fiveAndAfter = sorted |> List.skipWhile (fun (card, _) -> card < ValueCard Card.Five) |> List.map snd
+    let beforeFive =
+        sorted
+        |> List.takeWhile (fun (card, _) -> card < ValueCard Card.Five)
+        |> List.map snd
+    let fiveAndAfter =
+        sorted
+        |> List.skipWhile (fun (card, _) -> card < ValueCard Card.Five)
+        |> List.map snd
     Assert.True(List.forall (fun v -> v = 0.0) beforeFive)
     Assert.True(List.forall (fun v -> abs (v - 1.0) < 1e-9) fiveAndAfter)
 
