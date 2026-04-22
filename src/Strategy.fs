@@ -1,12 +1,12 @@
 namespace Flip7
 
-type public HitOrStand =
-    | Hit
-    | Stand
-
-type public Strategy = uint -> Hand -> Hand list -> Deck -> HitOrStand
-
 module Strategy =
+    type public HitOrStand =
+        | Hit
+        | Stand
+
+    type public Strategy = uint -> Hand -> Hand list -> Deck -> HitOrStand
+
     let public AlwaysHits: Strategy = fun _session _hand _otherHands _deck -> Hit
     let public AlwaysStands: Strategy = fun _session _hand _otherHands _deck -> Stand
     let public Random: Strategy =
@@ -27,3 +27,5 @@ module Strategy =
             | _ ->
                 printfn "Invalid input, please enter 'h' for hit or 's' for stand."
                 Prompt _session hand _otherHands _deck
+
+type public Strategy = Strategy.Strategy
