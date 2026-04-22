@@ -1,5 +1,15 @@
 namespace Flip7
 
+/// <summary>
+/// The four buckets of points that contribute to a hand's total score:
+///
+/// <list type="bullet">
+/// <item>Value points: the sum of the value cards in the hand.</item>
+/// <item>Modifier points: the sum of the modifier cards in the hand.</item>
+/// <item>Bonus points: the 15pts for getting to 7 cards before busting.</item>
+/// <item>Multiplier: multiplies the sum of the other points.</item>
+/// </list>
+/// </summary>
 [<CustomEquality>]
 [<CustomComparison>]
 type public ScoreBuckets = {
@@ -9,12 +19,21 @@ type public ScoreBuckets = {
     Multiplier: uint
 } with
 
+    /// <summary>
+    /// Calculates the total score from the buckets by adding all the value
+    /// points, modifier points, and bonus points together before multiplying by
+    /// the multiplier.
+    /// </summary>
     static member Total(scoreBuckets: ScoreBuckets) : uint =
         (scoreBuckets.ValuePoints
          + scoreBuckets.ModifierPoints
          + scoreBuckets.BonusPoints)
         * scoreBuckets.Multiplier
 
+    /// <summary>
+    /// The zero score, which has no points and a multiplier of 1. This is the
+    /// starting point for all hands and is the identity element for addition.
+    /// </summary>
     static member Zero: ScoreBuckets = {
         ModifierPoints = 0u
         ValuePoints = 0u
@@ -22,6 +41,11 @@ type public ScoreBuckets = {
         Multiplier = 1u
     }
 
+    /// <summary>
+    /// The maximum possible score, which is the sum of all the points from the
+    /// top seven cards, plus one of all the modifier cards, plus the 15pts for
+    /// getting the flip7 bonus, times two for the double multiplier.
+    /// </summary>
     static member Max: ScoreBuckets = {
         ModifierPoints = 12 + 11 + 10 + 9 + 8 + 7 + 6 |> uint
         ValuePoints = 10 + 8 + 6 + 4 + 2 |> uint
