@@ -95,7 +95,7 @@ module public Deck =
     let public Draw3 (deck: Deck) (discards: Deck) = Draw deck discards 3u
 
     let public pdf (deck: Deck) : Map<Card, float> =
-        let totalCards = float (Count deck)
+        let totalCards = if IsEmpty deck then 1.0 else float (Count deck)
         Map.map (fun _ count -> float count / totalCards) deck
 
     let public cdf (deck: Deck) : Map<Card, float> =

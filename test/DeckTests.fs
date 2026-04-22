@@ -45,9 +45,40 @@ let ``Draw3 reduces deck count by 3`` () =
     Assert.Equal(91u, Deck.Count newDeck)
 
 [<Fact>]
-let ``pdf values sum to 1`` () =
+let ``pdf of Full deck - values sum to 1`` () =
     let total = Deck.pdf Deck.Full |> Map.fold (fun acc _ v -> acc + v) 0.0
     Assert.InRange(total, 0.9999, 1.0001)
+
+[<Fact>]
+let ``pdf of Full deck - each card has correct probability`` () =
+    let pdf = Deck.pdf Deck.Full
+    Assert.InRange(pdf[ValueCard Card.Zero], 1.0 / 94.0 - 1e-9, 1.0 / 94.0 + 1e-9)
+    Assert.InRange(pdf[ValueCard Card.One], 1.0 / 94.0 - 1e-9, 1.0 / 94.0 + 1e-9)
+    Assert.InRange(pdf[ValueCard Card.Seven], 7.0 / 94.0 - 1e-9, 7.0 / 94.0 + 1e-9)
+    Assert.InRange(pdf[ValueCard Card.Eleven], 11.0 / 94.0 - 1e-9, 11.0 / 94.0 + 1e-9)
+    Assert.InRange(pdf[ValueCard Card.Twelve], 12.0 / 94.0 - 1e-9, 12.0 / 94.0 + 1e-9)
+    Assert.InRange(pdf[ActionCard Card.Deal3], 3.0 / 94.0 - 1e-9, 3.0 / 94.0 + 1e-9)
+
+[<Fact>]
+let ``pdf of Empty deck - all values are 0.0`` () =
+    let pdf = Deck.pdf Deck.Empty
+    Assert.True(Map.forall (fun _ v -> v = 0.0) pdf)
+
+[<Fact>]
+let ``pdf of single-card deck - that card has probability 1.0, rest are 0.0`` () =
+    let pdf = Deck.Empty |> Map.add (ValueCard Card.Five) 1u |> Deck.pdf
+    Assert.InRange(pdf[ValueCard Card.Five], 1.0 - 1e-9, 1.0 + 1e-9)
+    Assert.True(Map.forall (fun card v -> card = ValueCard Card.Five || v = 0.0) pdf)
+
+[<Fact>]
+let ``pdf of two-card-type deck - probabilities reflect counts`` () =
+    let pdf =
+        Deck.Empty
+        |> Map.add (ValueCard Card.One) 1u
+        |> Map.add (ValueCard Card.Three) 3u
+        |> Deck.pdf
+    Assert.InRange(pdf[ValueCard Card.One], 0.25 - 1e-9, 0.25 + 1e-9)
+    Assert.InRange(pdf[ValueCard Card.Three], 0.75 - 1e-9, 0.75 + 1e-9)
 
 [<Fact>]
 let ``cdf last entry is 1`` () =
