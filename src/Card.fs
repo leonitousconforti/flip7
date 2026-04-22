@@ -1,11 +1,18 @@
 namespace Flip7
 
 module public Card =
+    /// <summary>
+    /// Doesn't contribute points but can affect the hand in other ways, e.g.
+    /// causing a bust to be ignored or forcing another player to draw cards.
+    /// </summary>
     type public ActionCard =
         | Deal3
         | Freeze
         | SecondChance
 
+    /// <summary>
+    /// Contributes modifier points and/or a score multiplier to the hand.
+    /// </summary>
     type public ModifierCard =
         | Plus2
         | Plus4
@@ -14,6 +21,9 @@ module public Card =
         | Plus10
         | Double
 
+    /// <summary>
+    /// Contributes a certain number of points to the hand.
+    /// </summary>
     type public ValueCard =
         | Zero
         | One
@@ -29,6 +39,13 @@ module public Card =
         | Eleven
         | Twelve
 
+/// <summary>
+/// A card in flip7 can be one of three types: a value card, which contributes a
+/// certain number of points to the hand; a modifier card, which contributes
+/// modifier points and/or multipliers to the hand; or an action card, which
+/// doesn't contribute any points but can affect the hand in other ways (e.g.
+/// causing a bust to be ignored or forcing another player to draw cards).
+/// </summary>
 type public Card =
     | ActionCard of Card.ActionCard
     | ModifierCard of Card.ModifierCard
