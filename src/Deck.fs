@@ -75,6 +75,11 @@ module public Deck =
     /// </summary>
     let public Count: Deck -> uint = Map.fold (fun acc _ count -> acc + count) 0u
 
+    /// <summary>
+    /// Draws a card from the deck, returning the new deck, the new discards,
+    /// and the drawn card. If the deck is empty, the discards are shuffled and
+    /// become the new deck, and the discards become empty.
+    /// </summary>
     let rec internal Draw (deck: Deck) (discards: Deck) (count: uint) : Deck * Deck * Card list =
         if IsEmpty deck then
             Draw discards Empty count
@@ -107,7 +112,18 @@ module public Deck =
             let lastDeck, lastDiscards, lastDrawnCards = Draw newDeck discards (count - 1u)
             lastDeck, lastDiscards, drawnCard :: lastDrawnCards
 
+    /// <summary>
+    /// Draws one card from the deck, returning the new deck, the new discards,
+    /// and the drawn card. If the deck is empty, the discards are shuffled and
+    /// become the new deck, and the discards become empty.
+    /// </summary>
     let public Draw1 (deck: Deck) (discards: Deck) = Draw deck discards 1u
+
+    /// <summary>
+    /// Draws three cards from the deck, returning the new deck, the new
+    /// discards and the drawn cards. If the deck is empty, the discards are
+    /// shuffled and become the new deck, and the discards become empty.
+    /// </summary>
     let public Draw3 (deck: Deck) (discards: Deck) = Draw deck discards 3u
 
     /// <summary>
