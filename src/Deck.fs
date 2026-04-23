@@ -171,7 +171,8 @@ module public Deck =
     /// </summary>
     let public var (deck: Deck) : float =
         let expectedValue = ev deck
-        pdf deck
+        deck
+        |> pdf
         |> Map.toList
         |> List.sumBy (fun (card, prob) ->
             let score = card.Value |> ScoreBuckets.Total
