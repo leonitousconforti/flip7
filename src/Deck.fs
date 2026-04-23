@@ -171,6 +171,7 @@ module public Deck =
     /// </summary>
     let public var (deck: Deck) : float =
         let expectedValue = ev deck
+
         deck
         |> pdf
         |> Map.toList
