@@ -16,9 +16,9 @@ let main args =
 
     printfn "%s" (String.replicate 80 "─")
     printfn "ec:     %s" (deck |> Deck.ec |> string)
-    printfn "ev:     %.2f%%" (deck |> Deck.ev)
-    printfn "var:    %.2f%%" (deck |> Deck.var)
-    printfn "std:    %.2f%%" (deck |> Deck.std)
+    printfn "ev:     %.2f" (deck |> Deck.ev)
+    printfn "var:    %.2f" (deck |> Deck.var)
+    printfn "std:    %.2f" (deck |> Deck.std)
     printfn ""
     printfn "%s" (String.replicate 80 "─")
 
