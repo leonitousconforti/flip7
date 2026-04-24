@@ -59,9 +59,9 @@ let ``ValueCard ToString returns numeric string`` () =
 
 [<Fact>]
 let ``ModifierCard ToString returns name`` () =
-    Assert.Equal("Plus2", (ModifierCard Card.Plus2).ToString())
-    Assert.Equal("Plus10", (ModifierCard Card.Plus10).ToString())
-    Assert.Equal("Double", (ModifierCard Card.Double).ToString())
+    Assert.Equal("+2", (ModifierCard Card.Plus2).ToString())
+    Assert.Equal("+10", (ModifierCard Card.Plus10).ToString())
+    Assert.Equal("x2", (ModifierCard Card.Double).ToString())
 
 [<Fact>]
 let ``ActionCard ToString returns name`` () =
