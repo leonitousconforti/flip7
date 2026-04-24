@@ -2,33 +2,43 @@ module Program
 
 open Flip7
 
-let private blockChar f =
-    if f >= 7.0 / 8.0 then "█"
-    elif f >= 6.0 / 8.0 then "▇"
-    elif f >= 5.0 / 8.0 then "▆"
-    elif f >= 4.0 / 8.0 then "▅"
-    elif f >= 3.0 / 8.0 then "▄"
-    elif f >= 2.0 / 8.0 then "▃"
-    elif f >= 1.0 / 8.0 then "▂"
-    elif f >= 0.0 / 8.0 then "▁"
-    else " "
+let private sparkline (rows: int) (series: (string * float) list) : string list =
+    let blockChar f =
+        if f >= 7.0 / 8.0 then "█"
+        elif f >= 6.0 / 8.0 then "▇"
+        elif f >= 5.0 / 8.0 then "▆"
+        elif f >= 4.0 / 8.0 then "▅"
+        elif f >= 3.0 / 8.0 then "▄"
+        elif f >= 2.0 / 8.0 then "▃"
+        elif f >= 1.0 / 8.0 then "▂"
+        elif f >= 0.0 / 8.0 then "▁"
+        else " "
 
-let private barCell (totalRows: int) (h: float) (r: int) =
-    let scaled = h * float totalRows
-    if scaled >= float r + 1.0 then "█"
-    elif scaled > float r then blockChar (scaled - float r)
-    else " "
+    let barCell (f: float) (r: int) =
+        let scaled = f * float rows
+        if scaled >= float r + 1.0 then "█"
+        elif scaled > float r then blockChar (scaled - float r)
+        else " "
 
-let private sparkline (rows: int) (values: float list) : string list =
-    List.map (fun r -> values |> List.map (fun v -> barCell rows v r + " ") |> String.concat "") [ rows - 1 .. -1 .. 0 ]
+    [ rows - 1 .. -1 .. -1 ]
+    |> List.map (fun row ->
+        series
+        |> List.map (fun (label, value) ->
+            if row >= 0 then
+                barCell value row + " "
+            else
+                label.PadRight(2)
+        )
+        |> String.concat ""
+    )
 
-let printStats (deck: Deck) =
+let private printStats (deck: Deck) =
     let pdf3 =
         deck
         |> Deck.pdf
-        |> Map.filter (fun card _ -> card.IsValueCard)
+        // |> Map.filter (fun card _ -> card.IsValueCard)
         |> Map.toList
-        |> List.map snd
+        |> List.map (fun (card, pdf) -> string card, pdf)
         |> sparkline 3
 
     let cdf3 =
@@ -36,24 +46,24 @@ let printStats (deck: Deck) =
         |> Deck.cdf
         |> Map.filter (fun card _ -> card.IsValueCard)
         |> Map.toList
-        |> List.map snd
+        |> List.map (fun (card, cdf) -> string card, cdf)
         |> sparkline 3
 
     let gap = String.replicate 4 " "
-    let axisRow =
-        [ "0"; "1"; "2"; "3"; "4"; "5"; "6"; "7"; "8"; "9"; "10"; "11"; "12" ]
-        |> List.map (fun l -> l.PadRight 2)
-        |> String.concat ""
-
     let ecl = (sprintf "ec:     %s" (Deck.ec deck |> string)).PadRight 20
     let evl = (sprintf "ev:     %.2f" (Deck.ev deck)).PadRight 20
     let var = (sprintf "var:    %.2f" (Deck.var deck)).PadRight 20
     let std = (sprintf "std:    %.2f" (Deck.std deck)).PadRight 20
 
-    printfn "%s" (evl + pdf3[0] + gap + cdf3[0])
-    printfn "%s" (ecl + pdf3[1] + gap + cdf3[1])
-    printfn "%s" (var + pdf3[2] + gap + cdf3[2])
-    printfn "%s" (std + axisRow + gap + axisRow)
+    // printfn "%s" (evl + pdf3[0] + gap + cdf3[0])
+    // printfn "%s" (ecl + pdf3[1] + gap + cdf3[1])
+    // printfn "%s" (var + pdf3[2] + gap + cdf3[2])
+    // printfn "%s" (std + pdf3[3] + gap + cdf3[3])
+
+    printfn "%s" (evl + pdf3[0])
+    printfn "%s" (ecl + pdf3[1])
+    printfn "%s" (var + pdf3[2])
+    printfn "%s" (std + pdf3[3])
 
 [<EntryPoint>]
 let main args =
