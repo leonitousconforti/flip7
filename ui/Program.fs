@@ -47,7 +47,7 @@ let inline private sparkline< ^a when ^a: equality>
         |> String.concat ""
     )
 
-let private renderFrame (deck: Deck) (players: Simulation.Player list) : unit =
+let private renderFrame (deck: Deck) (discards: Deck) (players: Simulation.Player list) : unit =
     let inline normalizeDistribution (series: (^a * float) list) : (^a * float) list =
         let maxProb = series |> List.map snd |> List.max
         series |> List.map (fun (label, prob) -> label, prob / maxProb)
@@ -96,9 +96,28 @@ let private renderFrame (deck: Deck) (players: Simulation.Player list) : unit =
 
     for playerName, strategy, hand in players do
         let currentScore = 0
-        let emojiStatus = ""
         let tentativeScore = Hand.Score hand
-        let probabilityToBust = 0.0f
+
+        let probabilityToBust =
+            hand
+            |> List.filter (fun card -> card.IsValueCard)
+            |> List.map (fun card -> Map.find card pdf)
+            |> List.sum
+            |> fun p -> p * 100.0
+
+        let emojiStatus =
+            if probabilityToBust >= 50.0 then "😵"
+            elif probabilityToBust >= 45.0 then "😵‍💫"
+            elif probabilityToBust >= 40.0 then "🫪"
+            elif probabilityToBust >= 35.0 then "🫣"
+            elif probabilityToBust >= 30.0 then "😱"
+            elif probabilityToBust >= 25.0 then "😰"
+            elif probabilityToBust >= 20.0 then "😬"
+            elif probabilityToBust >= 15.0 then "😐"
+            elif probabilityToBust >= 10.0 then "🤔"
+            elif probabilityToBust >= 5.0 then "🙂"
+            else "😎"
+
         let preamble =
             sprintf
                 "%s %s (%dpts + %dpts?, %.2f%%): "
@@ -126,7 +145,7 @@ let private renderFrame (deck: Deck) (players: Simulation.Player list) : unit =
         |> String.concat "\n"
         |> printfn "%s"
 
-    printf "%s" (centered "[↔] move along PDF   [↕] select player   [q/esc] quit" 80)
+    printf "%s" (centered "[↔] move along distributions   [↕] rotate through players   [q/esc] quit" 80)
 
 let private readKey (players: Simulation.Player list) (key: ConsoleKeyInfo) : bool =
     let cards = Deck.Empty |> Map.toList |> List.map fst
@@ -169,7 +188,7 @@ let private readKey (players: Simulation.Player list) (key: ConsoleKeyInfo) : bo
 
 [<EntryPoint>]
 let main args =
-    let deck = Deck.Full
+    let deck = Deck.Random
     let discards = Deck.Empty
 
     let players: Simulation.Player list = [
@@ -185,7 +204,7 @@ let main args =
 
     while running do
         Console.Clear()
-        renderFrame deck players
+        renderFrame deck discards players
         running <- readKey players (Console.ReadKey true)
 
     Console.CursorVisible <- true
