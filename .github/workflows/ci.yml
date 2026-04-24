@@ -35,8 +35,21 @@ jobs:
             --self-contained true \
             -p:PublishSingleFile=true \
             -p:EnableCompressionInSingleFile=true \
+            -p:DebugType=None \
+            -p:DebugSymbols=false \
             -o publish/${{ matrix.rid }}
+      - name: Rename executable
+        shell: bash
+        run: |
+          src="publish/${{ matrix.rid }}/flip7.ui"
+          if [ -f "${src}.exe" ]; then
+            mv "${src}.exe" "publish/${{ matrix.rid }}/flip7.exe"
+          else
+            mv "${src}" "publish/${{ matrix.rid }}/flip7"
+          fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: flip7-${{ matrix.rid }}
-          path: publish/${{ matrix.rid }}/
+          path: |
+            publish/${{ matrix.rid }}/flip7
+            publish/${{ matrix.rid }}/flip7.exe
