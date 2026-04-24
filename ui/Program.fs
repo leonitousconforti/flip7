@@ -6,6 +6,7 @@ open Flip7
 
 let private hi = "\027[7m"
 let private lo = "\027[0m"
+let private green = "\027[92m"
 
 let mutable private Cursor: Choice<Card, string> = Choice1Of2(ValueCard Card.Zero)
 
@@ -41,7 +42,7 @@ let inline private sparkline< ^a when ^a: equality>
         series
         |> List.map (fun (label, value) ->
             let cell = barCell value row
-            if cursor = Some label then $"{hi}{cell}{lo}" else cell
+            if cursor = Some label then $"{green}{cell}{lo}" else cell
         )
         |> String.concat ""
     )
@@ -86,8 +87,8 @@ let private renderFrame (deck: Deck) (players: Simulation.Player list) : unit =
 
     printfn "%s" (String.replicate 80 "─")
     printfn "%s" (String.replicate 0 " ")
-    printfn "%s" (evl + pdf3[0] + gap4 + cdf3[0])
-    printfn "%s" (ecl + pdf3[1] + gap4 + cdf3[1])
+    printfn "%s" (ecl + pdf3[0] + gap4 + cdf3[0])
+    printfn "%s" (evl + pdf3[1] + gap4 + cdf3[1])
     printfn "%s" (var + pdf3[2] + gap4 + cdf3[2])
     printfn "%s" (std + pdfTitle + gap4 + cdfTitle)
     printfn "%s" (String.replicate 0 " ")
