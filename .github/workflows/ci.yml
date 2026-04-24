@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  build-and-test:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -16,3 +16,27 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet build
       - run: dotnet test --no-build
+
+  publish:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        rid: [linux-x64, osx-x64, osx-arm64, win-x64]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: |
+          dotnet publish ui/flip7.ui.fsproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:EnableCompressionInSingleFile=true \
+            -o publish/${{ matrix.rid }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: flip7-${{ matrix.rid }}
+          path: publish/${{ matrix.rid }}/
