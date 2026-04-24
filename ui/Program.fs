@@ -96,14 +96,43 @@ let private renderFrame (deck: Deck) (players: Simulation.Player list) : unit =
 
     printf "%s" (centered "[↔] move along PDF   [↕] select player   [q/esc] quit" 80)
 
-let private readKey (key: ConsoleKeyInfo) : bool =
-    match key.Key with
-    | ConsoleKey.Q -> false
-    | ConsoleKey.Escape -> false
-    | ConsoleKey.LeftArrow -> true
-    | ConsoleKey.RightArrow -> true
-    | ConsoleKey.UpArrow -> true
-    | ConsoleKey.DownArrow -> true
+let private readKey (players: Simulation.Player list) (key: ConsoleKeyInfo) : bool =
+    let cards = Deck.Empty |> Map.toList |> List.map fst
+    let playerNames = players |> List.map (fun (name, strategy, hand) -> name)
+
+    match key.Key, Cursor with
+    | ConsoleKey.Q, _ -> false
+    | ConsoleKey.Escape, _ -> false
+    | ConsoleKey.LeftArrow, Choice1Of2 card ->
+        let currentIndex = cards |> List.findIndex (fun c -> c = card)
+        let newIndex = (currentIndex - 1 + cards.Length) % cards.Length
+        Cursor <- Choice1Of2 cards[newIndex]
+        true
+    | ConsoleKey.RightArrow, Choice1Of2 card ->
+        let currentIndex = cards |> List.findIndex (fun c -> c = card)
+        let newIndex = (currentIndex + 1) % cards.Length
+        Cursor <- Choice1Of2 cards[newIndex]
+        true
+    | ConsoleKey.UpArrow, Choice1Of2 _ ->
+        Cursor <- Choice2Of2 playerNames[playerNames.Length - 1]
+        true
+    | ConsoleKey.UpArrow, Choice2Of2 player ->
+        let currentIndex = playerNames |> List.findIndex (fun name -> name = player)
+        if currentIndex = 0 then
+            Cursor <- Choice1Of2(ValueCard Card.Zero)
+        else
+            Cursor <- Choice2Of2 playerNames[currentIndex - 1]
+        true
+    | ConsoleKey.DownArrow, Choice1Of2 _ ->
+        Cursor <- Choice2Of2 playerNames[0]
+        true
+    | ConsoleKey.DownArrow, Choice2Of2 player ->
+        let currentIndex = playerNames |> List.findIndex (fun name -> name = player)
+        if currentIndex = List.length playerNames - 1 then
+            Cursor <- Choice1Of2(ValueCard Card.Zero)
+        else
+            Cursor <- Choice2Of2 playerNames[currentIndex + 1]
+        true
     | _ -> true
 
 [<EntryPoint>]
@@ -125,7 +154,7 @@ let main args =
     while running do
         Console.Clear()
         renderFrame deck players
-        running <- readKey (Console.ReadKey true)
+        running <- readKey players (Console.ReadKey true)
 
     Console.CursorVisible <- true
     Console.Clear()
