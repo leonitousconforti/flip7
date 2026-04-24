@@ -4,8 +4,8 @@ open System
 
 open Flip7
 
-// let private hi = "\027[7m"
-// let private lo = "\027[0m"
+let private hi = "\027[7m"
+let private lo = "\027[0m"
 
 let mutable private Cursor: Choice<Card, string> = Choice1Of2(ValueCard Card.Zero)
 
@@ -14,7 +14,11 @@ let inline private centered (s: string) (width: int) : string =
     let padding = String.replicate paddingCount " "
     padding + s + padding + (if s.Length % 2 = 1 then " " else "")
 
-let inline private sparkline< ^a> (rows: int) (series: (^a * float) list) : string list =
+let inline private sparkline< ^a when ^a: equality>
+    (rows: int)
+    (cursor: ^a option)
+    (series: (^a * float) list)
+    : string list =
     let blockChar f =
         if f >= 7.0 / 8.0 then "█"
         elif f >= 6.0 / 8.0 then "▇"
@@ -35,8 +39,10 @@ let inline private sparkline< ^a> (rows: int) (series: (^a * float) list) : stri
     [ rows - 1 .. -1 .. 0 ]
     |> List.map (fun row ->
         series
-        |> List.map snd
-        |> List.map (fun value -> barCell value row)
+        |> List.map (fun (label, value) ->
+            let cell = barCell value row
+            if cursor = Some label then $"{hi}{cell}{lo}" else cell
+        )
         |> String.concat ""
     )
 
@@ -45,17 +51,38 @@ let private renderFrame (deck: Deck) (players: Simulation.Player list) : unit =
         let maxProb = series |> List.map snd |> List.max
         series |> List.map (fun (label, prob) -> label, prob / maxProb)
 
-    let cdf3 = deck |> Deck.cdf |> Map.toList |> normalizeDistribution |> sparkline 3
-    let pdf3 = deck |> Deck.pdf |> Map.toList |> normalizeDistribution |> sparkline 3
+    let maybeCursorCard =
+        match Cursor with
+        | Choice2Of2 _ -> None
+        | Choice1Of2 highlightedCard -> Some highlightedCard
+
+    let pdf = deck |> Deck.pdf
+    let cdf = deck |> Deck.cdf
+
+    let gap4: string = String.replicate 4 " "
+    let pdf3 = pdf |> Map.toList |> normalizeDistribution |> sparkline 3 maybeCursorCard
+    let cdf3 = cdf |> Map.toList |> normalizeDistribution |> sparkline 3 maybeCursorCard
 
     let ecl = (sprintf "ec:     %s" (Deck.ec deck |> string)).PadRight 20
     let evl = (sprintf "ev:     %.2f" (Deck.ev deck)).PadRight 20
     let var = (sprintf "var:    %.2f" (Deck.var deck)).PadRight 20
     let std = (sprintf "std:    %.2f" (Deck.std deck)).PadRight 20
 
-    let gap4 = String.replicate 4 " "
-    let pdfTitle = centered "pdf" pdf3[0].Length
-    let cdfTitle = centered "cdf" cdf3[0].Length
+    let pdfTitle =
+        match Cursor with
+        | Choice2Of2 _ -> centered "pdf" pdf3[0].Length
+        | Choice1Of2 card ->
+            let prob = pdf |> Map.find card
+            let title = sprintf "%s %.2f%%" (string card) (prob * 100.0)
+            centered title pdf3[0].Length
+
+    let cdfTitle =
+        match Cursor with
+        | Choice2Of2 _ -> centered "cdf" cdf3[0].Length
+        | Choice1Of2 card ->
+            let prob = cdf |> Map.find card
+            let title = sprintf "%s %.2f%%" (string card) (prob * 100.0)
+            centered title cdf3[0].Length
 
     printfn "%s" (String.replicate 80 "─")
     printfn "%s" (String.replicate 0 " ")
@@ -90,7 +117,11 @@ let private renderFrame (deck: Deck) (players: Simulation.Player list) : unit =
                 newTopRow, newMidRow, newBotRow
             )
             (String.replicate 40 " ", preamble.PadRight 40, String.replicate 40 " ")
-        |> fun (top, middle, bottom) -> [ top; middle; bottom ]
+        |> fun (top, middle, bottom) ->
+            if Cursor = Choice2Of2 playerName then
+                [ $"{hi}{top}{lo}"; $"{hi}{middle}{lo}"; $"{hi}{bottom}{lo}" ]
+            else
+                [ top; middle; bottom ]
         |> String.concat "\n"
         |> printfn "%s"
 
