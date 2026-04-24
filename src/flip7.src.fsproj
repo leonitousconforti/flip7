@@ -20,6 +20,7 @@
     <Compile Include="Hand.fs" />
     <Compile Include="Deck.fs" />
     <Compile Include="Strategy.fs" />
+    <Compile Include="Simulate.fs" />
   </ItemGroup>
 
 </Project>
