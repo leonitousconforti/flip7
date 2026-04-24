@@ -70,19 +70,19 @@ let private renderFrame (deck: Deck) (players: Simulation.Player list) : unit =
 
     let pdfTitle =
         match Cursor with
-        | Choice2Of2 _ -> centered "pdf" pdf3[0].Length
+        | Choice2Of2 _ -> centered "pdf" (pdf |> Map.keys |> Seq.length)
         | Choice1Of2 card ->
             let prob = pdf |> Map.find card
-            let title = sprintf "%s %.2f%%" (string card) (prob * 100.0)
-            centered title pdf3[0].Length
+            let title = sprintf "p(%s)=%.2f%%" (string card) (prob * 100.0)
+            centered title (pdf |> Map.keys |> Seq.length)
 
     let cdfTitle =
         match Cursor with
-        | Choice2Of2 _ -> centered "cdf" cdf3[0].Length
+        | Choice2Of2 _ -> centered "cdf" (cdf |> Map.keys |> Seq.length)
         | Choice1Of2 card ->
             let prob = cdf |> Map.find card
-            let title = sprintf "%s %.2f%%" (string card) (prob * 100.0)
-            centered title cdf3[0].Length
+            let title = sprintf "P(%s)=%.2f%%" (string card) (prob * 100.0)
+            centered title (cdf |> Map.keys |> Seq.length)
 
     printfn "%s" (String.replicate 80 "─")
     printfn "%s" (String.replicate 0 " ")
