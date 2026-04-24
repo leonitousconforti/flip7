@@ -76,9 +76,9 @@ type public Card =
 
     override self.ToString() : string =
         match self with
-        | ActionCard Card.Deal3 -> "🃏"
-        | ActionCard Card.Freeze -> "🥶"
-        | ActionCard Card.SecondChance -> "❤️"
+        | ActionCard Card.Deal3 -> "Deal3"
+        | ActionCard Card.Freeze -> "Freeze"
+        | ActionCard Card.SecondChance -> "SecondChance"
         | ModifierCard Card.Plus2 -> "+2"
         | ModifierCard Card.Plus4 -> "+4"
         | ModifierCard Card.Plus6 -> "+6"

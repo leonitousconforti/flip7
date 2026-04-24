@@ -1,8 +1,20 @@
 module Program
 
+open System
+
 open Flip7
 
-let private sparkline (rows: int) (series: (string * float) list) : string list =
+// let private hi = "\027[7m"
+// let private lo = "\027[0m"
+
+let mutable private Cursor: Choice<Card, string> = Choice1Of2(ValueCard Card.Zero)
+
+let inline private centered (s: string) (width: int) : string =
+    let paddingCount = max 0 ((width - s.Length) / 2)
+    let padding = String.replicate paddingCount " "
+    padding + s + padding + (if s.Length % 2 = 1 then " " else "")
+
+let inline private sparkline< ^a> (rows: int) (series: (^a * float) list) : string list =
     let blockChar f =
         if f >= 7.0 / 8.0 then "█"
         elif f >= 6.0 / 8.0 then "▇"
@@ -20,68 +32,38 @@ let private sparkline (rows: int) (series: (string * float) list) : string list 
         elif scaled > float r then blockChar (scaled - float r)
         else " "
 
-    [ rows - 1 .. -1 .. -1 ]
+    [ rows - 1 .. -1 .. 0 ]
     |> List.map (fun row ->
         series
-        |> List.map (fun (label, value) ->
-            if row >= 0 then
-                barCell value row + " "
-            else
-                label.PadRight(2)
-        )
+        |> List.map snd
+        |> List.map (fun value -> barCell value row)
         |> String.concat ""
     )
 
-let private printStats (deck: Deck) =
-    let pdf3 =
-        deck
-        |> Deck.pdf
-        // |> Map.filter (fun card _ -> card.IsValueCard)
-        |> Map.toList
-        |> List.map (fun (card, pdf) -> string card, pdf)
-        |> sparkline 3
+let private renderFrame (deck: Deck) (players: Simulation.Player list) : unit =
+    let inline normalizeDistribution (series: (^a * float) list) : (^a * float) list =
+        let maxProb = series |> List.map snd |> List.max
+        series |> List.map (fun (label, prob) -> label, prob / maxProb)
 
-    let cdf3 =
-        deck
-        |> Deck.cdf
-        |> Map.filter (fun card _ -> card.IsValueCard)
-        |> Map.toList
-        |> List.map (fun (card, cdf) -> string card, cdf)
-        |> sparkline 3
+    let cdf3 = deck |> Deck.cdf |> Map.toList |> normalizeDistribution |> sparkline 3
+    let pdf3 = deck |> Deck.pdf |> Map.toList |> normalizeDistribution |> sparkline 3
 
-    let gap = String.replicate 4 " "
     let ecl = (sprintf "ec:     %s" (Deck.ec deck |> string)).PadRight 20
     let evl = (sprintf "ev:     %.2f" (Deck.ev deck)).PadRight 20
     let var = (sprintf "var:    %.2f" (Deck.var deck)).PadRight 20
     let std = (sprintf "std:    %.2f" (Deck.std deck)).PadRight 20
 
-    // printfn "%s" (evl + pdf3[0] + gap + cdf3[0])
-    // printfn "%s" (ecl + pdf3[1] + gap + cdf3[1])
-    // printfn "%s" (var + pdf3[2] + gap + cdf3[2])
-    // printfn "%s" (std + pdf3[3] + gap + cdf3[3])
-
-    printfn "%s" (evl + pdf3[0])
-    printfn "%s" (ecl + pdf3[1])
-    printfn "%s" (var + pdf3[2])
-    printfn "%s" (std + pdf3[3])
-
-[<EntryPoint>]
-let main args =
-    let deck = Deck.Random
-    let discards = Deck.Empty
-
-    let players: Simulation.Player list = [
-        ("Alice", Strategy.Random, [ Card.ValueCard Card.Ten; Card.ModifierCard Card.Plus4 ])
-        ("Bob", Strategy.Random, [ Card.ValueCard Card.Nine; Card.ValueCard Card.Three ])
-        ("Charlie", Strategy.Random, [ Card.ValueCard Card.Eight; Card.ValueCard Card.Four ])
-        ("Dave", Strategy.Random, [ Card.ValueCard Card.Seven; Card.ModifierCard Card.Plus10 ])
-        ("Ethan", Strategy.Random, [ Card.ValueCard Card.Six; Card.ModifierCard Card.Double ])
-    ]
+    let gap4 = String.replicate 4 " "
+    let pdfTitle = centered "pdf" pdf3[0].Length
+    let cdfTitle = centered "cdf" cdf3[0].Length
 
     printfn "%s" (String.replicate 80 "─")
-    printfn ""
-    printStats deck
-    printfn ""
+    printfn "%s" (String.replicate 0 " ")
+    printfn "%s" (evl + pdf3[0] + gap4 + cdf3[0])
+    printfn "%s" (ecl + pdf3[1] + gap4 + cdf3[1])
+    printfn "%s" (var + pdf3[2] + gap4 + cdf3[2])
+    printfn "%s" (std + pdfTitle + gap4 + cdfTitle)
+    printfn "%s" (String.replicate 0 " ")
     printfn "%s" (String.replicate 80 "─")
 
     for playerName, strategy, hand in players do
@@ -111,5 +93,41 @@ let main args =
         |> fun (top, middle, bottom) -> [ top; middle; bottom ]
         |> String.concat "\n"
         |> printfn "%s"
+
+    printf "%s" (centered "[↔] move along PDF   [↕] select player   [q/esc] quit" 80)
+
+let private readKey (key: ConsoleKeyInfo) : bool =
+    match key.Key with
+    | ConsoleKey.Q -> false
+    | ConsoleKey.Escape -> false
+    | ConsoleKey.LeftArrow -> true
+    | ConsoleKey.RightArrow -> true
+    | ConsoleKey.UpArrow -> true
+    | ConsoleKey.DownArrow -> true
+    | _ -> true
+
+[<EntryPoint>]
+let main args =
+    let deck = Deck.Full
+    let discards = Deck.Empty
+
+    let players: Simulation.Player list = [
+        ("Alice", Strategy.Random, [ Card.ValueCard Card.Ten; Card.ModifierCard Card.Plus4 ])
+        ("Bob", Strategy.Random, [ Card.ValueCard Card.Nine; Card.ValueCard Card.Three ])
+        ("Charlie", Strategy.Random, [ Card.ValueCard Card.Eight; Card.ValueCard Card.Four ])
+        ("Dave", Strategy.Random, [ Card.ValueCard Card.Seven; Card.ModifierCard Card.Plus10 ])
+        ("Ethan", Strategy.Random, [ Card.ValueCard Card.Six; Card.ModifierCard Card.Double ])
+    ]
+
+    Console.CursorVisible <- false
+    let mutable running = true
+
+    while running do
+        Console.Clear()
+        renderFrame deck players
+        running <- readKey (Console.ReadKey true)
+
+    Console.CursorVisible <- true
+    Console.Clear()
 
     0

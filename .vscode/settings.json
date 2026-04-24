@@ -9,6 +9,7 @@
         "*.fsproj": "xml",
     },
     "cSpell.words": [
+        "probs",
         "sparkline"
     ]
 }
