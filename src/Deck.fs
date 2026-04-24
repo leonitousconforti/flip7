@@ -66,6 +66,13 @@ module public Deck =
         ]
 
     /// <summary>
+    /// A random deck.
+    /// </summary>
+    let public Random: Deck =
+        let random = System.Random()
+        Map.map (fun _card maxCount -> uint (random.Next(0, int maxCount + 1))) Full
+
+    /// <summary>
     /// A deck is empty if it contains zero copies of every card.
     /// </summary>
     let public IsEmpty: Deck -> bool = Map.forall (fun _ count -> count = 0u)
