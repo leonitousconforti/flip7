@@ -43,8 +43,15 @@ module Strategy =
     /// A strategy that hits until the hand's score reaches a certain threshold,
     /// then stands.
     /// </summary>
-    let public HitUntil: uint -> Strategy =
+    let public HitUntilScore: uint -> Strategy =
         fun threshold _session hand _otherInHands _deck -> if Hand.Score hand < threshold then Hit else Stand
+
+    /// <summary>
+    /// A strategy that hits until the hand has a certain number of cards, then
+    /// stands.
+    /// </summary>
+    let public HitUntilNumCards: uint -> Strategy =
+        fun threshold _session hand _otherInHands _deck -> if uint (List.length hand) < threshold then Hit else Stand
 
     /// <summary>
     /// A strategy that prompts the user for input to decide whether to hit or
