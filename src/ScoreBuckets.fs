@@ -25,10 +25,9 @@ type public ScoreBuckets = {
     /// the multiplier.
     /// </summary>
     static member public Total(scoreBuckets: ScoreBuckets) : uint =
-        (scoreBuckets.ValuePoints
-         + scoreBuckets.ModifierPoints
-         + scoreBuckets.BonusPoints)
-        * scoreBuckets.Multiplier
+        scoreBuckets.ValuePoints * scoreBuckets.Multiplier
+        + scoreBuckets.ModifierPoints
+        + scoreBuckets.BonusPoints
 
     /// <summary>
     /// The zero score, which has no points and a multiplier of 1. This is the
@@ -81,11 +80,11 @@ type public ScoreBuckets = {
 
     override self.ToString() : string =
         sprintf
-            "ValuePoints: %u, ModifierPoints: %u, BonusPoints: %u, Multiplier: %u"
+            "ValuePoints: %u, Multiplier: %u, ModifierPoints: %u, BonusPoints: %u"
             self.ValuePoints
+            self.Multiplier
             self.ModifierPoints
             self.BonusPoints
-            self.Multiplier
 
     interface System.IComparable with
         member self.CompareTo(obj: obj) : int =

@@ -10,10 +10,10 @@ let ``Empty deck is empty`` () = Assert.True(Deck.IsEmpty Deck.Empty)
 let ``Full deck is not empty`` () = Assert.False(Deck.IsEmpty Deck.Full)
 
 [<Fact>]
-let ``Count of Empty deck is 0`` () = Assert.Equal(0u, Deck.Count Deck.Empty)
+let ``Count of Empty deck is 0`` () = Assert.Equal(0I, Deck.Count Deck.Empty)
 
 [<Fact>]
-let ``Count of Full deck is 94`` () = Assert.Equal(94u, Deck.Count Deck.Full)
+let ``Count of Full deck is 94`` () = Assert.Equal(94I, Deck.Count Deck.Full)
 
 [<Fact>]
 let ``Full deck has correct per-card counts`` () =
@@ -32,7 +32,7 @@ let ``Draw1 returns exactly one card`` () =
 [<Fact>]
 let ``Draw1 reduces deck count by 1`` () =
     let newDeck, _, _ = Deck.Draw1 Deck.Full Deck.Empty
-    Assert.Equal(93u, Deck.Count newDeck)
+    Assert.Equal(93I, Deck.Count newDeck)
 
 [<Fact>]
 let ``Draw3 returns exactly three cards`` () =
@@ -42,7 +42,7 @@ let ``Draw3 returns exactly three cards`` () =
 [<Fact>]
 let ``Draw3 reduces deck count by 3`` () =
     let newDeck, _, _ = Deck.Draw3 Deck.Full Deck.Empty
-    Assert.Equal(91u, Deck.Count newDeck)
+    Assert.Equal(91I, Deck.Count newDeck)
 
 [<Fact>]
 let ``pdf of Full deck - values sum to 1`` () =
@@ -130,7 +130,7 @@ let ``Draw returns the requested number of cards`` () =
 [<Fact>]
 let ``Draw reduces deck count by the requested amount`` () =
     let newDeck, _, _ = Deck.Draw Deck.Full Deck.Empty 5u
-    Assert.Equal(89u, Deck.Count newDeck)
+    Assert.Equal(89I, Deck.Count newDeck)
 
 [<Fact>]
 let ``Draw from single-card deck continues from discards`` () =

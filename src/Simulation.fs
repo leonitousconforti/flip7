@@ -3,87 +3,117 @@ namespace Flip7
 module Simulation =
     type public Player = string * Strategy * Hand
 
-    let public assertIsValid (deck: Deck) (discards: Deck) (hands: Hand list) : unit =
+    let rec public probabilityToBust (deck: Deck) (discards: Deck) (hand: Hand) (onlyPlayer: bool) : float =
+        let pdf = Deck.pdf deck
+        let probabilityOfDuplicateValueCard =
+            hand
+            |> List.filter (fun card -> card.IsValueCard)
+            |> List.map (fun card -> Map.find card pdf)
+            |> List.sum
+
+        // Simple case: there are other players whom haven't stood or busted
+        // yet so we don't consider the case of needing to play action cards
+        // on ourselves
+        if not onlyPlayer then
+            probabilityOfDuplicateValueCard
+        else
+
+        // We must play these on ourselves as we are the only player left
+        let probabilityOfDeal3 = Map.find (ActionCard Card.Deal3) pdf
+        let probabilityOfFreeze = Map.find (ActionCard Card.Freeze) pdf
+
+        // Base case: the probability of drawing a deal3 card is 0%
+        if probabilityOfDeal3 = 0.0 then
+            probabilityOfDuplicateValueCard + probabilityOfFreeze
+        else
+
+        let deck' = Deck.decrement deck (ActionCard Card.Deal3)
+        let cardsDrawnBeforeReshuffling = min (Deck.Count deck' |> uint) 3u
+        let cardsDrawnAfterReshuffling = 3u - cardsDrawnBeforeReshuffling
+
+        let probabilityToBustBeforeReshuffling =
+            probabilityToBust deck' discards hand onlyPlayer
+            * float cardsDrawnBeforeReshuffling
+
+        let probabilityToBustAfterReshuffling =
+            probabilityToBust discards Deck.Empty hand onlyPlayer
+            * float cardsDrawnAfterReshuffling
+
+        let probabilityToBust' =
+            probabilityToBustBeforeReshuffling + probabilityToBustAfterReshuffling
+
+        probabilityOfDeal3 * min probabilityToBust' 1.0
+        + probabilityOfDuplicateValueCard
+        + probabilityOfFreeze
+
+    let public IsValid (deck: Deck) (discards: Deck) (hands: Hand seq) : string seq =
         let handsToDeck =
-            hands |> List.collect (fun hand -> hand) |> List.countBy id |> Map.ofList
+            hands
+            |> Seq.collect id
+            |> Seq.countBy id
+            |> Map.ofSeq
+            |> Map.map (fun _ count -> uint count)
 
         Deck.Full
-        |> Map.iter (fun card expected ->
+        |> Map.toSeq
+        |> Seq.collect (fun (card, expected) ->
             let deckCount = deck |> Map.find card
-            System.Diagnostics.Debug.Assert(
-                deckCount >= 0u,
-                $"Deck cannot have negative counts for any card, found {deckCount} of {card}"
-            )
-            System.Diagnostics.Debug.Assert(
-                deckCount <= expected,
-                $"Deck cannot have more {card} than the full count of that card, found {deckCount} of {card}"
-            )
-
             let discardsCount = discards |> Map.find card
-            System.Diagnostics.Debug.Assert(
-                discardsCount >= 0u,
-                $"Discards cannot have negative counts for any card, found {discardsCount} of {card}"
-            )
-            System.Diagnostics.Debug.Assert(
-                discardsCount <= expected,
-                $"Discards cannot have more {card} than the full count of that card, found {discardsCount} of {card}"
-            )
-
-            let handCount = handsToDeck |> Map.tryFind card |> Option.defaultValue 0 |> uint
-            System.Diagnostics.Debug.Assert(
-                handCount >= 0u,
-                $"Hands cannot have negative counts for any card, found {handCount} of {card}"
-            )
-            System.Diagnostics.Debug.Assert(
-                handCount <= expected,
-                $"Hands cannot have more {card} than the full count of that card, found {handCount} of {card}"
-            )
-
+            let handCount = handsToDeck |> Map.tryFind card |> Option.defaultValue 0u
+            let cannot = $"cannot have more {card} than the full count of that card"
             let actual = deckCount + discardsCount + handCount
-            System.Diagnostics.Debug.Assert(
-                (actual = expected),
-                $"Card count mismatch for {card}: expected {expected}, found {actual}"
-            )
+
+            seq {
+                if deckCount > expected then
+                    yield $"Deck {cannot}, found {deckCount} of {card}"
+                if discardsCount > expected then
+                    yield $"Discards {cannot}, found {discardsCount} of {card}"
+                if handCount > expected then
+                    yield $"Hands {cannot}, found {handCount} of {card}"
+                if actual <> expected then
+                    yield $"Card count mismatch for {card}: expected {expected}, found {actual}"
+            }
         )
 
-    let rec public GoonSession
-        (inHands: Player list)
-        (doneHands: Player list)
-        (deck: Deck)
-        (discards: Deck)
-        : Player list * Deck * Deck =
-        // Base case: if everyone is done gooning (have stood or busted)
-        if List.isEmpty inHands then
-            doneHands, deck, discards
-        else
+    let public AssertIsValid (deck: Deck) (discards: Deck) (hands: Hand seq) : unit =
+        let errors = IsValid deck discards hands |> Seq.toList
+        if errors <> [] then failwith errors.Head else ()
 
-        // Invariant: no one in inHands has busted
-        assert
-            inHands
-            |> List.map (fun (_name, _strategy, hand) -> hand)
-            |> List.exists Hand.IsBust
-            |> not
+// let rec public GoonSession
+//     (inHands: Player list)
+//     (doneHands: Player list)
+//     (deck: Deck)
+//     (discards: Deck)
+//     : Player list * Deck * Deck =
+//     // Base case: if everyone is done gooning (have stood or busted)
+//     if List.isEmpty inHands then
+//         doneHands, deck, discards
+//     else
 
-        // Base case: if anyone has the Flip7 bonus, they win immediately and
-        // everyone else is done gooning
-        if
-            inHands
-            |> List.map (fun (_name, _strategy, hand) -> hand)
-            |> List.exists Hand.HasFlip7Bonus
-        then
-            inHands @ doneHands, deck, discards
-        else
+//     // Invariant: no one in inHands has busted
+//     assert
+//         inHands
+//         |> List.map (fun (_name, _strategy, hand) -> hand)
+//         |> List.exists Hand.IsBust
+//         |> not
 
-        // We just care about the first player right now, recursion will handle
-        // the rest
-        let currentIn = List.head inHands
-        let othersIn = List.tail inHands
-        let name, strategy, hand = currentIn
+//     // Base case: if anyone has the Flip7 bonus, they win immediately and
+//     // everyone else is done gooning
+//     if
+//         inHands
+//         |> List.map (fun (_name, _strategy, hand) -> hand)
+//         |> List.exists Hand.HasFlip7Bonus
+//     then
+//         inHands @ doneHands, deck, discards
+//     else
 
-        // Resolve the current player's turn
-        match strategy 0u hand (othersIn |> List.map (fun (n, s, h) -> h)) deck with
-        | Strategy.Stand -> GoonSession othersIn (currentIn :: doneHands) deck discards
-        | Strategy.Hit ->
-            let newDeck, newDiscards, newCard = Deck.Draw1 deck discards
-            let newPlayer = (name, strategy, newCard @ hand)
-            GoonSession (newPlayer :: othersIn) doneHands newDeck newDiscards
+//     let currentIn :: othersIn = inHands
+//     let name, strategy, hand = currentIn
+
+//     // Resolve the current player's turn
+//     match strategy 0u hand (othersIn |> List.map (fun (n, s, h) -> h)) deck with
+//     | Strategy.Stand -> GoonSession othersIn (currentIn :: doneHands) deck discards
+//     | Strategy.Hit ->
+//         let newDeck, newDiscards, newCard = Deck.Draw1 deck discards
+//         let newPlayer = (name, strategy, newCard @ hand)
+//         GoonSession (newPlayer :: othersIn) doneHands newDeck newDiscards

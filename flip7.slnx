@@ -1,11 +1,11 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/flip7.src.fsproj" />
+    <Project Path="src/Flip7.fsproj" />
   </Folder>
   <Folder Name="/test/">
-    <Project Path="test/flip7.test.fsproj" />
+    <Project Path="test/Flip7.Test.fsproj" />
   </Folder>
   <Folder Name="/ui/">
-    <Project Path="ui/flip7.ui.fsproj" />
+    <Project Path="ui/Flip7.UI.fsproj" />
   </Folder>
 </Solution>

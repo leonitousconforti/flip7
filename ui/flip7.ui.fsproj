@@ -6,11 +6,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Ansi.fs" />
+    <Compile Include="Sparkline.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\src\flip7.src.fsproj" />
+    <ProjectReference Include="..\src\Flip7.fsproj" />
   </ItemGroup>
 
 </Project>

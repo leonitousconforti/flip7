@@ -16,7 +16,7 @@ let ``Total sums all buckets then multiplies`` () =
         BonusPoints = 2u
         Multiplier = 2u
     }
-    Assert.Equal(20u, ScoreBuckets.Total sb)
+    Assert.Equal(15u, ScoreBuckets.Total sb)
 
 [<Fact>]
 let ``Total with multiplier 1 returns plain sum`` () =

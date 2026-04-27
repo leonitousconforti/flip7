@@ -73,6 +73,18 @@ module public Deck =
         Map.map (fun _card maxCount -> uint (random.Next(0, int maxCount + 1))) Full
 
     /// <summary>
+    /// Increments the count of the given card in the deck by 1.
+    /// </summary>
+    let public increment (deck: Deck) (card: Card) : Deck =
+        Map.change card (Option.map (fun count -> count + 1u)) deck
+
+    /// <summary>
+    /// Decrements the count of the given card in the deck by 1.
+    /// </summary>
+    let public decrement (deck: Deck) (card: Card) : Deck =
+        Map.change card (Option.map (fun count -> count - 1u)) deck
+
+    /// <summary>
     /// A deck is empty if it contains zero copies of every card.
     /// </summary>
     let public IsEmpty: Deck -> bool = Map.forall (fun _ count -> count = 0u)
@@ -80,7 +92,8 @@ module public Deck =
     /// <summary>
     /// Counts the total number of cards in the deck.
     /// </summary>
-    let public Count: Deck -> uint = Map.fold (fun acc _ count -> acc + count) 0u
+    let public Count: Deck -> bigint =
+        Map.fold (fun acc _ count -> acc + bigint count) 0I
 
     /// <summary>
     /// Draws a card from the deck, returning the new deck, the new discards,
@@ -93,15 +106,15 @@ module public Deck =
         else
 
         assert (count > 0u)
-        assert (Count deck + Count discards >= count)
+        assert (Count deck + Count discards >= bigint count)
         assert (IsEmpty deck |> not)
 
         let drawnCard =
             deck
-            |> Map.toList
-            |> List.collect (fun (card, count) -> List.replicate (int count) card)
-            |> List.randomShuffle
-            |> List.head
+            |> Map.toArray
+            |> Array.collect (fun (card, count) -> Array.replicate (int count) card)
+            |> Array.randomShuffle
+            |> Array.head
 
         let newDeck =
             Map.change
@@ -148,11 +161,11 @@ module public Deck =
     let public cdf (deck: Deck) : Map<Card, float> =
         deck
         |> pdf
-        |> Map.toList
-        |> List.sortBy fst
-        |> List.scan (fun acc (card, prob) -> (card, prob + snd acc)) (ValueCard Card.Zero, 0.0)
-        |> List.tail
-        |> Map.ofList
+        |> Map.toArray
+        |> Array.sortBy fst
+        |> Array.scan (fun acc (card, prob) -> (card, prob + snd acc)) (ValueCard Card.Zero, 0.0)
+        |> Array.tail
+        |> Map.ofArray
 
     /// <summary>
     /// The expected value of points you would get from drawing a card from the
@@ -160,8 +173,8 @@ module public Deck =
     /// </summary>
     let public ev: Deck -> float =
         pdf
-        >> Map.toList
-        >> List.sumBy (fun (card, prob) ->
+        >> Map.toArray
+        >> Array.sumBy (fun (card, prob) ->
             let score = card.Value |> ScoreBuckets.Total
             float prob * float score
         )
@@ -170,7 +183,7 @@ module public Deck =
     /// The card you would expect to draw from the deck, if you were to draw a
     /// card at random from the deck.
     /// </summary>
-    let public ec: Deck -> Card = pdf >> Map.toList >> List.maxBy snd >> fst
+    let public ec: Deck -> Card = pdf >> Map.toArray >> Array.maxBy snd >> fst
 
     /// <summary>
     /// The variance of the points you would get from drawing a card from the
@@ -181,8 +194,8 @@ module public Deck =
 
         deck
         |> pdf
-        |> Map.toList
-        |> List.sumBy (fun (card, prob) ->
+        |> Map.toArray
+        |> Array.sumBy (fun (card, prob) ->
             let score = card.Value |> ScoreBuckets.Total
             prob * (float score - expectedValue) ** 2.0
         )
