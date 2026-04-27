@@ -27,7 +27,7 @@ let ``Full deck has correct per-card counts`` () =
 [<Fact>]
 let ``Draw1 returns exactly one card`` () =
     let _, _, cards = Deck.Draw1 Deck.Full Deck.Empty
-    Assert.Equal(1, List.length cards)
+    Assert.Equal(1, List.length [ cards ])
 
 [<Fact>]
 let ``Draw1 reduces deck count by 1`` () =

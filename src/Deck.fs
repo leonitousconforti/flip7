@@ -137,7 +137,9 @@ module public Deck =
     /// and the drawn card. If the deck is empty, the discards are shuffled and
     /// become the new deck, and the discards become empty.
     /// </summary>
-    let public Draw1 (deck: Deck) (discards: Deck) = Draw deck discards 1u
+    let public Draw1 (deck: Deck) (discards: Deck) =
+        Draw deck discards 1u
+        |> fun (deck, discards, cards) -> deck, discards, cards.Head
 
     /// <summary>
     /// Draws three cards from the deck, returning the new deck, the new
