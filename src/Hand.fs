@@ -34,8 +34,10 @@ module public Hand =
         |> ScoreBuckets.Total
 
     /// <summary>
-    /// A hand is a bust if it contains any duplicate value cards and doesn't
-    /// have the SecondChance action card.
+    /// A hand is a bust if it contains duplicate value cards that are not
+    /// canceled out by SecondChance cards. The Reduce function can be used to
+    /// determine if a hand is a bust and to produce a reduced hand with the
+    /// duplicates and SecondChance cards removed.
     /// </summary>
     let public IsBust (hand: Hand) : bool =
         let rec IsBust' (hand: Hand) (seen: Set<Card.ValueCard>) (busts: int) : bool =
@@ -52,26 +54,42 @@ module public Hand =
         in
         IsBust' hand Set.empty 0
 
+    /// <summary>
+    /// The Reduce function takes a hand and produces a reduced hand with
+    /// duplicate value cards and SecondChance cards removed. It also returns a
+    /// boolean indicating whether the reduction still results in a bust (i.e.,
+    /// there were more duplicate value cards than SecondChance cards).
+    /// </summary>
     let public Reduce (hand: Hand) : bool * Hand =
+        // The first fold counts the number of duplicate value cards and the
+        // number of SecondChance cards in the hand.
+        let folder =
+            fun (seen, dups, scs) card ->
+                match card with
+                | ActionCard(Card.SecondChance) -> seen, dups, scs + 1
+                | ValueCard(vc) when Set.contains vc seen -> seen, dups + 1, scs
+                | ValueCard(vc) -> Set.add vc seen, dups, scs
+                | _ -> seen, dups, scs
 
-        hand |> List.back
+        // The second fold builds the reduced hand by skipping over the
+        // appropriate number of duplicate value cards and SecondChance cards.
+        let backFolder =
+            fun card (seen, dupsToDrop, scsToDrop, acc) ->
+                match card with
+                | ActionCard(Card.SecondChance) when scsToDrop > 0 -> seen, dupsToDrop, scsToDrop - 1, acc
+                | ValueCard(vc) when Set.contains vc seen && dupsToDrop > 0 -> seen, dupsToDrop - 1, scsToDrop, acc
+                | ValueCard(vc) -> Set.add vc seen, dupsToDrop, scsToDrop, card :: acc
+                | _ -> seen, dupsToDrop, scsToDrop, card :: acc
 
-        let rec Reduce
-            (hand: Hand)
-            (newHand: Hand)
-            (seen: Set<Card.ValueCard>)
-            (secondChances: int)
-            (busts: int)
-            : bool * Hand =
-            match hand with
-            | [] -> busts - secondChances > 0, newHand
-            | ActionCard(Card.SecondChance) :: tail -> false
-            | ActionCard(_) as c :: tail -> Reduce tail (c :: newHand) seen busts
-            | ModifierCard(_) as c :: tail -> Reduce tail (c :: newHand) seen busts
-            | ValueCard(vc) as c :: tail ->
-                let newSeen = Set.add vc seen
-                let newBusts = busts + if Set.contains vc seen then 1 else 0
-                Reduce tail (c :: newHand) newSeen newBusts
+        let numDups, numSCs =
+            hand
+            |> List.fold folder (Set.empty, 0, 0)
+            |> fun (_seen, dups, scs) -> dups, scs
 
-        in
-        Reduce hand List.empty Set.empty 0
+        let numCancel = min numDups numSCs
+        let reducedHand =
+            (Set.empty, numCancel, numCancel, List.empty)
+            |> List.foldBack backFolder hand
+            |> fun (_seen, _dupsToDrop, _scsToDrop, reducedHand) -> reducedHand
+
+        numDups > numCancel, reducedHand
