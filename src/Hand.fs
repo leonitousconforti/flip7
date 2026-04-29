@@ -86,10 +86,12 @@ module public Hand =
             |> List.fold folder (Set.empty, 0, 0)
             |> fun (_seen, dups, scs) -> dups, scs
 
+        let isBust = numDups > numSCs
         let numCancel = min numDups numSCs
+
         let reducedHand =
             (Set.empty, numCancel, numCancel, List.empty)
             |> List.foldBack backFolder hand
             |> fun (_seen, _dupsToDrop, _scsToDrop, reducedHand) -> reducedHand
 
-        numDups > numCancel, reducedHand
+        isBust, reducedHand

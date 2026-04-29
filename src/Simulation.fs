@@ -171,8 +171,8 @@ module Simulation =
                 // to determine if they are done
                 | ValueCard _ ->
                     let newHand = newCard :: hand
-                    let isBust = Hand.IsBust newHand
-                    let newPlayer = [ (name, strategy, newHand) ]
+                    let isBust, reducedHand = Hand.Reduce newHand
+                    let newPlayer = [ (name, strategy, reducedHand) ]
                     let newOthers = if isBust then others else others @ newPlayer
                     yield newPlayer.Head |> fun (n, s, h) -> (n, h), newDeck, newDiscards
                     yield! GoonSession newOthers newDeck newDiscards
