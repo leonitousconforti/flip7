@@ -79,41 +79,108 @@ module Simulation =
         let errors = IsValid deck discards hands |> Seq.toList
         if errors <> [] then failwith errors.Head else ()
 
-// let rec public GoonSession
-//     (inHands: Player list)
-//     (doneHands: Player list)
-//     (deck: Deck)
-//     (discards: Deck)
-//     : Player list * Deck * Deck =
-//     // Base case: if everyone is done gooning (have stood or busted)
-//     if List.isEmpty inHands then
-//         doneHands, deck, discards
-//     else
+    let rec public GoonSession
+        (players: list<string * Strategy * Hand>)
+        (deck: Deck)
+        (discards: Deck)
+        : seq<(string * Hand) * Deck * Deck> =
+        // Base case: if everyone is done gooning (have stood or busted)
+        if players |> List.isEmpty then
+            Seq.empty
+        else
 
-//     // Invariant: no one in inHands has busted
-//     assert
-//         inHands
-//         |> List.map (fun (_name, _strategy, hand) -> hand)
-//         |> List.exists Hand.IsBust
-//         |> not
+        // Invariant: should not have busted yet
+        assert
+            players
+            |> List.map (fun (_name, _strategy, hand) -> hand)
+            |> List.forall (not << Hand.IsBust)
 
-//     // Base case: if anyone has the Flip7 bonus, they win immediately and
-//     // everyone else is done gooning
-//     if
-//         inHands
-//         |> List.map (fun (_name, _strategy, hand) -> hand)
-//         |> List.exists Hand.HasFlip7Bonus
-//     then
-//         inHands @ doneHands, deck, discards
-//     else
+        // Base case: if anyone has the Flip7 bonus, they win immediately and
+        // everyone else is done gooning
+        if
+            players
+            |> List.map (fun (_name, _strategy, hand) -> hand)
+            |> List.exists Hand.HasFlip7Bonus
+        then
+            Seq.empty
+        else
 
-//     let currentIn :: othersIn = inHands
-//     let name, strategy, hand = currentIn
+        #nowarn "FS25"
+        let current :: others = players
+        let name, strategy, hand = current
+        let othersHands = others |> List.map (fun (_name, _strategy, hand) -> hand)
+        let newDeck, newDiscards, newCard = Deck.Draw1 deck discards
+        let hitOrStand = strategy 0u hand othersHands deck
+        #warnon "FS25"
 
-//     // Resolve the current player's turn
-//     match strategy 0u hand (othersIn |> List.map (fun (n, s, h) -> h)) deck with
-//     | Strategy.Stand -> GoonSession othersIn (currentIn :: doneHands) deck discards
-//     | Strategy.Hit ->
-//         let newDeck, newDiscards, newCard = Deck.Draw1 deck discards
-//         let newPlayer = (name, strategy, newCard @ hand)
-//         GoonSession (newPlayer :: othersIn) doneHands newDeck newDiscards
+        seq {
+            match hitOrStand with
+            | Strategy.Stand ->
+                yield (name, hand), deck, discards
+                yield! GoonSession others deck discards
+
+            | Strategy.Hit ->
+                match newCard with
+                // Can never bust on a modifier card, so easy just add it to the
+                // player's hand and keep going
+                | ModifierCard _ ->
+                    let newPlayer = [ (name, strategy, newCard :: hand) ]
+                    yield newPlayer.Head |> fun (n, s, h) -> (n, h), newDeck, newDiscards
+                    yield! GoonSession (others @ newPlayer) newDeck newDiscards
+
+                // Can never bust on a second chance card, but you also can't hold
+                // two of them at the same time even when you are the last player
+                | ActionCard Card.SecondChance when
+                    List.exists (fun c -> c = ActionCard Card.SecondChance) hand
+                    && others |> List.isEmpty
+                    ->
+                    let newNewDiscards = Deck.increment newDiscards (ActionCard Card.SecondChance)
+                    yield (name, hand), newDeck, newNewDiscards
+                    yield! GoonSession others newDeck newNewDiscards
+
+                // Can never bust on a second chance card, but you also can't hold
+                // two of them at the same time, must give it to someone else
+                | ActionCard Card.SecondChance when
+                    List.exists (fun c -> c = ActionCard Card.SecondChance) hand
+                    && others |> List.isEmpty |> not
+                    ->
+                    let index, targetPlayer = others |> List.indexed |> List.randomChoice
+                    let newTargetPlayer = targetPlayer |> fun (n, s, h) -> n, s, newCard :: h
+                    let newOthers = others |> List.updateAt index newTargetPlayer
+                    yield newTargetPlayer |> fun (n, s, h) -> (n, h), newDeck, newDiscards
+                    yield! GoonSession (newOthers @ [ current ]) newDeck newDiscards
+
+                // Can never bust on a second chance card, so easy just just add it to the
+                // player's hand and keep going
+                | ActionCard Card.SecondChance ->
+                    let newPlayer = [ (name, strategy, newCard :: hand) ]
+                    yield newPlayer.Head |> fun (n, s, h) -> (n, h), newDeck, newDiscards
+                    yield! GoonSession (others @ newPlayer) newDeck newDiscards
+
+                // Can never bust on a freeze card, just pick someone to freeze
+                // and remove them
+                | ActionCard Card.Freeze ->
+                    let nextPlayers = others @ [ current ]
+                    let index, targetPlayer = nextPlayers |> List.indexed |> List.randomChoice
+                    let newTargetPlayer = targetPlayer |> fun (n, s, h) -> n, s, newCard :: h
+                    let newOthers = nextPlayers |> List.removeAt index
+                    yield newTargetPlayer |> fun (n, s, h) -> (n, h), newDeck, newDiscards
+                    yield! GoonSession newOthers newDeck newDiscards
+
+                // Can bust on a value card, so we need to check if they busted or not
+                // to determine if they are done
+                | ValueCard _ ->
+                    let newHand = newCard :: hand
+                    let isBust = Hand.IsBust newHand
+                    let newPlayer = [ (name, strategy, newHand) ]
+                    let newOthers = if isBust then others else others @ newPlayer
+                    yield newPlayer.Head |> fun (n, s, h) -> (n, h), newDeck, newDiscards
+                    yield! GoonSession newOthers newDeck newDiscards
+
+                | ActionCard Card.Deal3 ->
+                    let nextPlayers = others @ [ current ]
+                    let index, targetPlayer = nextPlayers |> List.indexed |> List.randomChoice
+                    let newNewDeck, newNewDiscards, newCards = Deck.Draw3 newDeck newDiscards
+
+                    yield! Seq.empty
+        }

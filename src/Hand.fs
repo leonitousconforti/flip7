@@ -38,16 +38,40 @@ module public Hand =
     /// have the SecondChance action card.
     /// </summary>
     let public IsBust (hand: Hand) : bool =
-        let rec isBust (hand: Hand) (seen: Set<Card.ValueCard>) (busted: bool) : bool =
+        let rec IsBust' (hand: Hand) (seen: Set<Card.ValueCard>) (busts: int) : bool =
             match hand with
-            | [] -> busted
-            | ActionCard(Card.SecondChance) :: tail -> false
-            | ActionCard(_) :: tail -> isBust tail seen busted
-            | ModifierCard(_) :: tail -> isBust tail seen busted
+            | [] -> busts > 0
+            | ActionCard(Card.SecondChance) :: tail -> IsBust' tail seen (busts - 1)
+            | ActionCard(_) :: tail -> IsBust' tail seen busts
+            | ModifierCard(_) :: tail -> IsBust' tail seen busts
             | ValueCard(vc) :: tail ->
                 let newSeen = Set.add vc seen
-                let newBusted = busted || Set.contains vc seen
-                isBust tail newSeen newBusted
+                let newBusts = busts + if Set.contains vc seen then 1 else 0
+                IsBust' tail newSeen newBusts
 
         in
-        isBust hand Set.empty false
+        IsBust' hand Set.empty 0
+
+    let public Reduce (hand: Hand) : bool * Hand =
+
+        hand |> List.back
+
+        let rec Reduce
+            (hand: Hand)
+            (newHand: Hand)
+            (seen: Set<Card.ValueCard>)
+            (secondChances: int)
+            (busts: int)
+            : bool * Hand =
+            match hand with
+            | [] -> busts - secondChances > 0, newHand
+            | ActionCard(Card.SecondChance) :: tail -> false
+            | ActionCard(_) as c :: tail -> Reduce tail (c :: newHand) seen busts
+            | ModifierCard(_) as c :: tail -> Reduce tail (c :: newHand) seen busts
+            | ValueCard(vc) as c :: tail ->
+                let newSeen = Set.add vc seen
+                let newBusts = busts + if Set.contains vc seen then 1 else 0
+                Reduce tail (c :: newHand) newSeen newBusts
+
+        in
+        Reduce hand List.empty Set.empty 0

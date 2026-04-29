@@ -120,6 +120,39 @@ let ``IsBust is false when duplicate precedes SecondChance`` () =
     Assert.False(Hand.IsBust hand)
 
 [<Fact>]
+let ``IsBust is true when multiple duplicates are present but only one SecondChance`` () =
+    let hand = [
+        ValueCard Card.Five
+        ValueCard Card.Five
+        ValueCard Card.Six
+        ValueCard Card.Six
+        ActionCard Card.SecondChance
+    ]
+    Assert.True(Hand.IsBust hand)
+
+[<Fact>]
+let ``IsBust is false when multiple duplicates are present with two SecondChance`` () =
+    let hand = [
+        ValueCard Card.Five
+        ActionCard Card.SecondChance
+        ValueCard Card.Five
+        ValueCard Card.Six
+        ValueCard Card.Six
+        ActionCard Card.SecondChance
+    ]
+    Assert.False(Hand.IsBust hand)
+
+[<Fact>]
+let ``IsBust is false with one duplicate pair with two SecondChance`` () =
+    let hand = [
+        ActionCard Card.SecondChance
+        ValueCard Card.Six
+        ValueCard Card.Six
+        ActionCard Card.SecondChance
+    ]
+    Assert.False(Hand.IsBust hand)
+
+[<Fact>]
 let ``IsBust ignores modifier cards`` () =
     let hand = [
         ModifierCard Card.Double
