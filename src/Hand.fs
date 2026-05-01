@@ -47,9 +47,9 @@ module public Hand =
             | ActionCard(_) :: tail -> IsBust' tail seen busts
             | ModifierCard(_) :: tail -> IsBust' tail seen busts
             | ValueCard(vc) :: tail ->
-                let newSeen = Set.add vc seen
-                let newBusts = busts + if Set.contains vc seen then 1 else 0
-                IsBust' tail newSeen newBusts
+                let seen' = Set.add vc seen
+                let busts' = busts + if Set.contains vc seen then 1 else 0
+                IsBust' tail seen' busts'
 
         in
         IsBust' hand Set.empty 0

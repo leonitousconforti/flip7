@@ -27,7 +27,7 @@ module Simulation =
             probabilityOfDuplicateValueCard + probabilityOfFreeze
         else
 
-        let deck' = Deck.decrement deck (ActionCard Card.Deal3)
+        let deck' = Deck.Decrement deck (ActionCard Card.Deal3)
         let cardsDrawnBeforeReshuffling = min (Deck.Count deck' |> uint) 3u
         let cardsDrawnAfterReshuffling = 3u - cardsDrawnBeforeReshuffling
 
@@ -79,7 +79,7 @@ module Simulation =
         let errors = IsValid deck discards hands |> Seq.toList
         if errors <> [] then failwith errors.Head else ()
 
-    let rec public GoonSession
+    let rec private GoonSession
         (players: list<string * Strategy * Hand>)
         (deck: Deck)
         (discards: Deck)
@@ -109,78 +109,96 @@ module Simulation =
         let current :: others = players
         let name, strategy, hand = current
         let othersHands = others |> List.map (fun (_name, _strategy, hand) -> hand)
-        let newDeck, newDiscards, newCard = Deck.Draw1 deck discards
+        let deck', discards', card' = Deck.Draw1 deck discards
         let hitOrStand = strategy 0u hand othersHands deck
         #warnon "FS25"
 
-        seq {
-            match hitOrStand with
-            | Strategy.Stand ->
-                yield (name, hand), deck, discards
-                yield! GoonSession others deck discards
+        let lastPlayerLeft = lazy (others |> List.isEmpty)
+        let alreadyHasSecondChance =
+            lazy (hand |> List.exists (fun card -> card = ActionCard Card.SecondChance))
 
-            | Strategy.Hit ->
-                match newCard with
-                // Can never bust on a modifier card, so easy just add it to the
-                // player's hand and keep going
-                | ModifierCard _ ->
-                    let newPlayer = [ (name, strategy, newCard :: hand) ]
-                    yield newPlayer.Head |> fun (n, s, h) -> (n, h), newDeck, newDiscards
-                    yield! GoonSession (others @ newPlayer) newDeck newDiscards
+        match hitOrStand with
+        | Strategy.Stand -> seq {
+            yield (name, hand), deck, discards
+            yield! GoonSession others deck discards
+          }
 
-                // Can never bust on a second chance card, but you also can't hold
-                // two of them at the same time even when you are the last player
-                | ActionCard Card.SecondChance when
-                    List.exists (fun c -> c = ActionCard Card.SecondChance) hand
-                    && others |> List.isEmpty
-                    ->
-                    let newNewDiscards = Deck.increment newDiscards (ActionCard Card.SecondChance)
-                    yield (name, hand), newDeck, newNewDiscards
-                    yield! GoonSession others newDeck newNewDiscards
+        | Strategy.Hit ->
+            match card' with
+            // Can never bust on a modifier card, so easy just add it to the
+            // player's hand and keep going
+            | ModifierCard _ -> seq {
+                let player' = [ (name, strategy, card' :: hand) ]
+                yield player'.Head |> fun (n, s, h) -> (n, h), deck', discards'
+                yield! GoonSession (others @ player') deck' discards'
+              }
 
-                // Can never bust on a second chance card, but you also can't hold
-                // two of them at the same time, must give it to someone else
-                | ActionCard Card.SecondChance when
-                    List.exists (fun c -> c = ActionCard Card.SecondChance) hand
-                    && others |> List.isEmpty |> not
-                    ->
-                    let index, targetPlayer = others |> List.indexed |> List.randomChoice
-                    let newTargetPlayer = targetPlayer |> fun (n, s, h) -> n, s, newCard :: h
-                    let newOthers = others |> List.updateAt index newTargetPlayer
-                    yield newTargetPlayer |> fun (n, s, h) -> (n, h), newDeck, newDiscards
-                    yield! GoonSession (newOthers @ [ current ]) newDeck newDiscards
+            // Can never bust on a second chance card, but you also can't hold
+            // two of them at the same time even when you are the last player
+            | ActionCard Card.SecondChance when alreadyHasSecondChance.Value && lastPlayerLeft.Value -> seq {
+                let discards'' = Deck.Increment discards' (ActionCard Card.SecondChance)
+                yield (name, hand), deck', discards''
+                yield! GoonSession others deck' discards''
+              }
 
-                // Can never bust on a second chance card, so easy just just add it to the
-                // player's hand and keep going
-                | ActionCard Card.SecondChance ->
-                    let newPlayer = [ (name, strategy, newCard :: hand) ]
-                    yield newPlayer.Head |> fun (n, s, h) -> (n, h), newDeck, newDiscards
-                    yield! GoonSession (others @ newPlayer) newDeck newDiscards
+            // Can never bust on a second chance card, but you also can't hold
+            // two of them at the same time, must give it to someone else
+            | ActionCard Card.SecondChance when alreadyHasSecondChance.Value && not lastPlayerLeft.Value -> seq {
+                let index, targetPlayer = others |> List.indexed |> List.randomChoice
+                let targetPlayer' = targetPlayer |> fun (n, s, h) -> n, s, card' :: h
+                let others' = others |> List.updateAt index targetPlayer'
+                yield targetPlayer' |> fun (n, s, h) -> (n, h), deck', discards'
+                yield! GoonSession (others' @ [ current ]) deck' discards'
+              }
 
-                // Can never bust on a freeze card, just pick someone to freeze
-                // and remove them
-                | ActionCard Card.Freeze ->
-                    let nextPlayers = others @ [ current ]
-                    let index, targetPlayer = nextPlayers |> List.indexed |> List.randomChoice
-                    let newTargetPlayer = targetPlayer |> fun (n, s, h) -> n, s, newCard :: h
-                    let newOthers = nextPlayers |> List.removeAt index
-                    yield newTargetPlayer |> fun (n, s, h) -> (n, h), newDeck, newDiscards
-                    yield! GoonSession newOthers newDeck newDiscards
+            // Can never bust on a second chance card, so easy just just add it to the
+            // player's hand and keep going
+            | ActionCard Card.SecondChance -> seq {
+                let player' = [ (name, strategy, card' :: hand) ]
+                yield player'.Head |> fun (n, s, h) -> (n, h), deck', discards'
+                yield! GoonSession (others @ player') deck' discards'
+              }
 
-                // Can bust on a value card, so we need to check if they busted or not
-                // to determine if they are done
-                | ValueCard _ ->
-                    let newHand = newCard :: hand
-                    let isBust, reducedHand = Hand.Reduce newHand
-                    let newPlayer = [ (name, strategy, reducedHand) ]
-                    let newOthers = if isBust then others else others @ newPlayer
-                    yield newPlayer.Head |> fun (n, s, h) -> (n, h), newDeck, newDiscards
-                    yield! GoonSession newOthers newDeck newDiscards
+            // Can never bust on a freeze card, just pick someone to freeze
+            // and remove them
+            | ActionCard Card.Freeze -> seq {
+                let players' = others @ [ current ]
+                let index, targetPlayer = players' |> List.indexed |> List.randomChoice
+                let targetPlayer' = targetPlayer |> fun (n, s, h) -> n, s, card' :: h
+                let others' = players' |> List.removeAt index
+                yield targetPlayer' |> fun (n, s, h) -> (n, h), deck', discards'
+                yield! GoonSession others' deck' discards'
+              }
 
-                | ActionCard Card.Deal3 ->
-                    let nextPlayers = others @ [ current ]
-                    let index, targetPlayer = nextPlayers |> List.indexed |> List.randomChoice
-                    let newNewDeck, newNewDiscards, newCards = Deck.Draw3 newDeck newDiscards
+            // Can bust on a value card, so we need to check if they busted or not
+            // to determine if they are done
+            | ValueCard _ -> seq {
+                let hand' = card' :: hand
+                let isBust, reducedHand = Hand.Reduce hand'
+                let player' = [ (name, strategy, reducedHand) ]
+                let others' = if isBust then others else others @ player'
+                yield player'.Head |> fun (n, s, h) -> (n, h), deck', discards'
+                yield! GoonSession others' deck' discards'
+              }
 
-                    yield! Seq.empty
-        }
+            | ActionCard Card.Deal3 ->
+                seq {
+                    let players' = others @ [ current ]
+                    let index, targetPlayer = players' |> List.indexed |> List.randomChoice
+                    let deck'', discards'', card'' = Deck.Draw3 deck' discards'
+                    let targetPlayer' = targetPlayer |> fun (n, s, h) -> n, s, card'' @ h
+
+                    if card'' |> List.exists (fun card -> card.IsActionCard) |> not then
+                        let isBust, reducedHand = targetPlayer' |> fun (n, s, h) -> Hand.Reduce h
+                        let others' =
+                            if isBust then
+                                players' |> List.removeAt index
+                            else
+                                players' |> List.updateAt index targetPlayer'
+                        yield targetPlayer' |> fun (n, s, h) -> (n, h), deck'', discards''
+                        yield! GoonSession others' deck'' discards''
+                    else
+                        // Action cards from deal3 will be pretty hard to
+                        // process
+                        yield! Seq.empty
+                }

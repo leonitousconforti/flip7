@@ -147,7 +147,7 @@ module public Deck =
             |> Array.randomShuffle
             |> Array.head
 
-        let newDeck =
+        let deck' =
             Map.change
                 drawnCard
                 (fun count ->
@@ -158,9 +158,9 @@ module public Deck =
                 deck
 
         match count with
-        | 1u -> newDeck, discards, [ drawnCard ]
+        | 1u -> deck', discards, [ drawnCard ]
         | _ ->
-            let lastDeck, lastDiscards, lastDrawnCards = Draw newDeck discards (count - 1u)
+            let lastDeck, lastDiscards, lastDrawnCards = Draw deck' discards (count - 1u)
             lastDeck, lastDiscards, drawnCard :: lastDrawnCards
 
     /// <summary>

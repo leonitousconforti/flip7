@@ -54,7 +54,7 @@ let rec private loop
     printfn "%s" (String.replicate 0 " ")
     printfn "%s" (String.replicate 80 "─")
 
-    for playerName, (currentScore, hand) in players |> Map.toList do
+    for playerName, (firmScore, hand) in players |> Map.toList do
         let tentativeScore = Hand.Score hand
 
         let onlyPlayerNotBusted =
@@ -78,22 +78,16 @@ let rec private loop
             else "😎"
 
         let preamble =
-            sprintf
-                "%s %s (%dpts + %dpts?, %.2f%%): "
-                playerName
-                emojiStatus
-                currentScore
-                tentativeScore
-                probabilityToBust
+            sprintf "%s %s (%dpts + %dpts?, %.2f%%): " playerName emojiStatus firmScore tentativeScore probabilityToBust
 
         hand
         |> List.fold
-            (fun (lastTopRow, lastMidRow, lastBotRow) card ->
+            (fun (topRow, midRow, botRow) card ->
                 let c = card.ToString().PadRight(2).PadLeft(3)
-                let newTopRow = lastTopRow + $"┌───┐"
-                let newMidRow = lastMidRow + $"│{c}│"
-                let newBotRow = lastBotRow + $"└───┘"
-                newTopRow, newMidRow, newBotRow
+                let topRow' = topRow + $"┌───┐"
+                let midRow' = midRow + $"│{c}│"
+                let botRow' = botRow + $"└───┘"
+                topRow', midRow', botRow'
             )
             (String.replicate 40 " ", preamble.PadRight 40, String.replicate 40 " ")
         |> fun (top, mid, bot) ->
@@ -125,42 +119,42 @@ let rec private loop
     |> printf "%s"
 
     let addCardToPlayer card player =
-        let newDeck = Deck.decrement deck card
-        let currentScore, currentHand = Map.find player players
-        let newHand = card :: currentHand
-        let newPlayers = Map.add player (currentScore, newHand) players
-        loop newDeck discards newPlayers cursor
+        let deck' = Deck.Decrement deck card
+        let firmScore, hand = Map.find player players
+        let hand' = card :: hand
+        let players' = Map.add player (firmScore, hand') players
+        loop deck' discards players' cursor
 
     let popCardFromPlayer player =
-        let currentScore, currentHand = Map.find player players
-        match currentHand with
+        let firmScore, hand = Map.find player players
+        match hand with
         | [] -> loop deck discards players cursor
         | card :: rest ->
-            let newDeck = Deck.increment deck card
-            let newPlayers = Map.add player (currentScore, rest) players
-            loop newDeck discards newPlayers cursor
+            let deck' = Deck.Increment deck card
+            let players' = Map.add player (firmScore, rest) players
+            loop deck' discards players' cursor
 
     let commitSession () =
         if errors <> [] then
             loop deck discards players cursor
         else
 
-        let newDiscards =
+        let discards' =
             players
             |> Map.values
             |> Seq.map snd
             |> Seq.collect id
-            |> Seq.fold Deck.increment discards
+            |> Seq.fold Deck.Increment discards
 
-        let newPlayers =
+        let players' =
             players
             |> Map.map (fun _ (score, hand) ->
                 let handScore = if Hand.IsBust hand then 0u else Hand.Score hand
                 score + uint handScore, List.empty
             )
 
-        let newCursor = Choice1Of2(ValueCard Card.Zero)
-        loop deck newDiscards newPlayers newCursor
+        let cursor' = Choice1Of2(ValueCard Card.Zero)
+        loop deck discards' players' cursor'
 
     let cards = Deck.Empty |> Map.toList |> List.map fst
     let playerNames = players |> Map.keys |> Seq.toList
@@ -200,9 +194,9 @@ let rec private loop
     | ConsoleModifiers.None, ConsoleKey.Backspace, Choice2Of2 player -> popCardFromPlayer player
 
     // Modifying card counts in the deck
-    | ConsoleModifiers.None, ConsoleKey.Add, Choice1Of2 card -> loop (Deck.increment deck card) discards players cursor
+    | ConsoleModifiers.None, ConsoleKey.Add, Choice1Of2 card -> loop (Deck.Increment deck card) discards players cursor
     | ConsoleModifiers.None, ConsoleKey.Subtract, Choice1Of2 card ->
-        loop (Deck.decrement deck card) discards players cursor
+        loop (Deck.Decrement deck card) discards players cursor
 
     // Navigating through players and cards
     | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice1Of2 _card ->
@@ -214,19 +208,19 @@ let rec private loop
     | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice2Of2 player when player = playerNames[playerNames.Length - 1] ->
         loop deck discards players (Choice1Of2(ValueCard Card.Zero))
     | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice2Of2 player ->
-        let currentIndex = playerNames |> List.findIndex (fun name -> name = player)
-        loop deck discards players (Choice2Of2 playerNames[currentIndex - 1])
+        let index = playerNames |> List.findIndex (fun name -> name = player)
+        loop deck discards players (Choice2Of2 playerNames[index - 1])
     | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice2Of2 player ->
-        let currentIndex = playerNames |> List.findIndex (fun name -> name = player)
-        loop deck discards players (Choice2Of2 playerNames[currentIndex + 1])
+        let index = playerNames |> List.findIndex (fun name -> name = player)
+        loop deck discards players (Choice2Of2 playerNames[index + 1])
     | ConsoleModifiers.None, ConsoleKey.LeftArrow, Choice1Of2 card ->
-        let currentIndex = cards |> List.findIndex (fun c -> c = card)
-        let newIndex = (currentIndex - 1 + cards.Length) % cards.Length
-        loop deck discards players (Choice1Of2 cards[newIndex])
+        let index = cards |> List.findIndex (fun c -> c = card)
+        let index' = (index - 1 + cards.Length) % cards.Length
+        loop deck discards players (Choice1Of2 cards[index'])
     | ConsoleModifiers.None, ConsoleKey.RightArrow, Choice1Of2 card ->
-        let currentIndex = cards |> List.findIndex (fun c -> c = card)
-        let newIndex = (currentIndex + 1) % cards.Length
-        loop deck discards players (Choice1Of2 cards[newIndex])
+        let index = cards |> List.findIndex (fun c -> c = card)
+        let index' = (index + 1) % cards.Length
+        loop deck discards players (Choice1Of2 cards[index'])
     | _ -> loop deck discards players cursor
 
 [<EntryPoint>]
