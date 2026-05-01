@@ -7,7 +7,7 @@ open Flip7
 let rec private loop
     (deck: Deck)
     (discards: Deck)
-    (players: Map<string, uint * Hand>)
+    (players: Map<string, (uint * Hand)>)
     (cursor: Choice<Card, string>)
     : unit =
     Console.Clear()
