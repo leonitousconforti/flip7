@@ -74,6 +74,32 @@ type public Card =
         | ValueCard Card.Eleven -> { ScoreBuckets.Zero with ValuePoints = 11u }
         | ValueCard Card.Twelve -> { ScoreBuckets.Zero with ValuePoints = 12u }
 
+    static member public Parse(string: string) : Card =
+        match string with
+        | "Deal3" -> ActionCard Card.Deal3
+        | "Freeze" -> ActionCard Card.Freeze
+        | "SecondChance" -> ActionCard Card.SecondChance
+        | "+2" -> ModifierCard Card.Plus2
+        | "+4" -> ModifierCard Card.Plus4
+        | "+6" -> ModifierCard Card.Plus6
+        | "+8" -> ModifierCard Card.Plus8
+        | "+10" -> ModifierCard Card.Plus10
+        | "x2" -> ModifierCard Card.Double
+        | "0" -> ValueCard Card.Zero
+        | "1" -> ValueCard Card.One
+        | "2" -> ValueCard Card.Two
+        | "3" -> ValueCard Card.Three
+        | "4" -> ValueCard Card.Four
+        | "5" -> ValueCard Card.Five
+        | "6" -> ValueCard Card.Six
+        | "7" -> ValueCard Card.Seven
+        | "8" -> ValueCard Card.Eight
+        | "9" -> ValueCard Card.Nine
+        | "10" -> ValueCard Card.Ten
+        | "11" -> ValueCard Card.Eleven
+        | "12" -> ValueCard Card.Twelve
+        | _ -> raise (System.ArgumentException $"Invalid card string: {string}")
+
     override self.ToString() : string =
         match self with
         | ActionCard Card.Deal3 -> "Deal3"

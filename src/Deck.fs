@@ -65,6 +65,37 @@ module public Deck =
             ActionCard Card.SecondChance, 3u
         ]
 
+    ///<summary>
+    /// Writes the given deck to a file with the given name in the current
+    /// directory. The file will contain one line per card, "Card: Count"
+    /// </summary>
+    let public Write (name: string) : Deck -> unit =
+        let currentDirectory = System.IO.Directory.GetCurrentDirectory()
+        let path = System.IO.Path.Combine(currentDirectory, name)
+        let write = fun lines -> System.IO.File.WriteAllLines(path, lines)
+        Map.toArray >> Array.map (fun (card, count) -> $"{card}: {count}") >> write
+
+    /// <summary>
+    /// Reads a deck from a file with the given name in the current directory.
+    /// The file should contain one line per card, "Card: Count"
+    /// </summary>
+    let public Read (name: string) : Deck =
+        let currentDirectory = System.IO.Directory.GetCurrentDirectory()
+        let path = System.IO.Path.Combine(currentDirectory, name)
+        let lines = System.IO.File.ReadLines path
+
+        lines
+        |> Seq.take (Full |> Map.keys |> Seq.length)
+        |> Seq.map (fun line ->
+            let parts = line.Split ": "
+            if parts.Length <> 2 then
+                raise (System.FormatException $"Invalid line format: {line}")
+            let count = System.UInt32.Parse parts.[1]
+            let card = Card.Parse parts.[0]
+            card, count
+        )
+        |> Map.ofSeq
+
     /// <summary>
     /// A random deck.
     /// </summary>
@@ -75,13 +106,13 @@ module public Deck =
     /// <summary>
     /// Increments the count of the given card in the deck by 1.
     /// </summary>
-    let public increment (deck: Deck) (card: Card) : Deck =
+    let public Increment (deck: Deck) (card: Card) : Deck =
         Map.change card (Option.map (fun count -> count + 1u)) deck
 
     /// <summary>
     /// Decrements the count of the given card in the deck by 1.
     /// </summary>
-    let public decrement (deck: Deck) (card: Card) : Deck =
+    let public Decrement (deck: Deck) (card: Card) : Deck =
         Map.change card (Option.map (fun count -> count - 1u)) deck
 
     /// <summary>
