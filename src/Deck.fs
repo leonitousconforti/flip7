@@ -4,7 +4,7 @@ namespace Flip7
 /// A deck in flip7 is a mapping from each card to the number of copies of that
 /// card remaining in the deck.
 /// </summary>
-type Deck = Map<Card, uint>
+type public Deck = Map<Card, uint>
 
 module public Deck =
     /// <summary>
