@@ -51,29 +51,6 @@ type public Card =
     | ModifierCard of Card.ModifierCard
     | ValueCard of Card.ValueCard
 
-    member public self.Value: ScoreBuckets =
-        match self with
-        | ActionCard _ -> ScoreBuckets.Zero
-        | ModifierCard Card.Plus2 -> { ScoreBuckets.Zero with ModifierPoints = 2u }
-        | ModifierCard Card.Plus4 -> { ScoreBuckets.Zero with ModifierPoints = 4u }
-        | ModifierCard Card.Plus6 -> { ScoreBuckets.Zero with ModifierPoints = 6u }
-        | ModifierCard Card.Plus8 -> { ScoreBuckets.Zero with ModifierPoints = 8u }
-        | ModifierCard Card.Plus10 -> { ScoreBuckets.Zero with ModifierPoints = 10u }
-        | ModifierCard Card.Double -> { ScoreBuckets.Zero with Multiplier = 2u }
-        | ValueCard Card.Zero -> { ScoreBuckets.Zero with ValuePoints = 0u }
-        | ValueCard Card.One -> { ScoreBuckets.Zero with ValuePoints = 1u }
-        | ValueCard Card.Two -> { ScoreBuckets.Zero with ValuePoints = 2u }
-        | ValueCard Card.Three -> { ScoreBuckets.Zero with ValuePoints = 3u }
-        | ValueCard Card.Four -> { ScoreBuckets.Zero with ValuePoints = 4u }
-        | ValueCard Card.Five -> { ScoreBuckets.Zero with ValuePoints = 5u }
-        | ValueCard Card.Six -> { ScoreBuckets.Zero with ValuePoints = 6u }
-        | ValueCard Card.Seven -> { ScoreBuckets.Zero with ValuePoints = 7u }
-        | ValueCard Card.Eight -> { ScoreBuckets.Zero with ValuePoints = 8u }
-        | ValueCard Card.Nine -> { ScoreBuckets.Zero with ValuePoints = 9u }
-        | ValueCard Card.Ten -> { ScoreBuckets.Zero with ValuePoints = 10u }
-        | ValueCard Card.Eleven -> { ScoreBuckets.Zero with ValuePoints = 11u }
-        | ValueCard Card.Twelve -> { ScoreBuckets.Zero with ValuePoints = 12u }
-
     static member public Parse(string: string) : Card =
         match string with
         | "Deal3" -> ActionCard Card.Deal3
@@ -99,6 +76,35 @@ type public Card =
         | "11" -> ValueCard Card.Eleven
         | "12" -> ValueCard Card.Twelve
         | _ -> raise (System.ArgumentException $"Invalid card string: {string}")
+
+    static member TryParse(string: string) : Card option =
+        try
+            string |> Card.Parse |> Some
+        with :? System.ArgumentException ->
+            None
+
+    member public self.Value: ScoreBuckets =
+        match self with
+        | ActionCard _ -> ScoreBuckets.Zero
+        | ModifierCard Card.Plus2 -> { ScoreBuckets.Zero with ModifierPoints = 2u }
+        | ModifierCard Card.Plus4 -> { ScoreBuckets.Zero with ModifierPoints = 4u }
+        | ModifierCard Card.Plus6 -> { ScoreBuckets.Zero with ModifierPoints = 6u }
+        | ModifierCard Card.Plus8 -> { ScoreBuckets.Zero with ModifierPoints = 8u }
+        | ModifierCard Card.Plus10 -> { ScoreBuckets.Zero with ModifierPoints = 10u }
+        | ModifierCard Card.Double -> { ScoreBuckets.Zero with Multiplier = 2u }
+        | ValueCard Card.Zero -> { ScoreBuckets.Zero with ValuePoints = 0u }
+        | ValueCard Card.One -> { ScoreBuckets.Zero with ValuePoints = 1u }
+        | ValueCard Card.Two -> { ScoreBuckets.Zero with ValuePoints = 2u }
+        | ValueCard Card.Three -> { ScoreBuckets.Zero with ValuePoints = 3u }
+        | ValueCard Card.Four -> { ScoreBuckets.Zero with ValuePoints = 4u }
+        | ValueCard Card.Five -> { ScoreBuckets.Zero with ValuePoints = 5u }
+        | ValueCard Card.Six -> { ScoreBuckets.Zero with ValuePoints = 6u }
+        | ValueCard Card.Seven -> { ScoreBuckets.Zero with ValuePoints = 7u }
+        | ValueCard Card.Eight -> { ScoreBuckets.Zero with ValuePoints = 8u }
+        | ValueCard Card.Nine -> { ScoreBuckets.Zero with ValuePoints = 9u }
+        | ValueCard Card.Ten -> { ScoreBuckets.Zero with ValuePoints = 10u }
+        | ValueCard Card.Eleven -> { ScoreBuckets.Zero with ValuePoints = 11u }
+        | ValueCard Card.Twelve -> { ScoreBuckets.Zero with ValuePoints = 12u }
 
     override self.ToString() : string =
         match self with

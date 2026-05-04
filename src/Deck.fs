@@ -65,6 +65,20 @@ module public Deck =
             ActionCard Card.SecondChance, 3u
         ]
 
+    /// <summary>
+    /// A random deck with the corresponding discards.
+    /// </summary>
+    let public Random: Deck * Deck =
+        let random = System.Random()
+
+        Map.fold
+            (fun (deck, discards) card maxCount ->
+                let count = uint (random.Next(0, int maxCount + 1))
+                Map.add card count deck, Map.add card (maxCount - count) discards
+            )
+            (Empty, Empty)
+            Full
+
     ///<summary>
     /// Writes the given deck to a file with the given name in the current
     /// directory. The file will contain one line per card, "Card: Count"
@@ -87,33 +101,23 @@ module public Deck =
         lines
         |> Seq.take (Full |> Map.keys |> Seq.length)
         |> Seq.map (fun line ->
-            let parts = line.Split ": "
-            if parts.Length <> 2 then
-                raise (System.FormatException $"Invalid line format: {line}")
-            let count = System.UInt32.Parse parts.[1]
-            let card = Card.Parse parts.[0]
-            card, count
+            match line.Split ": " with
+            | [| cardStr; countStr |] -> Card.Parse cardStr, System.UInt32.Parse countStr
+            | _ -> raise (System.FormatException $"Invalid line format: {line}")
         )
         |> Map.ofSeq
-
-    /// <summary>
-    /// A random deck.
-    /// </summary>
-    let public Random: Deck =
-        let random = System.Random()
-        Map.map (fun _card maxCount -> uint (random.Next(0, int maxCount + 1))) Full
 
     /// <summary>
     /// Increments the count of the given card in the deck by 1.
     /// </summary>
     let public Increment (deck: Deck) (card: Card) : Deck =
-        Map.change card (Option.map (fun count -> count + 1u)) deck
+        Map.change card (Option.map ((+) 1u)) deck
 
     /// <summary>
     /// Decrements the count of the given card in the deck by 1.
     /// </summary>
     let public Decrement (deck: Deck) (card: Card) : Deck =
-        Map.change card (Option.map (fun count -> count - 1u)) deck
+        Map.change card (Option.map ((-) 1u)) deck
 
     /// <summary>
     /// A deck is empty if it contains zero copies of every card.
@@ -131,9 +135,11 @@ module public Deck =
     /// and the drawn card. If the deck is empty, the discards are shuffled and
     /// become the new deck, and the discards become empty.
     /// </summary>
-    let rec internal Draw (deck: Deck) (discards: Deck) (count: uint) : Deck * Deck * Card list =
+    let rec internal Draw (decks: Deck * Deck) (count: uint) : (Deck * Deck) * Card list =
+        let deck, discards = decks
+
         if IsEmpty deck then
-            Draw discards Empty count
+            Draw (discards, Empty) count
         else
 
         assert (count > 0u)
@@ -158,26 +164,25 @@ module public Deck =
                 deck
 
         match count with
-        | 1u -> deck', discards, [ drawnCard ]
+        | 1u -> (deck', discards), [ drawnCard ]
         | _ ->
-            let lastDeck, lastDiscards, lastDrawnCards = Draw deck' discards (count - 1u)
-            lastDeck, lastDiscards, drawnCard :: lastDrawnCards
+            let lastDecks, lastDrawnCards = Draw (deck', discards) (count - 1u)
+            lastDecks, drawnCard :: lastDrawnCards
 
     /// <summary>
     /// Draws one card from the deck, returning the new deck, the new discards,
     /// and the drawn card. If the deck is empty, the discards are shuffled and
     /// become the new deck, and the discards become empty.
     /// </summary>
-    let public Draw1 (deck: Deck) (discards: Deck) =
-        Draw deck discards 1u
-        |> fun (deck, discards, cards) -> deck, discards, cards.Head
+    let public Draw1 (decks: Deck * Deck) =
+        Draw decks 1u |> fun (decks, cards) -> decks, cards.Head
 
     /// <summary>
     /// Draws three cards from the deck, returning the new deck, the new
     /// discards and the drawn cards. If the deck is empty, the discards are
     /// shuffled and become the new deck, and the discards become empty.
     /// </summary>
-    let public Draw3 (deck: Deck) (discards: Deck) = Draw deck discards 3u
+    let public Draw3 (decks: Deck * Deck) = Draw decks 3u
 
     /// <summary>
     /// The probability distribution function of the deck, which maps each card
