@@ -4,3 +4,4 @@ tmp/
 output/
 .direnv/
 .fsdocs/
+.DS_Store
