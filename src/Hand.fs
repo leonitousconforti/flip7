@@ -97,21 +97,23 @@ module public Hand =
         isBust, reducedHand
 
     /// <summary>
-    /// Writes a hand to a file with the given name in the current directory.
-    /// The file will contain one line per card.
+    /// Parses a hand from a sequence of lines, where each line represents a
+    /// card.
     /// </summary>
-    let public Write (name: string) : Hand -> unit =
-        let currentDirectory = System.IO.Directory.GetCurrentDirectory()
-        let path = System.IO.Path.Combine(currentDirectory, name)
-        let write = fun lines -> System.IO.File.WriteAllLines(path, lines)
-        List.toArray >> Array.map (fun card -> $"{card}") >> write
+    let public Deserialize: (string seq) -> Hand = Seq.map Card.Parse >> Seq.toList
 
     /// <summary>
-    /// Reads a hand from a file with the given name in the current directory.
-    /// The file should contain one line per card.
+    /// Tries to parse a hand from a sequence of lines, where each line
+    /// represents a card.
     /// </summary>
-    let public Read (name: string) : Hand =
-        let currentDirectory = System.IO.Directory.GetCurrentDirectory()
-        let path = System.IO.Path.Combine(currentDirectory, name)
-        let lines = System.IO.File.ReadLines path
-        lines |> Seq.map Card.Parse |> Seq.toList
+    let public TryDeserialize (lines: string seq) : Hand option =
+        try
+            Some(Deserialize lines)
+        with :? System.FormatException ->
+            None
+
+    /// <summary>
+    /// Converts a hand to an array of lines, where each line represents a card.
+    /// </summary>
+    let public Serialize: (Hand) -> string array =
+        List.toArray >> Array.map (fun card -> $"{card}")

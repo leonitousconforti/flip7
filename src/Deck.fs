@@ -79,25 +79,11 @@ module public Deck =
             (Empty, Empty)
             Full
 
-    ///<summary>
-    /// Writes the given deck to a file with the given name in the current
-    /// directory. The file will contain one line per card, "Card: Count"
-    /// </summary>
-    let public Write (name: string) : Deck -> unit =
-        let currentDirectory = System.IO.Directory.GetCurrentDirectory()
-        let path = System.IO.Path.Combine(currentDirectory, name)
-        let write = fun lines -> System.IO.File.WriteAllLines(path, lines)
-        Map.toArray >> Array.map (fun (card, count) -> $"{card}: {count}") >> write
-
     /// <summary>
-    /// Reads a deck from a file with the given name in the current directory.
-    /// The file should contain one line per card, "Card: Count"
+    /// Parses a deck from an array of lines, where each line is in the format
+    /// "Card: Count".
     /// </summary>
-    let public Read (name: string) : Deck =
-        let currentDirectory = System.IO.Directory.GetCurrentDirectory()
-        let path = System.IO.Path.Combine(currentDirectory, name)
-        let lines = System.IO.File.ReadLines path
-
+    let public Deserialize (lines: string seq) : Deck =
         lines
         |> Seq.take (Full |> Map.keys |> Seq.length)
         |> Seq.map (fun line ->
@@ -106,6 +92,23 @@ module public Deck =
             | _ -> raise (System.FormatException $"Invalid line format: {line}")
         )
         |> Map.ofSeq
+
+    /// <summary>
+    /// Tries to parse a deck from an array of lines, where each line is in
+    /// the format "Card: Count".
+    /// </summary>
+    let public TryDeserialize (lines: string seq) : Deck option =
+        try
+            Some(Deserialize lines)
+        with :? System.FormatException ->
+            None
+
+    /// <summary>
+    /// Converts a deck to an array of lines, where each line is in the format
+    /// "Card: Count".
+    /// </summary>
+    let public Serialize: Deck -> string array =
+        Map.toArray >> Array.map (fun (card, count) -> $"{card}: {count}")
 
     /// <summary>
     /// Increments the count of the given card in the deck by 1.
