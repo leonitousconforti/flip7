@@ -8,12 +8,13 @@ let rec private loop
     (deck: Deck)
     (discards: Deck)
     (players: Map<string, (uint * Hand)>)
+    (simulation: Map<string, uint> * seq<string * Hand>)
     (cursor: Choice<Card, string>)
     : unit =
     Console.Clear()
 
     if Deck.IsEmpty deck then
-        loop discards Deck.Empty players cursor
+        loop discards Deck.Empty players simulation cursor
     else
 
     let maybeCursorCard =
@@ -123,20 +124,20 @@ let rec private loop
         let firmScore, hand = Map.find player players
         let hand' = card :: hand
         let players' = Map.add player (firmScore, hand') players
-        loop deck' discards players' cursor
+        loop deck' discards players' simulation cursor
 
     let popCardFromPlayer player =
         let firmScore, hand = Map.find player players
         match hand with
-        | [] -> loop deck discards players cursor
+        | [] -> loop deck discards players simulation cursor
         | card :: rest ->
             let deck' = Deck.Increment deck card
             let players' = Map.add player (firmScore, rest) players
-            loop deck' discards players' cursor
+            loop deck' discards players' simulation cursor
 
     let commitSession () =
         if errors <> [] then
-            loop deck discards players cursor
+            loop deck discards players simulation cursor
         else
 
         let discards' =
@@ -154,7 +155,7 @@ let rec private loop
             )
 
         let cursor' = Choice1Of2(ValueCard Card.Zero)
-        loop deck discards' players' cursor'
+        loop deck discards' players' simulation cursor'
 
     let cards = Deck.Empty |> Map.toList |> List.map fst
     let playerNames = players |> Map.keys |> Seq.toList
@@ -194,34 +195,35 @@ let rec private loop
     | ConsoleModifiers.None, ConsoleKey.Backspace, Choice2Of2 player -> popCardFromPlayer player
 
     // Modifying card counts in the deck
-    | ConsoleModifiers.None, ConsoleKey.Add, Choice1Of2 card -> loop (Deck.Increment deck card) discards players cursor
+    | ConsoleModifiers.None, ConsoleKey.Add, Choice1Of2 card ->
+        loop (Deck.Increment deck card) discards players simulation cursor
     | ConsoleModifiers.None, ConsoleKey.Subtract, Choice1Of2 card ->
-        loop (Deck.Decrement deck card) discards players cursor
+        loop (Deck.Decrement deck card) discards players simulation cursor
 
     // Navigating through players and cards
     | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice1Of2 _card ->
-        loop deck discards players (Choice2Of2 playerNames[playerNames.Length - 1])
+        loop deck discards players simulation (Choice2Of2 playerNames[playerNames.Length - 1])
     | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice1Of2 _card ->
-        loop deck discards players (Choice2Of2 playerNames[playerNames.Length - playerNames.Length])
+        loop deck discards players simulation (Choice2Of2 playerNames[playerNames.Length - playerNames.Length])
     | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice2Of2 player when player = playerNames[0] ->
-        loop deck discards players (Choice1Of2(ValueCard Card.Zero))
+        loop deck discards players simulation (Choice1Of2(ValueCard Card.Zero))
     | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice2Of2 player when player = playerNames[playerNames.Length - 1] ->
-        loop deck discards players (Choice1Of2(ValueCard Card.Zero))
+        loop deck discards players simulation (Choice1Of2(ValueCard Card.Zero))
     | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice2Of2 player ->
         let index = playerNames |> List.findIndex (fun name -> name = player)
-        loop deck discards players (Choice2Of2 playerNames[index - 1])
+        loop deck discards players simulation (Choice2Of2 playerNames[index - 1])
     | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice2Of2 player ->
         let index = playerNames |> List.findIndex (fun name -> name = player)
-        loop deck discards players (Choice2Of2 playerNames[index + 1])
+        loop deck discards players simulation (Choice2Of2 playerNames[index + 1])
     | ConsoleModifiers.None, ConsoleKey.LeftArrow, Choice1Of2 card ->
         let index = cards |> List.findIndex (fun c -> c = card)
         let index' = (index - 1 + cards.Length) % cards.Length
-        loop deck discards players (Choice1Of2 cards[index'])
+        loop deck discards players simulation (Choice1Of2 cards[index'])
     | ConsoleModifiers.None, ConsoleKey.RightArrow, Choice1Of2 card ->
         let index = cards |> List.findIndex (fun c -> c = card)
         let index' = (index + 1) % cards.Length
-        loop deck discards players (Choice1Of2 cards[index'])
-    | _ -> loop deck discards players cursor
+        loop deck discards players simulation (Choice1Of2 cards[index'])
+    | _ -> loop deck discards players simulation cursor
 
 [<EntryPoint>]
 let main args =
@@ -248,12 +250,21 @@ let main args =
 
     let deck: Deck = Deck.Full
     let discards: Deck = Deck.Empty
+    let cursor = Choice1Of2(ValueCard Card.Zero)
     let players: Map<string, uint * Hand> =
         Array.map (fun name -> name, (0u, List.empty)) args |> Map.ofArray
 
+    let simulation =
+        Simulation.Simulate
+            (players |> Map.toList |> List.map (fun (n, (s, _)) -> n, Strategy.Random, s))
+            None
+            None
+            None
+            None
+
     Console.Clear()
     Console.CursorVisible <- false
-    loop deck discards players (Choice1Of2(ValueCard Card.Zero))
+    loop deck discards players simulation cursor
     Console.CursorVisible <- true
     Console.Clear()
 

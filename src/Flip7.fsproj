@@ -19,8 +19,10 @@
     <Compile Include="Card.fs" />
     <Compile Include="Hand.fs" />
     <Compile Include="Deck.fs" />
-    <Compile Include="Player.fs" />
     <Compile Include="Strategy.fs" />
+    <Compile Include="Player.fs" />
+    <Compile Include="Timeline.fs" />
+    <Compile Include="Persistence.fs" />
     <Compile Include="Simulation.fs" />
   </ItemGroup>
 
