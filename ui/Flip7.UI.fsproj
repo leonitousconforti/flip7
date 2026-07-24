@@ -8,6 +8,9 @@
   <ItemGroup>
     <Compile Include="Ansi.fs" />
     <Compile Include="Sparkline.fs" />
+    <Compile Include="Render.fs" />
+    <Compile Include="Input.fs" />
+    <Compile Include="Replay.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

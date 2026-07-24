@@ -4,20 +4,16 @@ module public Persistence =
     open System.IO
     open System
 
-    let public WriteInstant
-        (directory: string)
-        (instant: Player * Player list * (Deck * Deck))
-        : Player * Player list * (Deck * Deck) =
-        let player, otherPlayers, (deck, discards) = instant
-
+    let public WriteInstant (directory: string) (instant: Instant) : Instant =
         let path = Directory.CreateDirectory directory
         let toDirectory = fun file -> Path.Combine(path.FullName, file)
-        let write = fun file lines -> File.WriteAllLines(toDirectory file, lines)
+        let write = fun file (lines: string array) -> File.WriteAllLines(toDirectory file, lines)
 
-        deck |> Deck.Serialize |> write "deck.txt"
-        discards |> Deck.Serialize |> write "discards.txt"
+        instant.Deck |> Deck.Serialize |> write "deck.txt"
+        instant.Discards |> Deck.Serialize |> write "discards.txt"
+        instant.Event |> Event.Serialize |> write "event.txt"
 
-        player :: otherPlayers
+        instant.Players
         |> List.iteri (fun index player ->
             write $"player{index}.txt" [|
                 $"{player.Name}"
@@ -30,12 +26,13 @@ module public Persistence =
 
         instant
 
-    let public ReadInstant (directory: string) : Player * Player list * (Deck * Deck) =
+    let public ReadInstant (directory: string) : Instant =
         let toDirectory = fun file -> Path.Combine(directory, file)
         let read = fun file -> File.ReadLines(toDirectory file)
 
         let deck = read "deck.txt" |> Deck.Deserialize
         let discards = read "discards.txt" |> Deck.Deserialize
+        let event = read "event.txt" |> Event.Deserialize
 
         let playerFiles =
             Directory.GetFiles(directory, "player*.txt")
@@ -44,10 +41,10 @@ module public Persistence =
         let players =
             playerFiles
             |> Array.map (fun file ->
-                let lines = read file |> Seq.cache
-                let name = lines |> Seq.take 1 |> Seq.head
-                let strategy = lines |> Seq.skip 1 |> Seq.take 1 |> Seq.head |> Strategy.Parse
-                let firmScore = lines |> Seq.skip 2 |> Seq.take 1 |> Seq.head |> uint
+                let lines = File.ReadLines file |> Seq.cache
+                let name = lines |> Seq.item 0
+                let strategy = lines |> Seq.item 1 |> Strategy.Parse
+                let firmScore = lines |> Seq.item 2 |> uint
                 let hand = lines |> Seq.skip 4 |> Hand.Deserialize
 
                 {
@@ -59,9 +56,12 @@ module public Persistence =
             )
             |> Array.toList
 
-        match players with
-        | player :: otherPlayers -> player, otherPlayers, (deck, discards)
-        | [] -> failwith "No players found in the instant"
+        {
+            Event = event
+            Players = players
+            Deck = deck
+            Discards = discards
+        }
 
     let public WriteTimelineLazy (timeline: Timeline) : Timeline =
         let identifier = DateTime.UtcNow.ToString "s"

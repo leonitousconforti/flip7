@@ -1,5 +1,43 @@
 namespace Flip7
 
+/// <summary>
+/// A strategy decides whether a player hits or stands. Strategies are
+/// represented as data rather than functions so that they can be serialized
+/// and deserialized; use Strategy.Decide to evaluate one.
+/// </summary>
+type public Strategy =
+    | AlwaysHits
+    | AlwaysStands
+    | RandomWithProbability of float
+    | HitUntilScore of uint
+    | HitUntilNumCards of uint
+
+    override self.ToString() : string =
+        match self with
+        | AlwaysHits -> "AlwaysHits"
+        | AlwaysStands -> "AlwaysStands"
+        | RandomWithProbability probability ->
+            let invariant = probability.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+            $"RandomWithProbability {invariant}"
+        | HitUntilScore threshold -> $"HitUntilScore {threshold}"
+        | HitUntilNumCards threshold -> $"HitUntilNumCards {threshold}"
+
+    static member public Parse(string: string) : Strategy =
+        match string.Split ' ' with
+        | [| "AlwaysHits" |] -> AlwaysHits
+        | [| "AlwaysStands" |] -> AlwaysStands
+        | [| "RandomWithProbability"; probability |] ->
+            RandomWithProbability(System.Double.Parse(probability, System.Globalization.CultureInfo.InvariantCulture))
+        | [| "HitUntilScore"; threshold |] -> HitUntilScore(System.UInt32.Parse threshold)
+        | [| "HitUntilNumCards"; threshold |] -> HitUntilNumCards(System.UInt32.Parse threshold)
+        | _ -> raise (System.ArgumentException $"Invalid strategy string: {string}")
+
+    static member TryParse(string: string) : Strategy option =
+        try
+            string |> Strategy.Parse |> Some
+        with :? System.ArgumentException ->
+            None
+
 module public Strategy =
     /// <summary>
     /// To hit or to stand.
@@ -15,57 +53,43 @@ module public Strategy =
     type public StrategyPlayer = { Name: string; FirmScore: uint; Hand: Hand }
 
     /// <summary>
-    /// A strategy is a function that takes the current session number, the
-    /// player, the list of other players, and the decks, and returns whether to
-    /// hit or stand.
-    /// </summary>
-    type public Strategy = unit -> StrategyPlayer -> StrategyPlayer list -> (Deck * Deck) -> HitOrStand
-
-    /// <summary>
-    /// A strategy that always hits.
-    /// </summary>
-    let public AlwaysHits: Strategy = fun _session _player _otherPlayers _decks -> Hit
-
-    /// <summary>
-    /// A strategy that always stands.
-    /// </summary>
-    let public AlwaysStands: Strategy =
-        fun _session _player _otherPlayers _decks -> Stand
-
-    /// <summary>
-    /// A strategy that randomly hits or stands with a given probability.
-    /// </summary>
-    let public RandomWithProbability: float -> Strategy =
-        let random = System.Random()
-        fun probability _session _player _otherPlayers _decks ->
-            if random.NextDouble() < probability then Hit else Stand
-
-    /// <summary>
     /// A strategy that randomly hits or stands with a 50% probability.
     /// </summary>
     let public Random: Strategy = RandomWithProbability 0.5
 
     /// <summary>
-    /// A strategy that hits until the hand's score is at least the given
-    /// threshold, then stands.
+    /// Evaluates a strategy using the given source of randomness, given the
+    /// current session number, the player, the list of other players, and the
+    /// decks, returning whether to hit or stand.
     /// </summary>
-    let public HitUntilScore: uint -> Strategy =
-        fun threshold _session player _otherPlayers _decks -> if Hand.Score player.Hand < threshold then Hit else Stand
-
-    /// <summary>
-    /// A strategy that hits until the hand has a certain number of cards, then
-    /// stands.
-    /// </summary>
-    let public HitUntilNumCards: uint -> Strategy =
-        fun threshold _session player _otherPlayers _decks ->
+    let public DecideWith
+        (random: System.Random)
+        (strategy: Strategy)
+        (session: uint)
+        (player: StrategyPlayer)
+        (otherPlayers: StrategyPlayer list)
+        (decks: Deck * Deck)
+        : HitOrStand =
+        match strategy with
+        | AlwaysHits -> Hit
+        | AlwaysStands -> Stand
+        | RandomWithProbability probability -> if random.NextDouble() < probability then Hit else Stand
+        | HitUntilScore threshold -> if Hand.Score player.Hand < threshold then Hit else Stand
+        | HitUntilNumCards threshold ->
             if uint (List.length player.Hand) < threshold then
                 Hit
             else
                 Stand
 
-/// <summary>
-/// A strategy is a function that takes the current session number, the
-/// player, the list of other players, and the decks, and returns whether to
-/// hit or stand.
-/// </summary>
-type public Strategy = Strategy.Strategy
+    /// <summary>
+    /// Evaluates a strategy given the current session number, the player, the
+    /// list of other players, and the decks, returning whether to hit or stand.
+    /// </summary>
+    let public Decide
+        (strategy: Strategy)
+        (session: uint)
+        (player: StrategyPlayer)
+        (otherPlayers: StrategyPlayer list)
+        (decks: Deck * Deck)
+        : HitOrStand =
+        DecideWith System.Random.Shared strategy session player otherPlayers decks

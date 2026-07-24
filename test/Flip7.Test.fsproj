@@ -10,6 +10,10 @@
     <Compile Include="CardTests.fs" />
     <Compile Include="HandTests.fs" />
     <Compile Include="DeckTests.fs" />
+    <Compile Include="StrategyTests.fs" />
+    <Compile Include="TimelineTests.fs" />
+    <Compile Include="PersistenceTests.fs" />
+    <Compile Include="EventTests.fs" />
     <Compile Include="SimulationTests.fs" />
   </ItemGroup>
 

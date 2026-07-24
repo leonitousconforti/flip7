@@ -134,15 +134,16 @@ module public Deck =
         Map.fold (fun acc _ count -> acc + bigint count) 0I
 
     /// <summary>
-    /// Draws a card from the deck, returning the new deck, the new discards,
-    /// and the drawn card. If the deck is empty, the discards are shuffled and
-    /// become the new deck, and the discards become empty.
+    /// Draws a card from the deck using the given source of randomness,
+    /// returning the new deck, the new discards, and the drawn card. If the
+    /// deck is empty, the discards are shuffled and become the new deck, and
+    /// the discards become empty.
     /// </summary>
-    let rec internal Draw (decks: Deck * Deck) (count: uint) : (Deck * Deck) * Card list =
+    let rec internal DrawWith (random: System.Random) (decks: Deck * Deck) (count: uint) : (Deck * Deck) * Card list =
         let deck, discards = decks
 
         if IsEmpty deck then
-            Draw (discards, Empty) count
+            DrawWith random (discards, Empty) count
         else
 
         assert (count > 0u)
@@ -153,7 +154,7 @@ module public Deck =
             deck
             |> Map.toArray
             |> Array.collect (fun (card, count) -> Array.replicate (int count) card)
-            |> Array.randomShuffle
+            |> Array.randomShuffleWith random
             |> Array.head
 
         let deck' =
@@ -169,23 +170,47 @@ module public Deck =
         match count with
         | 1u -> (deck', discards), [ drawnCard ]
         | _ ->
-            let lastDecks, lastDrawnCards = Draw (deck', discards) (count - 1u)
+            let lastDecks, lastDrawnCards = DrawWith random (deck', discards) (count - 1u)
             lastDecks, drawnCard :: lastDrawnCards
+
+    /// <summary>
+    /// Draws a card from the deck, returning the new deck, the new discards,
+    /// and the drawn card. If the deck is empty, the discards are shuffled and
+    /// become the new deck, and the discards become empty.
+    /// </summary>
+    let internal Draw (decks: Deck * Deck) (count: uint) : (Deck * Deck) * Card list =
+        DrawWith System.Random.Shared decks count
+
+    /// <summary>
+    /// Draws one card from the deck using the given source of randomness,
+    /// returning the new deck, the new discards, and the drawn card. If the
+    /// deck is empty, the discards are shuffled and become the new deck, and
+    /// the discards become empty.
+    /// </summary>
+    let public Draw1With (random: System.Random) (decks: Deck * Deck) =
+        DrawWith random decks 1u |> fun (decks, cards) -> decks, cards.Head
 
     /// <summary>
     /// Draws one card from the deck, returning the new deck, the new discards,
     /// and the drawn card. If the deck is empty, the discards are shuffled and
     /// become the new deck, and the discards become empty.
     /// </summary>
-    let public Draw1 (decks: Deck * Deck) =
-        Draw decks 1u |> fun (decks, cards) -> decks, cards.Head
+    let public Draw1 (decks: Deck * Deck) = Draw1With System.Random.Shared decks
+
+    /// <summary>
+    /// Draws three cards from the deck using the given source of randomness,
+    /// returning the new deck, the new discards and the drawn cards. If the
+    /// deck is empty, the discards are shuffled and become the new deck, and
+    /// the discards become empty.
+    /// </summary>
+    let public Draw3With (random: System.Random) (decks: Deck * Deck) = DrawWith random decks 3u
 
     /// <summary>
     /// Draws three cards from the deck, returning the new deck, the new
     /// discards and the drawn cards. If the deck is empty, the discards are
     /// shuffled and become the new deck, and the discards become empty.
     /// </summary>
-    let public Draw3 (decks: Deck * Deck) = Draw decks 3u
+    let public Draw3 (decks: Deck * Deck) = Draw3With System.Random.Shared decks
 
     /// <summary>
     /// The probability distribution function of the deck, which maps each card

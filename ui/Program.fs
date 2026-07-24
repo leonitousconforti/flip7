@@ -8,7 +8,7 @@ let rec private loop
     (deck: Deck)
     (discards: Deck)
     (players: Map<string, (uint * Hand)>)
-    (simulation: Map<string, uint> * seq<string * Hand>)
+    (simulation: Timeline)
     (cursor: Choice<Card, string>)
     : unit =
     Console.Clear()
@@ -65,32 +65,12 @@ let rec private loop
             Simulation.probabilityToBust deck discards hand onlyPlayerNotBusted
             |> fun p -> p * 100.0
 
-        let emojiStatus =
-            if probabilityToBust >= 50.0 then "😵"
-            elif probabilityToBust >= 45.0 then "😵‍💫"
-            elif probabilityToBust >= 40.0 then "🫪"
-            elif probabilityToBust >= 35.0 then "🫣"
-            elif probabilityToBust >= 30.0 then "😱"
-            elif probabilityToBust >= 25.0 then "😰"
-            elif probabilityToBust >= 20.0 then "😬"
-            elif probabilityToBust >= 15.0 then "😐"
-            elif probabilityToBust >= 10.0 then "🤔"
-            elif probabilityToBust >= 5.0 then "🙂"
-            else "😎"
+        let emojiStatus = bustEmoji probabilityToBust
 
         let preamble =
             sprintf "%s %s (%dpts + %dpts?, %.2f%%): " playerName emojiStatus firmScore tentativeScore probabilityToBust
 
-        hand
-        |> List.fold
-            (fun (topRow, midRow, botRow) card ->
-                let c = card.ToString().PadRight(2).PadLeft(3)
-                let topRow' = topRow + $"┌───┐"
-                let midRow' = midRow + $"│{c}│"
-                let botRow' = botRow + $"└───┘"
-                topRow', midRow', botRow'
-            )
-            (String.replicate 40 " ", preamble.PadRight 40, String.replicate 40 " ")
+        handRows 40 preamble hand
         |> fun (top, mid, bot) ->
             let isHighlighted = cursor = Choice2Of2 playerName
             let styles = if isHighlighted then [ Ansi.Inverse ] else []
@@ -225,8 +205,43 @@ let rec private loop
         loop deck discards players simulation (Choice1Of2 cards[index'])
     | _ -> loop deck discards players simulation cursor
 
+let private runReplay (source: string) (timeline: Instant array) : int =
+    Console.Clear()
+    Console.CursorVisible <- false
+
+    try
+        Replay.Run source timeline
+    finally
+        Console.CursorVisible <- true
+        Console.Clear()
+
+    0
+
 [<EntryPoint>]
 let main args =
+    match Array.toList args with
+    // Scrub through a previously persisted timeline
+    | [ "--replay"; directory ] -> Persistence.ReadTimeline directory |> Seq.toArray |> runReplay directory
+
+    // Simulate a full game and scrub through it immediately
+    | "--simulate" :: names when names.Length > 0 && names.Length <= 5 ->
+        let strategies = [
+            Strategy.Random
+            HitUntilScore 25u
+            HitUntilNumCards 4u
+            RandomWithProbability 0.75
+            AlwaysHits
+        ]
+
+        let players =
+            names |> List.mapi (fun index name -> name, strategies[index % strategies.Length])
+
+        Timeline.Simulate players None None None None
+        |> Seq.toArray
+        |> runReplay "simulated game"
+
+    | _ ->
+
     System.Diagnostics.Debug.Assert(
         args.Length > 0,
         "Please provide at least one player name as a command-line argument."
@@ -255,10 +270,10 @@ let main args =
         Array.map (fun name -> name, (0u, List.empty)) args |> Map.ofArray
 
     let simulation =
-        Simulation.Simulate
-            (players |> Map.toList |> List.map (fun (n, (s, _)) -> n, Strategy.Random, s))
+        Timeline.Simulate
+            (players |> Map.toList |> List.map (fun (name, _) -> name, Strategy.Random))
             None
-            None
+            (Some(players |> Map.map (fun _ (score, _) -> score)))
             None
             None
 
