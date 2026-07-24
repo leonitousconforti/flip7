@@ -114,13 +114,13 @@ module public Deck =
     /// Increments the count of the given card in the deck by 1.
     /// </summary>
     let public Increment (deck: Deck) (card: Card) : Deck =
-        Map.change card (Option.map ((+) 1u)) deck
+        Map.change card (Option.map (fun count -> count + 1u)) deck
 
     /// <summary>
     /// Decrements the count of the given card in the deck by 1.
     /// </summary>
     let public Decrement (deck: Deck) (card: Card) : Deck =
-        Map.change card (Option.map ((-) 1u)) deck
+        Map.change card (Option.map (fun count -> count - 1u)) deck
 
     /// <summary>
     /// A deck is empty if it contains zero copies of every card.
