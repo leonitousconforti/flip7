@@ -4,14 +4,64 @@ open System
 
 open Flip7
 
+// The help page fills the asserted 80x24 window exactly: 24 lines, joined so
+// the last one carries no newline and the screen does not scroll.
+let private renderHelp () : unit =
+    let rule = String.replicate 80 "─"
+    let entry (keys: string) (description: string) = sprintf "   %s%s" (keys.PadRight 18) description
+
+    let section (title: string) (annotation: string) =
+        styled [ Ansi.Bright ] $" {title}" + styled [ Ansi.Dim ] $"  — {annotation}"
+
+    [
+        rule
+        "help" |> centered 80
+        rule
+        styled [ Ansi.Bright ] " cursor"
+        entry "↑/↓" "rotate between the distributions and each player"
+        entry "←/→" "move along the distributions (wraps around)"
+        ""
+        section "deck" "with the cursor on the distributions"
+        entry "+" "return a copy of the highlighted card to the deck"
+        entry "-" "remove a copy of the highlighted card from the deck"
+        ""
+        section "dealing" "with the cursor on a player"
+        entry "0-9" "value card 0-9"
+        entry "x  e  t" "value card 10, 11, 12"
+        entry "shift+2/4/6/8" "modifier card +2, +4, +6, +8"
+        entry "shift+1  shift+x" "modifier card x2, +10"
+        entry "s  d  f" "action card SecondChance, Deal3, Freeze"
+        entry "backspace" "take the player's most recent card back into the deck"
+        ""
+        styled [ Ansi.Bright ] " program"
+        entry "enter" "bank every hand's score and start the next round"
+        entry "?  h" "this help page"
+        entry "q  esc" "quit"
+        "[any key] back to the table" |> centered 80 |> styled [ Ansi.Dim; Ansi.Cyan ]
+    ]
+    |> String.concat "\n"
+    |> printf "%s"
+
 let rec private loop
     (deck: Deck)
     (discards: Deck)
     (players: Map<string, (uint * Hand)>)
     (simulation: Timeline)
-    (cursor: Choice<Card, string>)
+    (cursor: Choice<Card, string, Choice<Card, string>>)
     : unit =
     Console.Clear()
+
+    // The third cursor case is the help page, remembering the cursor to put
+    // back once any key dismisses it
+    match cursor with
+    | Choice3Of3 resume ->
+        renderHelp ()
+        Console.ReadKey true |> ignore
+
+        match resume with
+        | Choice1Of2 card -> loop deck discards players simulation (Choice1Of3 card)
+        | Choice2Of2 player -> loop deck discards players simulation (Choice2Of3 player)
+    | _ ->
 
     if Deck.IsEmpty deck then
         loop discards Deck.Empty players simulation cursor
@@ -19,8 +69,8 @@ let rec private loop
 
     let maybeCursorCard =
         match cursor with
-        | Choice2Of2 _ -> None
-        | Choice1Of2 hc -> Some hc
+        | Choice1Of3 hc -> Some hc
+        | _ -> None
 
     let pdf = deck |> Deck.pdf
     let cdf = deck |> Deck.cdf
@@ -36,14 +86,14 @@ let rec private loop
 
     let pdfTitle =
         match cursor with
-        | Choice2Of2 _ -> "pdf"
-        | Choice1Of2 hc -> sprintf "p(%s)=%.2f%%" (string hc) (Map.find hc pdf * 100.0)
+        | Choice1Of3 hc -> sprintf "p(%s)=%.2f%%" (string hc) (Map.find hc pdf * 100.0)
+        | _ -> "pdf"
         |> centered (pdf |> Map.keys |> Seq.length)
 
     let cdfTitle =
         match cursor with
-        | Choice2Of2 _ -> "cdf"
-        | Choice1Of2 hc -> sprintf "P(%s)=%.2f%%" (string hc) (Map.find hc cdf * 100.0)
+        | Choice1Of3 hc -> sprintf "P(%s)=%.2f%%" (string hc) (Map.find hc cdf * 100.0)
+        | _ -> "cdf"
         |> centered (cdf |> Map.keys |> Seq.length)
 
     printfn "%s" (String.replicate 80 "─")
@@ -72,7 +122,7 @@ let rec private loop
 
         handRows 40 preamble hand
         |> fun (top, mid, bot) ->
-            let isHighlighted = cursor = Choice2Of2 playerName
+            let isHighlighted = cursor = Choice2Of3 playerName
             let styles = if isHighlighted then [ Ansi.Inverse ] else []
             styled styles top, styled styles mid, styled styles bot
         |> fun (top, mid, bot) ->
@@ -94,7 +144,7 @@ let rec private loop
         |> centered 80
         |> styled [ Ansi.BrightRed ]
     | [] ->
-        "[↔] move along distributions   [↕] rotate through players   [q/esc] quit"
+        "[↔] distributions   [↕] players   [?] help   [q/esc] quit"
         |> centered 80
         |> styled [ Ansi.Dim; Ansi.Cyan ]
     |> printf "%s"
@@ -134,7 +184,7 @@ let rec private loop
                 score + uint handScore, List.empty
             )
 
-        let cursor' = Choice1Of2(ValueCard Card.Zero)
+        let cursor' = Choice1Of3(ValueCard Card.Zero)
         loop deck discards' players' simulation cursor'
 
     let cards = Deck.Empty |> Map.toList |> List.map fst
@@ -147,62 +197,68 @@ let rec private loop
     | ConsoleModifiers.None, ConsoleKey.Escape, _ -> ()
     | ConsoleModifiers.None, ConsoleKey.Enter, _ -> commitSession ()
 
+    // Opening the help page, remembering the cursor it was opened over
+    | _, _, Choice1Of3 card when key.KeyChar = '?' || key.Key = ConsoleKey.H ->
+        loop deck discards players simulation (Choice3Of3(Choice1Of2 card))
+    | _, _, Choice2Of3 player when key.KeyChar = '?' || key.Key = ConsoleKey.H ->
+        loop deck discards players simulation (Choice3Of3(Choice2Of2 player))
+
     // Adding cards to current players hands
-    | ConsoleModifiers.None, ConsoleKey.D0, Choice2Of2 player -> addCardToPlayer (ValueCard Card.Zero) player
-    | ConsoleModifiers.Shift, ConsoleKey.D1, Choice2Of2 player -> addCardToPlayer (ModifierCard Card.Double) player
-    | ConsoleModifiers.None, ConsoleKey.D1, Choice2Of2 player -> addCardToPlayer (ValueCard Card.One) player
-    | ConsoleModifiers.Shift, ConsoleKey.D2, Choice2Of2 player -> addCardToPlayer (ModifierCard Card.Plus2) player
-    | ConsoleModifiers.None, ConsoleKey.D2, Choice2Of2 player -> addCardToPlayer (ValueCard Card.Two) player
-    | ConsoleModifiers.None, ConsoleKey.D3, Choice2Of2 player -> addCardToPlayer (ValueCard Card.Three) player
-    | ConsoleModifiers.Shift, ConsoleKey.D4, Choice2Of2 player -> addCardToPlayer (ModifierCard Card.Plus4) player
-    | ConsoleModifiers.None, ConsoleKey.D4, Choice2Of2 player -> addCardToPlayer (ValueCard Card.Four) player
-    | ConsoleModifiers.None, ConsoleKey.D5, Choice2Of2 player -> addCardToPlayer (ValueCard Card.Five) player
-    | ConsoleModifiers.Shift, ConsoleKey.D6, Choice2Of2 player -> addCardToPlayer (ModifierCard Card.Plus6) player
-    | ConsoleModifiers.None, ConsoleKey.D6, Choice2Of2 player -> addCardToPlayer (ValueCard Card.Six) player
-    | ConsoleModifiers.None, ConsoleKey.D7, Choice2Of2 player -> addCardToPlayer (ValueCard Card.Seven) player
-    | ConsoleModifiers.Shift, ConsoleKey.D8, Choice2Of2 player -> addCardToPlayer (ModifierCard Card.Plus8) player
-    | ConsoleModifiers.None, ConsoleKey.D8, Choice2Of2 player -> addCardToPlayer (ValueCard Card.Eight) player
-    | ConsoleModifiers.None, ConsoleKey.D9, Choice2Of2 player -> addCardToPlayer (ValueCard Card.Nine) player
-    | ConsoleModifiers.Shift, ConsoleKey.X, Choice2Of2 player -> addCardToPlayer (ModifierCard Card.Plus10) player
-    | ConsoleModifiers.None, ConsoleKey.X, Choice2Of2 player -> addCardToPlayer (ValueCard Card.Ten) player
-    | ConsoleModifiers.None, ConsoleKey.E, Choice2Of2 player -> addCardToPlayer (ValueCard Card.Eleven) player
-    | ConsoleModifiers.None, ConsoleKey.T, Choice2Of2 player -> addCardToPlayer (ValueCard Card.Twelve) player
-    | ConsoleModifiers.None, ConsoleKey.S, Choice2Of2 player -> addCardToPlayer (ActionCard Card.SecondChance) player
-    | ConsoleModifiers.None, ConsoleKey.D, Choice2Of2 player -> addCardToPlayer (ActionCard Card.Deal3) player
-    | ConsoleModifiers.None, ConsoleKey.F, Choice2Of2 player -> addCardToPlayer (ActionCard Card.Freeze) player
+    | ConsoleModifiers.None, ConsoleKey.D0, Choice2Of3 player -> addCardToPlayer (ValueCard Card.Zero) player
+    | ConsoleModifiers.Shift, ConsoleKey.D1, Choice2Of3 player -> addCardToPlayer (ModifierCard Card.Double) player
+    | ConsoleModifiers.None, ConsoleKey.D1, Choice2Of3 player -> addCardToPlayer (ValueCard Card.One) player
+    | ConsoleModifiers.Shift, ConsoleKey.D2, Choice2Of3 player -> addCardToPlayer (ModifierCard Card.Plus2) player
+    | ConsoleModifiers.None, ConsoleKey.D2, Choice2Of3 player -> addCardToPlayer (ValueCard Card.Two) player
+    | ConsoleModifiers.None, ConsoleKey.D3, Choice2Of3 player -> addCardToPlayer (ValueCard Card.Three) player
+    | ConsoleModifiers.Shift, ConsoleKey.D4, Choice2Of3 player -> addCardToPlayer (ModifierCard Card.Plus4) player
+    | ConsoleModifiers.None, ConsoleKey.D4, Choice2Of3 player -> addCardToPlayer (ValueCard Card.Four) player
+    | ConsoleModifiers.None, ConsoleKey.D5, Choice2Of3 player -> addCardToPlayer (ValueCard Card.Five) player
+    | ConsoleModifiers.Shift, ConsoleKey.D6, Choice2Of3 player -> addCardToPlayer (ModifierCard Card.Plus6) player
+    | ConsoleModifiers.None, ConsoleKey.D6, Choice2Of3 player -> addCardToPlayer (ValueCard Card.Six) player
+    | ConsoleModifiers.None, ConsoleKey.D7, Choice2Of3 player -> addCardToPlayer (ValueCard Card.Seven) player
+    | ConsoleModifiers.Shift, ConsoleKey.D8, Choice2Of3 player -> addCardToPlayer (ModifierCard Card.Plus8) player
+    | ConsoleModifiers.None, ConsoleKey.D8, Choice2Of3 player -> addCardToPlayer (ValueCard Card.Eight) player
+    | ConsoleModifiers.None, ConsoleKey.D9, Choice2Of3 player -> addCardToPlayer (ValueCard Card.Nine) player
+    | ConsoleModifiers.Shift, ConsoleKey.X, Choice2Of3 player -> addCardToPlayer (ModifierCard Card.Plus10) player
+    | ConsoleModifiers.None, ConsoleKey.X, Choice2Of3 player -> addCardToPlayer (ValueCard Card.Ten) player
+    | ConsoleModifiers.None, ConsoleKey.E, Choice2Of3 player -> addCardToPlayer (ValueCard Card.Eleven) player
+    | ConsoleModifiers.None, ConsoleKey.T, Choice2Of3 player -> addCardToPlayer (ValueCard Card.Twelve) player
+    | ConsoleModifiers.None, ConsoleKey.S, Choice2Of3 player -> addCardToPlayer (ActionCard Card.SecondChance) player
+    | ConsoleModifiers.None, ConsoleKey.D, Choice2Of3 player -> addCardToPlayer (ActionCard Card.Deal3) player
+    | ConsoleModifiers.None, ConsoleKey.F, Choice2Of3 player -> addCardToPlayer (ActionCard Card.Freeze) player
 
     // Removing cards from current players hands
-    | ConsoleModifiers.None, ConsoleKey.Backspace, Choice2Of2 player -> popCardFromPlayer player
+    | ConsoleModifiers.None, ConsoleKey.Backspace, Choice2Of3 player -> popCardFromPlayer player
 
     // Modifying card counts in the deck
-    | ConsoleModifiers.None, ConsoleKey.Add, Choice1Of2 card ->
+    | ConsoleModifiers.None, ConsoleKey.Add, Choice1Of3 card ->
         loop (Deck.Increment deck card) discards players simulation cursor
-    | ConsoleModifiers.None, ConsoleKey.Subtract, Choice1Of2 card ->
+    | ConsoleModifiers.None, ConsoleKey.Subtract, Choice1Of3 card ->
         loop (Deck.Decrement deck card) discards players simulation cursor
 
     // Navigating through players and cards
-    | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice1Of2 _card ->
-        loop deck discards players simulation (Choice2Of2 playerNames[playerNames.Length - 1])
-    | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice1Of2 _card ->
-        loop deck discards players simulation (Choice2Of2 playerNames[playerNames.Length - playerNames.Length])
-    | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice2Of2 player when player = playerNames[0] ->
-        loop deck discards players simulation (Choice1Of2(ValueCard Card.Zero))
-    | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice2Of2 player when player = playerNames[playerNames.Length - 1] ->
-        loop deck discards players simulation (Choice1Of2(ValueCard Card.Zero))
-    | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice2Of2 player ->
+    | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice1Of3 _card ->
+        loop deck discards players simulation (Choice2Of3 playerNames[playerNames.Length - 1])
+    | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice1Of3 _card ->
+        loop deck discards players simulation (Choice2Of3 playerNames[playerNames.Length - playerNames.Length])
+    | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice2Of3 player when player = playerNames[0] ->
+        loop deck discards players simulation (Choice1Of3(ValueCard Card.Zero))
+    | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice2Of3 player when player = playerNames[playerNames.Length - 1] ->
+        loop deck discards players simulation (Choice1Of3(ValueCard Card.Zero))
+    | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice2Of3 player ->
         let index = playerNames |> List.findIndex (fun name -> name = player)
-        loop deck discards players simulation (Choice2Of2 playerNames[index - 1])
-    | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice2Of2 player ->
+        loop deck discards players simulation (Choice2Of3 playerNames[index - 1])
+    | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice2Of3 player ->
         let index = playerNames |> List.findIndex (fun name -> name = player)
-        loop deck discards players simulation (Choice2Of2 playerNames[index + 1])
-    | ConsoleModifiers.None, ConsoleKey.LeftArrow, Choice1Of2 card ->
+        loop deck discards players simulation (Choice2Of3 playerNames[index + 1])
+    | ConsoleModifiers.None, ConsoleKey.LeftArrow, Choice1Of3 card ->
         let index = cards |> List.findIndex (fun c -> c = card)
         let index' = (index - 1 + cards.Length) % cards.Length
-        loop deck discards players simulation (Choice1Of2 cards[index'])
-    | ConsoleModifiers.None, ConsoleKey.RightArrow, Choice1Of2 card ->
+        loop deck discards players simulation (Choice1Of3 cards[index'])
+    | ConsoleModifiers.None, ConsoleKey.RightArrow, Choice1Of3 card ->
         let index = cards |> List.findIndex (fun c -> c = card)
         let index' = (index + 1) % cards.Length
-        loop deck discards players simulation (Choice1Of2 cards[index'])
+        loop deck discards players simulation (Choice1Of3 cards[index'])
     | _ -> loop deck discards players simulation cursor
 
 let private runReplay (source: string) (timeline: Instant array) : int =
@@ -265,7 +321,7 @@ let main args =
 
     let deck: Deck = Deck.Full
     let discards: Deck = Deck.Empty
-    let cursor = Choice1Of2(ValueCard Card.Zero)
+    let cursor = Choice1Of3(ValueCard Card.Zero)
     let players: Map<string, uint * Hand> =
         Array.map (fun name -> name, (0u, List.empty)) args |> Map.ofArray
 
