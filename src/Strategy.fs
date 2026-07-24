@@ -11,6 +11,7 @@ type public Strategy =
     | RandomWithProbability of float
     | HitUntilScore of uint
     | HitUntilNumCards of uint
+    | HitUntilBustProbability of float
 
     override self.ToString() : string =
         match self with
@@ -21,6 +22,9 @@ type public Strategy =
             $"RandomWithProbability {invariant}"
         | HitUntilScore threshold -> $"HitUntilScore {threshold}"
         | HitUntilNumCards threshold -> $"HitUntilNumCards {threshold}"
+        | HitUntilBustProbability threshold ->
+            let invariant = threshold.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+            $"HitUntilBustProbability {invariant}"
 
     static member public Parse(string: string) : Strategy =
         match string.Split ' ' with
@@ -30,6 +34,8 @@ type public Strategy =
             RandomWithProbability(System.Double.Parse(probability, System.Globalization.CultureInfo.InvariantCulture))
         | [| "HitUntilScore"; threshold |] -> HitUntilScore(System.UInt32.Parse threshold)
         | [| "HitUntilNumCards"; threshold |] -> HitUntilNumCards(System.UInt32.Parse threshold)
+        | [| "HitUntilBustProbability"; threshold |] ->
+            HitUntilBustProbability(System.Double.Parse(threshold, System.Globalization.CultureInfo.InvariantCulture))
         | _ -> raise (System.ArgumentException $"Invalid strategy string: {string}")
 
     static member TryParse(string: string) : Strategy option =
@@ -77,6 +83,16 @@ module public Strategy =
         | HitUntilScore threshold -> if Hand.Score player.Hand < threshold then Hit else Stand
         | HitUntilNumCards threshold ->
             if uint (List.length player.Hand) < threshold then
+                Hit
+            else
+                Stand
+        | HitUntilBustProbability threshold ->
+            let deck, discards = decks
+            // No other active players means freeze and deal3 cards must be
+            // played on ourselves, so they count towards busting
+            let onlyPlayer = List.isEmpty otherPlayers
+
+            if Simulation.probabilityToBust deck discards player.Hand onlyPlayer < threshold then
                 Hit
             else
                 Stand
