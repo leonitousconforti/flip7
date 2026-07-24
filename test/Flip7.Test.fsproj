@@ -15,10 +15,12 @@
     <Compile Include="PersistenceTests.fs" />
     <Compile Include="EventTests.fs" />
     <Compile Include="TimelineTests.fs" />
+    <Compile Include="AnalysisTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\src\Flip7.fsproj" />
+    <ProjectReference Include="..\analysis\Flip7.Analysis.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
