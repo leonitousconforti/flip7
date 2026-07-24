@@ -9,6 +9,12 @@ let private player: Strategy.StrategyPlayer = {
     Hand = [ ValueCard Card.Seven; ValueCard Card.Eight ]
 }
 
+let private other: Strategy.StrategyPlayer = {
+    Name = "Bob"
+    FirmScore = 0u
+    Hand = [ ValueCard Card.One ]
+}
+
 let private decks = Deck.Full, Deck.Empty
 
 [<Fact>]
@@ -19,6 +25,7 @@ let ``ToString and Parse round-trip every strategy`` () =
         RandomWithProbability 0.25
         HitUntilScore 45u
         HitUntilNumCards 4u
+        HitUntilBustProbability 0.4
     ]
     |> List.iter (fun strategy -> Assert.Equal(strategy, Strategy.Parse(string strategy)))
 
@@ -58,3 +65,18 @@ let ``HitUntilNumCards hits below the threshold and stands at it`` () =
     // The player's hand has 2 cards
     Assert.Equal(Strategy.Hit, Strategy.Decide (HitUntilNumCards 3u) 0u player [] decks)
     Assert.Equal(Strategy.Stand, Strategy.Decide (HitUntilNumCards 2u) 0u player [] decks)
+
+[<Fact>]
+let ``HitUntilBustProbability hits below the threshold and stands above it`` () =
+    // With a full deck, the player's hand of a Seven and an Eight busts on 15
+    // of the 94 remaining cards (~16%)
+    Assert.Equal(Strategy.Hit, Strategy.Decide (HitUntilBustProbability 0.2) 0u player [ other ] decks)
+    Assert.Equal(Strategy.Stand, Strategy.Decide (HitUntilBustProbability 0.1) 0u player [ other ] decks)
+
+[<Fact>]
+let ``HitUntilBustProbability counts freeze and deal3 as busts when alone`` () =
+    // With other players still in the round the hand busts on 15 of 94 cards
+    // (~16%), but alone the freeze and deal3 cards must be played on yourself,
+    // pushing the probability past 19%
+    Assert.Equal(Strategy.Hit, Strategy.Decide (HitUntilBustProbability 0.18) 0u player [ other ] decks)
+    Assert.Equal(Strategy.Stand, Strategy.Decide (HitUntilBustProbability 0.18) 0u player [] decks)
