@@ -7,14 +7,17 @@ type public Hand = Card list
 
 module public Hand =
     /// <summary>
+    /// The number of distinct value cards in a hand; modifier and action
+    /// cards do not count.
+    /// </summary>
+    let public UniqueValueCards: Hand -> int =
+        List.filter (fun card -> card.IsValueCard) >> List.distinct >> List.length
+
+    /// <summary>
     /// You are awarded the flip7 bonus if you have 7 or more distinct value
     /// cards in your hand.
     /// </summary>
-    let public HasFlip7Bonus: Hand -> bool =
-        List.filter (fun card -> card.IsValueCard)
-        >> List.distinct
-        >> List.length
-        >> (<=) 7
+    let public HasFlip7Bonus: Hand -> bool = UniqueValueCards >> (<=) 7
 
     /// <summary>
     /// The score of a hand can be calculated using the ScoreBuckets of each
