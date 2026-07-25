@@ -104,12 +104,34 @@ let ``ProbabilityOfHit matches DecideWith for deterministic strategies`` () =
 
     Assert.NotEmpty observations
 
-    let deterministic = [ AlwaysHits; AlwaysStands; HitUntilScore 15u; HitUntilNumCards 3u ]
+    let deterministic = [
+        AlwaysHits
+        AlwaysStands
+        HitUntilScore 15u
+        HitUntilNumCards 3u
+        HitUntilBustProbability 0.3
+        HitUntilNaiveBustProbability 0.3
+        HitUntilTotal 150u
+        HitUntilUniqueValues 4u
+        ChasesFlip7(18u, 5u)
+        EmboldenedBySecondChance 18u
+        HitWhileBehindLeader 10u
+        StandsAfterTurn 10u
+        MaximizesExpectedValue
+    ]
 
     for observation in observations do
         for strategy in deterministic do
             let expected =
-                match Strategy.DecideWith random strategy 0u observation.Player observation.OtherPlayers observation.Decks with
+                match
+                    Strategy.DecideWith
+                        random
+                        strategy
+                        observation.Session
+                        observation.Player
+                        observation.OtherPlayers
+                        observation.Decks
+                with
                 | Strategy.Hit -> 1.0
                 | Strategy.Stand -> 0.0
 
@@ -136,6 +158,9 @@ let ``Players who stood busted or were frozen are excluded from other players`` 
     let othersOf (observation: Observation) = observation.OtherPlayers |> List.map (fun player -> player.Name)
 
     Assert.Equal(4, List.length observations)
+
+    // All instants are in one round, so sessions count up from the second
+    Assert.Equal<uint list>([ 1u; 2u; 3u; 4u ], observations |> List.map (fun observation -> observation.Session))
 
     // B stood while C had already busted, so C is excluded from B's others
     Assert.Equal("B", observations[0].Name)
@@ -164,6 +189,7 @@ let ``Fit recovers a hit-until-score threshold from clean decisions`` () =
             {
                 Name = "Dad"
                 Choice = (if score < 20u then Strategy.Hit else Strategy.Stand)
+                Session = 0u
                 Player = { Name = "Dad"; FirmScore = 0u; Hand = hand }
                 OtherPlayers = []
                 Decks = Deck.Full, Deck.Empty
@@ -194,6 +220,7 @@ let ``Fit recovers a bust-probability threshold from clean decisions`` () =
             {
                 Name = "Mom"
                 Choice = (if float ones / 10.0 < 0.4 then Strategy.Hit else Strategy.Stand)
+                Session = 0u
                 Player = { Name = "Mom"; FirmScore = 0u; Hand = [ ValueCard Card.One ] }
                 OtherPlayers = [ other ]
                 Decks = deck, Deck.Empty
