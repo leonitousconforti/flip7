@@ -5,13 +5,16 @@ open Flip7
 /// <summary>
 /// A single voluntary hit-or-stand decision reconstructed from a timeline: the
 /// actor's pre-decision state (taken from the instant immediately before the
-/// event) and the choice they made. Player, OtherPlayers, and Decks mirror
-/// exactly what Strategy.DecideWith receives, so any candidate strategy can be
-/// replayed against an observation.
+/// event) and the choice they made. Session, Player, OtherPlayers, and Decks
+/// mirror exactly what Strategy.DecideWith receives, so any candidate strategy
+/// can be replayed against an observation.
 /// </summary>
 type public Observation = {
     Name: string
     Choice: Strategy.HitOrStand
+    /// The round's turn counter at decision time, equal to the produced
+    /// instant's index within its round.
+    Session: uint
     Player: Strategy.StrategyPlayer
     OtherPlayers: Strategy.StrategyPlayer list
     Decks: Deck * Deck
@@ -56,7 +59,7 @@ module public Observation =
     /// the round's events.
     /// </summary>
     let public FromTimeline (timeline: Timeline) : Observation list =
-        let observe (finished: Set<string>) (before: Instant) (event: Event) : Observation option =
+        let observe (finished: Set<string>) (session: uint) (before: Instant) (event: Event) : Observation option =
             Actor event
             |> Option.bind (fun (name, choice) ->
                 before.Players
@@ -65,6 +68,7 @@ module public Observation =
                 |> Option.map (fun actor -> {
                     Name = name
                     Choice = choice
+                    Session = session
                     Player = ToStrategyPlayer actor
                     OtherPlayers =
                         before.Players
@@ -78,22 +82,30 @@ module public Observation =
                 })
             )
 
-        let step (finished: Set<string>, previous: Instant option, observations: Observation list) (instant: Instant) =
+        // Session is the index of the instant about to be processed within
+        // its round, which is exactly the turn counter GoonSession passes to
+        // Strategy.DecideWith for the decision that produced the instant
+        let step
+            (finished: Set<string>, session: uint, previous: Instant option, observations: Observation list)
+            (instant: Instant)
+            =
             let observations' =
-                match previous |> Option.bind (fun before -> observe finished before instant.Event) with
+                match previous |> Option.bind (fun before -> observe finished session before instant.Event) with
                 | Some observation -> observation :: observations
                 | None -> observations
 
-            let finished' =
+            let finished', session' =
                 match instant.Event with
-                | Stood name -> Set.add name finished
-                | Froze(_, target) -> Set.add target finished
-                | RoundEnded _ -> Set.empty
-                | _ -> finished
+                | Stood name -> Set.add name finished, session + 1u
+                | Froze(_, target) -> Set.add target finished, session + 1u
+                | RoundEnded _ -> Set.empty, 0u
+                | _ -> finished, session + 1u
 
-            finished', Some instant, observations'
+            finished', session', Some instant, observations'
 
-        let _, _, observations = timeline |> Seq.fold step (Set.empty, None, [])
+        let _, _, _, observations =
+            timeline |> Seq.fold step (Set.empty, 0u, None, [])
+
         observations |> List.rev
 
     /// <summary>
