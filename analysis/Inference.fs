@@ -19,7 +19,8 @@ module public Inference =
     /// <summary>
     /// The probability that a strategy hits in the state captured by an
     /// observation. Mirrors Strategy.DecideWith, but returns the probability
-    /// of hitting instead of sampling a decision so likelihoods are exact.
+    /// of hitting instead of sampling a decision so likelihoods are exact;
+    /// probabilistic strategies return their actual curve value.
     /// </summary>
     let public ProbabilityOfHit (strategy: Strategy) (observation: Observation) : float =
         match strategy with
@@ -38,6 +39,52 @@ module public Inference =
             let onlyPlayer = List.isEmpty observation.OtherPlayers
 
             if Simulation.probabilityToBust deck discards observation.Player.Hand onlyPlayer < threshold then
+                1.0
+            else
+                0.0
+        | HitUntilNaiveBustProbability threshold ->
+            let unseen = observation.Player.Hand |> List.fold Deck.Decrement Deck.Full
+            let onlyPlayer = List.isEmpty observation.OtherPlayers
+
+            if Simulation.probabilityToBust unseen Deck.Empty observation.Player.Hand onlyPlayer < threshold then
+                1.0
+            else
+                0.0
+        | SoftHitUntilScore(threshold, temperature) ->
+            let distance = float (Hand.Score observation.Player.Hand) - float threshold
+            1.0 / (1.0 + exp (distance / temperature))
+        | HitUntilTotal target ->
+            if observation.Player.FirmScore + Hand.Score observation.Player.Hand < target then
+                1.0
+            else
+                0.0
+        | HitUntilUniqueValues threshold ->
+            if uint (Hand.UniqueValueCards observation.Player.Hand) < threshold then
+                1.0
+            else
+                0.0
+        | ChasesFlip7(score, uniques) ->
+            if uint (Hand.UniqueValueCards observation.Player.Hand) >= uniques then 1.0
+            elif Hand.Score observation.Player.Hand < score then 1.0
+            else 0.0
+        | EmboldenedBySecondChance threshold ->
+            if observation.Player.Hand |> List.contains (ActionCard Card.SecondChance) then 1.0
+            elif Hand.Score observation.Player.Hand < threshold then 1.0
+            else 0.0
+        | HitWhileBehindLeader margin ->
+            let total = observation.Player.FirmScore + Hand.Score observation.Player.Hand
+
+            let leader =
+                observation.OtherPlayers
+                |> List.map (fun other -> other.FirmScore + Hand.Score other.Hand)
+                |> List.fold max 0u
+
+            if total < leader + margin then 1.0 else 0.0
+        | StandsAfterTurn turns -> if observation.Session < turns then 1.0 else 0.0
+        | MaximizesExpectedValue ->
+            let deck, discards = observation.Decks
+
+            if Simulation.expectedValueOfHit deck discards observation.Player.Hand > 0.0 then
                 1.0
             else
                 0.0

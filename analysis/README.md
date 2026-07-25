@@ -36,12 +36,20 @@ round's events since the last `RoundEnded`.
 
 ### 2. A posterior over candidate strategies is fitted (`Inference.fs`)
 
-The candidate grid is every existing `Strategy` case at a spread of parameter
-values (`HitUntilScore 2..40`, `HitUntilNumCards 1..7`,
-`HitUntilBustProbability 0.1..0.9`, a few `RandomWithProbability` values,
-`AlwaysHits`, `AlwaysStands`) — deliberately, so that anything sampled from
-the posterior can be handed straight to `Timeline.SimulateWith` as an
-opponent model.
+The candidate grid is a spread of `Strategy` cases (`HitUntilScore 2..40`,
+`HitUntilNumCards 1..7`, `HitUntilBustProbability 0.1..0.9`, a few
+`RandomWithProbability` values, `AlwaysHits`, `AlwaysStands`) — deliberately
+real `Strategy` values, so that anything sampled from the posterior can be
+handed straight to `Timeline.SimulateWith` as an opponent model.
+
+The newer strategy cases (`HitUntilNaiveBustProbability`, `SoftHitUntilScore`,
+`HitUntilTotal`, `HitUntilUniqueValues`, `ChasesFlip7`,
+`EmboldenedBySecondChance`, `HitWhileBehindLeader`, `StandsAfterTurn`,
+`MaximizesExpectedValue`) are fully mirrored in `ProbabilityOfHit` but are
+deliberately **not** in the default grid yet: which to include, at what
+parameter spread, and with what overfitting guards (e.g. hold-out validation
+on an unseen game) is still to be decided. Every candidate added is another
+suspect that can fit a small sample by coincidence.
 
 For each candidate, the likelihood of an observed choice uses a
 trembling-hand noise model: with probability ε (default 0.1) the player
