@@ -46,10 +46,11 @@ module public Event =
         | SecondChanceDiscarded name -> [| "SecondChanceDiscarded"; name |]
         | Dealt3(source, target, cards) -> [| "Dealt3"; source; target; yield! cards |> List.map string |]
         | Flip7Achieved name -> [| "Flip7Achieved"; name |]
-        | RoundEnded scores -> [|
-            "RoundEnded"
-            yield! scores |> Map.toList |> List.map (fun (name, score) -> $"{name}: {score}")
-          |]
+        | RoundEnded scores ->
+            [|
+                "RoundEnded"
+                yield! scores |> Map.toList |> List.map (fun (name, score) -> $"{name}: {score}")
+            |]
 
     /// <summary>
     /// Parses an event from a sequence of lines: the event kind followed by
@@ -77,12 +78,18 @@ module public Event =
         | lines -> raise (System.FormatException $"Invalid event lines: %A{lines}")
 
 module public Timeline =
-    let private MakeInstant (event: Event) (active: Player list) (finished: Player list) (decks: Deck * Deck) : Instant = {
-        Event = event
-        Players = active @ finished
-        Deck = fst decks
-        Discards = snd decks
-    }
+    let private MakeInstant
+        (event: Event)
+        (active: Player list)
+        (finished: Player list)
+        (decks: Deck * Deck)
+        : Instant =
+        {
+            Event = event
+            Players = active @ finished
+            Deck = fst decks
+            Discards = snd decks
+        }
 
     let private HasSecondChance (player: Player) : bool =
         player.Hand |> List.exists (fun card -> card = ActionCard Card.SecondChance)
@@ -117,7 +124,8 @@ module public Timeline =
         // Invariant: active players should not have busted yet
         assert (active |> List.forall (fun player -> not (Hand.IsBust player.Hand)))
 
-        let flip7Winner = active |> List.tryFind (fun player -> Hand.HasFlip7Bonus player.Hand)
+        let flip7Winner =
+            active |> List.tryFind (fun player -> Hand.HasFlip7Bonus player.Hand)
 
         match flip7Winner, active with
         // Base case: if anyone has the Flip7 bonus, the round ends immediately
@@ -188,13 +196,14 @@ module public Timeline =
                     yield MakeInstant (SecondChanceDiscarded current.Name) active' finished decks''
                     yield! GoonSession random active' finished decks'' session'
                   }
-                | _ -> seq {
-                    let index, target = candidates |> List.randomChoiceWith random
-                    let target' = { target with Hand = card :: target.Hand }
-                    let active' = (others |> List.updateAt index target') @ [ current ]
-                    yield MakeInstant (SecondChancePassed(current.Name, target.Name)) active' finished decks'
-                    yield! GoonSession random active' finished decks' session'
-                  }
+                | _ ->
+                    seq {
+                        let index, target = candidates |> List.randomChoiceWith random
+                        let target' = { target with Hand = card :: target.Hand }
+                        let active' = (others |> List.updateAt index target') @ [ current ]
+                        yield MakeInstant (SecondChancePassed(current.Name, target.Name)) active' finished decks'
+                        yield! GoonSession random active' finished decks' session'
+                    }
 
             // Can never bust on a freeze card, just pick someone to freeze
             // (possibly yourself); they bank their points and are done for the
@@ -228,45 +237,46 @@ module public Timeline =
                     yield! GoonSession random active' finished decks'' session'
               }
 
-            | ActionCard Card.Deal3 -> seq {
-                let deck', discards' = decks'
+            | ActionCard Card.Deal3 ->
+                seq {
+                    let deck', discards' = decks'
 
-                // The deal3 card itself is used up immediately
-                let discards' = Deck.Increment discards' card
+                    // The deal3 card itself is used up immediately
+                    let discards' = Deck.Increment discards' card
 
-                let rotated = others @ [ current ]
-                let index, target = rotated |> List.indexed |> List.randomChoiceWith random
-                let (deck', discards'), drawn = Deck.Draw3With random (deck', discards')
+                    let rotated = others @ [ current ]
+                    let index, target = rotated |> List.indexed |> List.randomChoiceWith random
+                    let (deck', discards'), drawn = Deck.Draw3With random (deck', discards')
 
-                // Freeze and deal3 cards flipped during a deal3 are really
-                // hard to resolve with many edge cases, so simplify by
-                // discarding them instead of resolving them
-                let kept, dropped =
-                    drawn
-                    |> List.partition (fun card ->
-                        match card with
-                        | ActionCard Card.Freeze
-                        | ActionCard Card.Deal3 -> false
-                        | _ -> true
-                    )
+                    // Freeze and deal3 cards flipped during a deal3 are really
+                    // hard to resolve with many edge cases, so simplify by
+                    // discarding them instead of resolving them
+                    let kept, dropped =
+                        drawn
+                        |> List.partition (fun card ->
+                            match card with
+                            | ActionCard Card.Freeze
+                            | ActionCard Card.Deal3 -> false
+                            | _ -> true
+                        )
 
-                let discards' = dropped |> List.fold Deck.Increment discards'
-                let hand' = kept @ target.Hand
-                let isBust, reducedHand = Hand.Reduce hand'
-                let decks'' = deck', DiscardCanceled hand' reducedHand discards'
-                let target' = { target with Hand = reducedHand }
-                let event = Dealt3(current.Name, target.Name, drawn)
+                    let discards' = dropped |> List.fold Deck.Increment discards'
+                    let hand' = kept @ target.Hand
+                    let isBust, reducedHand = Hand.Reduce hand'
+                    let decks'' = deck', DiscardCanceled hand' reducedHand discards'
+                    let target' = { target with Hand = reducedHand }
+                    let event = Dealt3(current.Name, target.Name, drawn)
 
-                if isBust then
-                    let active' = rotated |> List.removeAt index
-                    let finished' = target' :: finished
-                    yield MakeInstant event active' finished' decks''
-                    yield! GoonSession random active' finished' decks'' session'
-                else
-                    let active' = rotated |> List.updateAt index target'
-                    yield MakeInstant event active' finished decks''
-                    yield! GoonSession random active' finished decks'' session'
-              }
+                    if isBust then
+                        let active' = rotated |> List.removeAt index
+                        let finished' = target' :: finished
+                        yield MakeInstant event active' finished' decks''
+                        yield! GoonSession random active' finished' decks'' session'
+                    else
+                        let active' = rotated |> List.updateAt index target'
+                        yield MakeInstant event active' finished decks''
+                        yield! GoonSession random active' finished decks'' session'
+                }
 
     /// <summary>
     /// Simulates a full game using the given source of randomness and returns
@@ -300,7 +310,11 @@ module public Timeline =
             let scores =
                 finalPlayers
                 |> List.map (fun player ->
-                    let score = if Hand.IsBust player.Hand then 0u else Hand.Score player.Hand
+                    let score =
+                        if Hand.IsBust player.Hand then
+                            0u
+                        else
+                            Hand.Score player.Hand
                     player.Name, score
                 )
                 |> Map.ofList

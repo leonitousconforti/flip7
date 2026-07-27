@@ -57,9 +57,7 @@ let ``RandomWithProbability is deterministic at the extremes`` () =
 [<Fact>]
 let ``RandomWithProbability is reproducible with a seeded random`` () =
     let decisions seed =
-        List.init 100 (fun _ ->
-            Strategy.DecideWith (System.Random seed) Strategy.Random 0u player [] decks
-        )
+        List.init 100 (fun _ -> Strategy.DecideWith (System.Random seed) Strategy.Random 0u player [] decks)
 
     Assert.Equal<Strategy.HitOrStand list>(decisions 42, decisions 42)
 
@@ -118,7 +116,10 @@ let ``HitUntilTotal counts banked points as well as the hand`` () =
 [<Fact>]
 let ``HitUntilUniqueValues ignores modifier cards`` () =
     // Three cards but only two unique values
-    let modified = { player with Hand = ModifierCard Card.Plus4 :: player.Hand }
+    let modified = {
+        player with
+            Hand = ModifierCard Card.Plus4 :: player.Hand
+    }
     Assert.Equal(Strategy.Hit, Strategy.Decide (HitUntilUniqueValues 3u) 0u modified [] decks)
     Assert.Equal(Strategy.Stand, Strategy.Decide (HitUntilUniqueValues 2u) 0u modified [] decks)
 
@@ -126,7 +127,9 @@ let ``HitUntilUniqueValues ignores modifier cards`` () =
 let ``ChasesFlip7 keeps hitting near the bonus regardless of score`` () =
     let sixUniques = {
         player with
-            Hand = [ Card.One; Card.Two; Card.Three; Card.Four; Card.Five; Card.Six ] |> List.map ValueCard
+            Hand =
+                [ Card.One; Card.Two; Card.Three; Card.Four; Card.Five; Card.Six ]
+                |> List.map ValueCard
     }
 
     // 21 points would normally stand at a threshold of 20, but six unique
@@ -138,7 +141,10 @@ let ``ChasesFlip7 keeps hitting near the bonus regardless of score`` () =
 
 [<Fact>]
 let ``EmboldenedBySecondChance hits fearlessly while holding one`` () =
-    let insured = { player with Hand = ActionCard Card.SecondChance :: player.Hand }
+    let insured = {
+        player with
+            Hand = ActionCard Card.SecondChance :: player.Hand
+    }
     Assert.Equal(Strategy.Hit, Strategy.Decide (EmboldenedBySecondChance 15u) 0u insured [] decks)
     Assert.Equal(Strategy.Stand, Strategy.Decide (EmboldenedBySecondChance 15u) 0u player [] decks)
 

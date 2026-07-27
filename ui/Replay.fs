@@ -27,7 +27,10 @@ let private Caption (event: Event) : string =
     | Flip7Achieved name -> $"{name} flipped 7 and ended the round!"
     | RoundEnded scores ->
         let scores =
-            scores |> Map.toList |> List.map (fun (name, score) -> $"{name} +{score}") |> String.concat "  "
+            scores
+            |> Map.toList
+            |> List.map (fun (name, score) -> $"{name} +{score}")
+            |> String.concat "  "
 
         $"round over: {scores}"
 
@@ -81,8 +84,11 @@ let private Render
 
     let status =
         let left = $"replay: {source}"
-        let right = $"round {roundsBefore[cursor] + 1}/{totalRounds}   instant {cursor + 1}/{timeline.Length}"
-        left + String.replicate (max 1 (width - visualLength left - visualLength right)) " " + right
+        let right =
+            $"round {roundsBefore[cursor] + 1}/{totalRounds}   instant {cursor + 1}/{timeline.Length}"
+        left
+        + String.replicate (max 1 (width - visualLength left - visualLength right)) " "
+        + right
 
     let playerRows =
         instant.Players
@@ -96,7 +102,11 @@ let private Render
                 Simulation.probabilityToBust instant.Deck instant.Discards player.Hand onlyPlayerNotBusted
                 |> fun p -> p * 100.0
 
-            let tentativeScore = if Hand.IsBust player.Hand then 0u else Hand.Score player.Hand
+            let tentativeScore =
+                if Hand.IsBust player.Hand then
+                    0u
+                else
+                    Hand.Score player.Hand
 
             let preamble =
                 sprintf
@@ -128,7 +138,17 @@ let private Render
         |> styled [ Ansi.Dim; Ansi.Cyan ]
 
     let lines =
-        [ rule; padded status; padded (instant.Event |> Caption |> centered width |> styled (CaptionStyle instant.Event)); rule ]
+        [
+            rule
+            padded status
+            padded (
+                instant.Event
+                |> Caption
+                |> centered width
+                |> styled (CaptionStyle instant.Event)
+            )
+            rule
+        ]
         @ playerRows
         @ blankRows
         @ [ rule; ProgressBar timeline cursor; footer ]
@@ -157,7 +177,8 @@ let public Run (source: string) (timeline: Instant array) : unit =
         |> Array.filter (fun instant -> instant.Event.IsRoundEnded)
         |> Array.length
 
-    let clamp cursor = max 0 (min (timeline.Length - 1) cursor)
+    let clamp cursor =
+        max 0 (min (timeline.Length - 1) cursor)
 
     let previousRoundEnd cursor =
         [ 0 .. cursor - 1 ]
