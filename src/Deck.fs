@@ -68,9 +68,7 @@ module public Deck =
     /// <summary>
     /// A random deck with the corresponding discards.
     /// </summary>
-    let public Random: Deck * Deck =
-        let random = System.Random()
-
+    let public RandomWith (random: System.Random) : Deck * Deck =
         Map.fold
             (fun (deck, discards) card maxCount ->
                 let count = uint (random.Next(0, int maxCount + 1))
@@ -78,6 +76,11 @@ module public Deck =
             )
             (Empty, Empty)
             Full
+
+    /// <summary>
+    /// A random deck with the corresponding discards.
+    /// </summary>
+    let public Random: Deck * Deck = RandomWith System.Random.Shared
 
     /// <summary>
     /// Parses a deck from an array of lines, where each line is in the format
