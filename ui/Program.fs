@@ -8,7 +8,8 @@ open Flip7
 // the last one carries no newline and the screen does not scroll.
 let private renderHelp () : unit =
     let rule = String.replicate 80 "─"
-    let entry (keys: string) (description: string) = sprintf "   %s%s" (keys.PadRight 18) description
+    let entry (keys: string) (description: string) =
+        sprintf "   %s%s" (keys.PadRight 18) description
 
     let section (title: string) (annotation: string) =
         styled [ Ansi.Bright ] $" {title}" + styled [ Ansi.Dim ] $"  — {annotation}"
@@ -290,7 +291,8 @@ let main args =
         ]
 
         let players =
-            names |> List.mapi (fun index name -> name, strategies[index % strategies.Length])
+            names
+            |> List.mapi (fun index name -> name, strategies[index % strategies.Length])
 
         Timeline.Simulate players None None None None
         |> Seq.toArray

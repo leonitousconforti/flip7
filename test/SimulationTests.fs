@@ -47,6 +47,8 @@ let ``Expected value of hit draws from the discards when the deck is empty`` () 
 [<Fact>]
 let ``Expected value of hit includes the flip7 bonus`` () =
     // The guaranteed Seven completes the flip7: 28 points + 15 bonus - 21 now
-    let hand = [ Card.One; Card.Two; Card.Three; Card.Four; Card.Five; Card.Six ] |> List.map ValueCard
+    let hand =
+        [ Card.One; Card.Two; Card.Three; Card.Four; Card.Five; Card.Six ]
+        |> List.map ValueCard
     let deck = Map.ofList [ ValueCard Card.Seven, 1u ]
     Assert.Equal(22.0, Simulation.expectedValueOfHit deck Deck.Empty hand)

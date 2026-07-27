@@ -7,7 +7,8 @@ module public Persistence =
     let public WriteInstant (directory: string) (instant: Instant) : Instant =
         let path = Directory.CreateDirectory directory
         let toDirectory = fun file -> Path.Combine(path.FullName, file)
-        let write = fun file (lines: string array) -> File.WriteAllLines(toDirectory file, lines)
+        let write =
+            fun file (lines: string array) -> File.WriteAllLines(toDirectory file, lines)
 
         instant.Deck |> Deck.Serialize |> write "deck.txt"
         instant.Discards |> Deck.Serialize |> write "discards.txt"

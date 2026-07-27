@@ -27,18 +27,22 @@ type public Strategy =
         | AlwaysHits -> "AlwaysHits"
         | AlwaysStands -> "AlwaysStands"
         | RandomWithProbability probability ->
-            let invariant = probability.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+            let invariant =
+                probability.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
             $"RandomWithProbability {invariant}"
         | HitUntilScore threshold -> $"HitUntilScore {threshold}"
         | HitUntilNumCards threshold -> $"HitUntilNumCards {threshold}"
         | HitUntilBustProbability threshold ->
-            let invariant = threshold.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+            let invariant =
+                threshold.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
             $"HitUntilBustProbability {invariant}"
         | HitUntilNaiveBustProbability threshold ->
-            let invariant = threshold.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+            let invariant =
+                threshold.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
             $"HitUntilNaiveBustProbability {invariant}"
         | SoftHitUntilScore(threshold, temperature) ->
-            let invariant = temperature.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+            let invariant =
+                temperature.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
             $"SoftHitUntilScore {threshold} {invariant}"
         | HitUntilTotal target -> $"HitUntilTotal {target}"
         | HitUntilUniqueValues threshold -> $"HitUntilUniqueValues {threshold}"
@@ -152,21 +156,33 @@ module public Strategy =
             let probability = 1.0 / (1.0 + exp (distance / temperature))
             if random.NextDouble() < probability then Hit else Stand
         | HitUntilTotal target ->
-            if player.FirmScore + Hand.Score player.Hand < target then Hit else Stand
+            if player.FirmScore + Hand.Score player.Hand < target then
+                Hit
+            else
+                Stand
         | HitUntilUniqueValues threshold ->
-            if uint (Hand.UniqueValueCards player.Hand) < threshold then Hit else Stand
+            if uint (Hand.UniqueValueCards player.Hand) < threshold then
+                Hit
+            else
+                Stand
         | ChasesFlip7(score, uniques) ->
             // Plays like HitUntilScore until enough unique value cards put
             // the flip7 bonus within reach, then keeps flipping for it
-            if uint (Hand.UniqueValueCards player.Hand) >= uniques then Hit
-            elif Hand.Score player.Hand < score then Hit
-            else Stand
+            if uint (Hand.UniqueValueCards player.Hand) >= uniques then
+                Hit
+            elif Hand.Score player.Hand < score then
+                Hit
+            else
+                Stand
         | EmboldenedBySecondChance threshold ->
             // A second chance card means the next duplicate cannot bust, so
             // hit fearlessly while holding one
-            if player.Hand |> List.contains (ActionCard Card.SecondChance) then Hit
-            elif Hand.Score player.Hand < threshold then Hit
-            else Stand
+            if player.Hand |> List.contains (ActionCard Card.SecondChance) then
+                Hit
+            elif Hand.Score player.Hand < threshold then
+                Hit
+            else
+                Stand
         | HitWhileBehindLeader margin ->
             // Races the visible table: the best rival total among players
             // still in the round, counting their unbanked hands

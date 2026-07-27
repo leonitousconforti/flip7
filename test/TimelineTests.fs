@@ -159,7 +159,11 @@ let ``simulated games uphold the invariants`` (seed: int) =
     let timeline =
         Timeline.SimulateWith
             (System.Random seed)
-            [ "Alice", Strategy.Random; "Bob", HitUntilScore 25u; "Carol", HitUntilNumCards 4u ]
+            [
+                "Alice", Strategy.Random
+                "Bob", HitUntilScore 25u
+                "Carol", HitUntilNumCards 4u
+            ]
             None
             None
             None
@@ -183,6 +187,4 @@ let ``simulated games uphold the invariants`` (seed: int) =
         |> Map.ofList
     )
     |> List.pairwise
-    |> List.iter (fun (before, after) ->
-        before |> Map.iter (fun name score -> Assert.True(score <= after[name]))
-    )
+    |> List.iter (fun (before, after) -> before |> Map.iter (fun name score -> Assert.True(score <= after[name])))
