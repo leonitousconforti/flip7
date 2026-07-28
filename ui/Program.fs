@@ -12,7 +12,7 @@ let private renderHelp () : unit =
         sprintf "   %s%s" (keys.PadRight 18) description
 
     let section (title: string) (annotation: string) =
-        styled [ Ansi.Bright ] $" {title}" + styled [ Ansi.Dim ] $"  — {annotation}"
+        styled [ Ansi.Bright ] $" {title}" + styled [ Ansi.Dim ] $"  - {annotation}"
 
     [
         rule
