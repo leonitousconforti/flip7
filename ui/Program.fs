@@ -12,7 +12,7 @@ let main args =
         try
             Console.Clear()
             Console.CursorVisible <- false
-            Replay.Run directory
+            Replay.Run directory None
             0
         finally
             Console.CursorVisible <- true
@@ -20,22 +20,14 @@ let main args =
 
     // Simulate a game with specified player names and predefined strategies
     | "--simulate" :: names ->
-        let strategies = [
-            Strategy.Random
-            HitUntilScore 25u
-            HitUntilNumCards 4u
-            RandomWithProbability 0.75
-            AlwaysHits
-        ]
-
-        let players =
-            names
-            |> List.mapi (fun index name -> name, strategies[index % strategies.Length])
-
-        Timeline.Simulate players None None None None
-        |> Seq.toArray
-        |> Replay.Run "simulated game"
-        0
+        try
+            Console.Clear()
+            Console.CursorVisible <- false
+            Simulate.Run names
+            0
+        finally
+            Console.CursorVisible <- true
+            Console.Clear()
 
     // Run an interactive game with specified player names
     | "--interactive" :: names ->
