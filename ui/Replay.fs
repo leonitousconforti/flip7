@@ -161,7 +161,9 @@ let private Render
 /// arrow keys) move the cursor instant by instant, up and down jump between
 /// rounds, and clicking the progress bar jumps straight to that point.
 /// </summary>
-let public Run (source: string) (timeline: Instant array) : unit =
+let public Run (source: string) : unit =
+    let timeline = source |> Persistence.ReadTimeline |> Seq.toArray
+
     if Array.isEmpty timeline then
         ()
     else

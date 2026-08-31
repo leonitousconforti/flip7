@@ -12,7 +12,7 @@ let main args =
         try
             Console.Clear()
             Console.CursorVisible <- false
-            directory |> Persistence.ReadTimeline |> Seq.toArray |> Replay.Run directory
+            Replay.Run directory
             0
         finally
             Console.CursorVisible <- true
