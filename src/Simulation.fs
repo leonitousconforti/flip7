@@ -74,7 +74,16 @@ module Simulation =
                 probability * (score' - currentScore)
         )
 
-    let public IsValid (deck: Deck) (discards: Deck) (hands: Hand seq) : string seq =
+    let public Issues (deck: Deck) (discards: Deck) (hands: Hand seq) : string seq =
+        let handsIssues: string seq =
+            hands
+            |> Seq.map (fun hand -> hand |> List.filter (fun card -> card = ActionCard Card.SecondChance))
+            |> Seq.where (List.length >> (<) 1)
+            |> Seq.indexed
+            |> Seq.map (fun (index, secondChances) ->
+                $"Player {index} has {List.length secondChances} second chances in their hand, maximum is 1"
+            )
+
         let handsToDeck =
             hands
             |> Seq.collect id
@@ -92,6 +101,8 @@ module Simulation =
             let actual = deckCount + discardsCount + handCount
 
             seq {
+                yield! handsIssues
+
                 if deckCount > expected then
                     yield $"Deck {cannot}, found {deckCount} of {card}"
                 if discardsCount > expected then

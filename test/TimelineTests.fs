@@ -173,7 +173,7 @@ let ``simulated games uphold the invariants`` (seed: int) =
     // Every card is accounted for at every instant
     for instant in timeline do
         let hands = instant.Players |> List.map (fun player -> player.Hand)
-        Assert.Empty(Simulation.IsValid instant.Deck instant.Discards hands)
+        Assert.Empty(Simulation.Issues instant.Deck instant.Discards hands)
 
     // The game ends at the end of a round, once someone reaches 200 points
     Assert.True((List.last timeline).Event.IsRoundEnded)

@@ -135,7 +135,7 @@ let rec private loop
         |> printfn "%s"
 
     let errors =
-        Simulation.IsValid deck discards (players |> Map.values |> Seq.map snd)
+        Simulation.Issues deck discards (players |> Map.values |> Seq.map snd)
         |> Seq.toList
 
     match errors with
