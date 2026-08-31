@@ -7,8 +7,7 @@ module public Persistence =
     let public WriteInstant (directory: string) (instant: Instant) : Instant =
         let path = Directory.CreateDirectory directory
         let toDirectory = fun file -> Path.Combine(path.FullName, file)
-        let write =
-            fun file (lines: string array) -> File.WriteAllLines(toDirectory file, lines)
+        let write = fun file lines -> File.WriteAllLines(toDirectory file, lines)
 
         instant.Deck |> Deck.Serialize |> write "deck.txt"
         instant.Discards |> Deck.Serialize |> write "discards.txt"
@@ -75,9 +74,9 @@ module public Persistence =
         )
 
     let public WriteTimelineEager (timeline: Timeline) : Timeline =
-        let cachedTimeline = timeline |> Seq.cache
-        cachedTimeline |> WriteTimelineLazy |> Seq.toArray |> ignore
-        cachedTimeline
+        let written = timeline |> WriteTimelineLazy |> Seq.cache
+        written |> Seq.iter ignore
+        written
 
     let public ReadTimeline (directory: string) : Timeline =
         let instantDirectories =
