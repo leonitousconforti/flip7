@@ -17,3 +17,9 @@ type public Player = {
             FirmScore = firmScore
             Hand = hand
         }
+
+    member public this.ToStrategyPlayer() : Strategy.StrategyPlayer = {
+        Name = this.Name
+        FirmScore = this.FirmScore
+        Hand = this.Hand
+    }
