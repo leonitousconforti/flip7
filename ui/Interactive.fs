@@ -260,7 +260,7 @@ let rec private loop
         loop deck discards players (Choice1Of3 cards[index'])
     | _ -> loop deck discards players cursor
 
-let public runInteractive (playerNames: string array) : unit =
+let public Run (playerNames: string list) : unit =
     System.Diagnostics.Debug.Assert(
         playerNames.Length > 0,
         "Please provide at least one player name as a command-line argument."
@@ -270,11 +270,11 @@ let public runInteractive (playerNames: string array) : unit =
         "Please provide no more than five player names as command-line arguments."
     )
     System.Diagnostics.Debug.Assert(
-        playerNames |> Array.forall (fun name -> not (String.IsNullOrWhiteSpace name)),
+        playerNames |> List.forall (fun name -> not (String.IsNullOrWhiteSpace name)),
         "Player names cannot be empty or whitespace."
     )
     System.Diagnostics.Debug.Assert(
-        playerNames |> Array.distinct |> Array.length = playerNames.Length,
+        playerNames |> List.distinct |> List.length = playerNames.Length,
         "Player names must be unique."
     )
     System.Diagnostics.Debug.Assert(
@@ -286,7 +286,7 @@ let public runInteractive (playerNames: string array) : unit =
     let discards: Deck = Deck.Empty
     let cursor = Choice1Of3(ValueCard Card.Zero)
     let players: Map<string, uint * Hand> =
-        playerNames |> Array.map (fun name -> name, (0u, List.empty)) |> Map.ofArray
+        playerNames |> List.map (fun name -> name, (0u, List.empty)) |> Map.ofList
 
     Console.Clear()
     Console.CursorVisible <- false
