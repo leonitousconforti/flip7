@@ -1,10 +1,6 @@
 [<AutoOpen>]
 module public Ansi
 
-let public CursorHide = "\x1b[?25l"
-let public CursorShow = "\x1b[?25h"
-let public ClearScreen = "\x1b[2J\x1b[H"
-
 // Control codes
 let public Reset = "\x1b[0m"
 let public Bright = "\x1b[1m"
