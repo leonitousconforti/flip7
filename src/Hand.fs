@@ -80,8 +80,8 @@ module public Hand =
             fun card (seen, dupsToDrop, scsToDrop, acc) ->
                 match card with
                 | ActionCard(Card.SecondChance) when scsToDrop > 0 -> seen, dupsToDrop, scsToDrop - 1, acc
-                | ValueCard(vc: Card.ValueCard) when Set.contains vc seen && dupsToDrop > 0 -> seen, dupsToDrop - 1, scsToDrop, acc
-                | ValueCard(vc: Card.ValueCard) -> Set.add vc seen, dupsToDrop, scsToDrop, card :: acc
+                | ValueCard(vc) when Set.contains vc seen && dupsToDrop > 0 -> seen, dupsToDrop - 1, scsToDrop, acc
+                | ValueCard(vc) -> Set.add vc seen, dupsToDrop, scsToDrop, card :: acc
                 | _ -> seen, dupsToDrop, scsToDrop, card :: acc
 
         let numDups, numSCs =
