@@ -26,7 +26,10 @@ module Simulation =
         else
 
         let deck' = Deck.Decrement deck (ActionCard Card.Deal3)
-        let cardsDrawnBeforeReshuffling = min (Deck.Count deck' |> uint) 3u
+
+        let cardsDrawnBeforeReshuffling =
+            min (min (Deck.Count deck') (Deck.Count Deck.Full) |> uint) 3u
+
         let cardsDrawnAfterReshuffling = 3u - cardsDrawnBeforeReshuffling
 
         let probabilityToBustBeforeReshuffling =

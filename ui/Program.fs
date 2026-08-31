@@ -41,5 +41,5 @@ let main args =
         |> runReplay "simulated game"
 
     | _ ->
-        Interactive.runInteractive [||]
+        Interactive.runInteractive args
         0
