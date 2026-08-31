@@ -8,8 +8,4 @@
         "flake.lock": "json",
         "*.fsproj": "xml",
     },
-    "cSpell.words": [
-        "probs",
-        "sparkline"
-    ]
 }
