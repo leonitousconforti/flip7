@@ -70,8 +70,8 @@ module public Hand =
             fun (seen, dups, scs) card ->
                 match card with
                 | ActionCard(Card.SecondChance) -> seen, dups, scs + 1
-                | ValueCard(vc) when Set.contains vc seen -> seen, dups + 1, scs
-                | ValueCard(vc) -> Set.add vc seen, dups, scs
+                | ValueCard(vc: Card.ValueCard) when Set.contains vc seen -> seen, dups + 1, scs
+                | ValueCard(vc: Card.ValueCard) -> Set.add vc seen, dups, scs
                 | _ -> seen, dups, scs
 
         // The second fold builds the reduced hand by skipping over the
@@ -80,8 +80,8 @@ module public Hand =
             fun card (seen, dupsToDrop, scsToDrop, acc) ->
                 match card with
                 | ActionCard(Card.SecondChance) when scsToDrop > 0 -> seen, dupsToDrop, scsToDrop - 1, acc
-                | ValueCard(vc) when Set.contains vc seen && dupsToDrop > 0 -> seen, dupsToDrop - 1, scsToDrop, acc
-                | ValueCard(vc) -> Set.add vc seen, dupsToDrop, scsToDrop, card :: acc
+                | ValueCard(vc: Card.ValueCard) when Set.contains vc seen && dupsToDrop > 0 -> seen, dupsToDrop - 1, scsToDrop, acc
+                | ValueCard(vc: Card.ValueCard) -> Set.add vc seen, dupsToDrop, scsToDrop, card :: acc
                 | _ -> seen, dupsToDrop, scsToDrop, card :: acc
 
         let numDups, numSCs =
