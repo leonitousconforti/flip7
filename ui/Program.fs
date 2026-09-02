@@ -14,9 +14,11 @@ let main args =
             Console.CursorVisible <- false
             Replay.Run directory None
             0
-        finally
-            Console.CursorVisible <- true
+        with ex ->
             Console.Clear()
+            Console.CursorVisible <- true
+            printfn "Error: %s" ex.Message
+            1
 
     // Simulate a game with specified player names and predefined strategies
     | "--simulate" :: names ->
@@ -25,9 +27,11 @@ let main args =
             Console.CursorVisible <- false
             Simulate.Run names
             0
-        finally
-            Console.CursorVisible <- true
+        with ex ->
             Console.Clear()
+            Console.CursorVisible <- true
+            printfn "Error: %s" ex.Message
+            1
 
     // Run an interactive game with specified player names
     | "--interactive" :: names ->
@@ -36,9 +40,11 @@ let main args =
             Console.CursorVisible <- false
             Interactive.Run names
             0
-        finally
-            Console.CursorVisible <- true
+        with ex ->
             Console.Clear()
+            Console.CursorVisible <- true
+            printfn "Error: %s" ex.Message
+            1
 
     // Usage
     | _ ->
@@ -46,5 +52,4 @@ let main args =
         printfn "  flip7.exe --replay <directory>"
         printfn "  flip7.exe --simulate <player1> <player2> ..."
         printfn "  flip7.exe --interactive <player1> <player2> ..."
-
         1
