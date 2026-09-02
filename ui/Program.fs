@@ -13,9 +13,9 @@ let main args =
             Console.Clear()
             Console.CursorVisible <- false
             Replay.Run directory None
+            Console.Clear()
             0
         with ex ->
-            Console.Clear()
             Console.CursorVisible <- true
             printfn "Error: %s" ex.Message
             1
@@ -26,9 +26,9 @@ let main args =
             Console.Clear()
             Console.CursorVisible <- false
             Simulate.Run names
+            Console.Clear()
             0
         with ex ->
-            Console.Clear()
             Console.CursorVisible <- true
             printfn "Error: %s" ex.Message
             1
@@ -39,9 +39,9 @@ let main args =
             Console.Clear()
             Console.CursorVisible <- false
             Interactive.Run names
+            Console.Clear()
             0
         with ex ->
-            Console.Clear()
             Console.CursorVisible <- true
             printfn "Error: %s" ex.Message
             1
