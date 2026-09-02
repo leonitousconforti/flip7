@@ -16,13 +16,14 @@ module Simulation =
             probabilityOfDuplicateValueCard
         else
 
-        // We must play these on ourselves as we are the only player left
+        // A deal3 must be played on ourselves as we are the only player left,
+        // forcing three flips that can each bust us. A freeze played on
+        // ourselves just banks our points, like standing, so it is not a bust.
         let probabilityOfDeal3 = Map.find (ActionCard Card.Deal3) pdf
-        let probabilityOfFreeze = Map.find (ActionCard Card.Freeze) pdf
 
         // Base case: the probability of drawing a deal3 card is 0%
         if probabilityOfDeal3 = 0.0 then
-            probabilityOfDuplicateValueCard + probabilityOfFreeze
+            probabilityOfDuplicateValueCard
         else
 
         let deck' = Deck.Decrement deck (ActionCard Card.Deal3)
@@ -45,7 +46,6 @@ module Simulation =
 
         probabilityOfDeal3 * min probabilityToBust' 1.0
         + probabilityOfDuplicateValueCard
-        + probabilityOfFreeze
 
     let public expectedValueOfHit (deck: Deck) (discards: Deck) (hand: Hand) : float =
         let effectiveDeck = if Deck.IsEmpty deck then discards else deck
