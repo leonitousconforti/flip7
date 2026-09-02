@@ -92,25 +92,6 @@ module public Timeline =
     let private HasSecondChance (player: Player) : bool =
         player.Hand |> List.exists (fun card -> card = ActionCard Card.SecondChance)
 
-    let private ToStrategyPlayer (player: Player) : Strategy.StrategyPlayer = {
-        Name = player.Name
-        FirmScore = player.FirmScore
-        Hand = player.Hand
-    }
-
-    // Cards removed from a hand by Hand.Reduce (canceled duplicates and spent
-    // second chances) must be returned to the discard pile to conserve cards.
-    let private DiscardCanceled (before: Hand) (after: Hand) (discards: Deck) : Deck =
-        before
-        |> List.fold
-            (fun (remaining: Map<Card, int>, discards) card ->
-                match Map.tryFind card remaining with
-                | Some count when count > 0 -> Map.add card (count - 1) remaining, discards
-                | _ -> remaining, Deck.Increment discards card
-            )
-            (after |> List.countBy id |> Map.ofList, discards)
-        |> snd
-
     let rec private GoonSession
         (random: System.Random)
         (active: Player list)
@@ -134,26 +115,24 @@ module public Timeline =
         | None, [] -> Seq.empty
 
         | None, current :: others ->
-            let session' = session + 1u
-
             // Everyone is dealt at least one card before they may choose
             let hitOrStand =
-                if List.isEmpty current.Hand then
+                if session = 1u then
                     Strategy.Hit
                 else
                     Strategy.DecideWith
                         random
                         current.Strategy
                         session
-                        (ToStrategyPlayer current)
-                        (others |> List.map ToStrategyPlayer)
+                        (current.ToStrategyPlayer())
+                        (others |> List.map (fun p -> p.ToStrategyPlayer()))
                         decks
 
             match hitOrStand with
             | Strategy.Stand -> seq {
                 let finished' = current :: finished
                 yield MakeInstant (Stood current.Name) others finished' decks
-                yield! GoonSession random others finished' decks session'
+                yield! GoonSession random others finished' decks session
               }
 
             | Strategy.Hit ->
@@ -167,14 +146,14 @@ module public Timeline =
                 let current' = { current with Hand = card :: current.Hand }
                 let active' = others @ [ current' ]
                 yield MakeInstant (Drew(current.Name, card)) active' finished decks'
-                yield! GoonSession random active' finished decks' session'
+                yield! GoonSession random active' finished decks' session
               }
 
             | ModifierCard _ -> seq {
                 let current' = { current with Hand = card :: current.Hand }
                 let active' = others @ [ current' ]
                 yield MakeInstant (Drew(current.Name, card)) active' finished decks'
-                yield! GoonSession random active' finished decks' session'
+                yield! GoonSession random active' finished decks' session
               }
 
             // Can never bust on a second chance card, but you also can't hold
@@ -182,9 +161,7 @@ module public Timeline =
             // hold it, or discard it if no one can
             | ActionCard Card.SecondChance ->
                 let candidates =
-                    others
-                    |> List.indexed
-                    |> List.filter (fun (_index, player) -> not (HasSecondChance player))
+                    others |> List.indexed |> List.where (snd >> HasSecondChance >> not)
 
                 match candidates with
                 | [] -> seq {
@@ -192,14 +169,14 @@ module public Timeline =
                     let decks'' = deck', Deck.Increment discards' card
                     let active' = others @ [ current ]
                     yield MakeInstant (SecondChanceDiscarded current.Name) active' finished decks''
-                    yield! GoonSession random active' finished decks'' session'
+                    yield! GoonSession random active' finished decks'' session
                   }
                 | _ -> seq {
                     let index, target = candidates |> List.randomChoiceWith random
                     let target' = { target with Hand = card :: target.Hand }
                     let active' = (others |> List.updateAt index target') @ [ current ]
                     yield MakeInstant (SecondChancePassed(current.Name, target.Name)) active' finished decks'
-                    yield! GoonSession random active' finished decks' session'
+                    yield! GoonSession random active' finished decks' session
                   }
 
             // Can never bust on a freeze card, just pick someone to freeze
@@ -212,7 +189,7 @@ module public Timeline =
                 let active' = rotated |> List.removeAt index
                 let finished' = target' :: finished
                 yield MakeInstant (Froze(current.Name, target.Name)) active' finished' decks'
-                yield! GoonSession random active' finished' decks' session'
+                yield! GoonSession random active' finished' decks' session
               }
 
             // Can bust on a value card, so we need to check if they busted or
@@ -220,46 +197,30 @@ module public Timeline =
             | ValueCard _ -> seq {
                 let deck', discards' = decks'
                 let hand' = card :: current.Hand
-                let isBust, reducedHand = Hand.Reduce hand'
-                let decks'' = deck', DiscardCanceled hand' reducedHand discards'
+                let isBust, reducedHand, removedCards = Hand.Reduce hand'
+                let decks'' = deck', List.fold Deck.Increment discards' removedCards
                 let current' = { current with Hand = reducedHand }
 
                 if isBust then
                     let finished' = current' :: finished
                     yield MakeInstant (Busted(current.Name, card)) others finished' decks''
-                    yield! GoonSession random others finished' decks'' session'
+                    yield! GoonSession random others finished' decks'' session
                 else
                     let active' = others @ [ current' ]
                     yield MakeInstant (Drew(current.Name, card)) active' finished decks''
-                    yield! GoonSession random active' finished decks'' session'
+                    yield! GoonSession random active' finished decks'' session
               }
 
             | ActionCard Card.Deal3 -> seq {
-                let deck', discards' = decks'
-
-                // The deal3 card itself is used up immediately
+                let (deck', discards'), drawn = Deck.Draw3With random decks'
                 let discards' = Deck.Increment discards' card
 
                 let rotated = others @ [ current ]
                 let index, target = rotated |> List.indexed |> List.randomChoiceWith random
-                let (deck', discards'), drawn = Deck.Draw3With random (deck', discards')
+                let target' = { target with Hand = drawn @ target.Hand }
 
-                // Freeze and deal3 cards flipped during a deal3 are really
-                // hard to resolve with many edge cases, so simplify by
-                // discarding them instead of resolving them
-                let kept, dropped =
-                    drawn
-                    |> List.partition (fun card ->
-                        match card with
-                        | ActionCard Card.Freeze
-                        | ActionCard Card.Deal3 -> false
-                        | _ -> true
-                    )
-
-                let discards' = dropped |> List.fold Deck.Increment discards'
-                let hand' = kept @ target.Hand
-                let isBust, reducedHand = Hand.Reduce hand'
-                let decks'' = deck', DiscardCanceled hand' reducedHand discards'
+                let isBust, reducedHand, removedCards = Hand.Reduce hand'
+                let decks'' = deck', List.fold Deck.Increment discards' removedCards
                 let target' = { target with Hand = reducedHand }
                 let event = Dealt3(current.Name, target.Name, drawn)
 
@@ -267,11 +228,11 @@ module public Timeline =
                     let active' = rotated |> List.removeAt index
                     let finished' = target' :: finished
                     yield MakeInstant event active' finished' decks''
-                    yield! GoonSession random active' finished' decks'' session'
+                    yield! GoonSession random active' finished' decks'' session
                 else
                     let active' = rotated |> List.updateAt index target'
                     yield MakeInstant event active' finished decks''
-                    yield! GoonSession random active' finished decks'' session'
+                    yield! GoonSession random active' finished decks'' session
               }
 
     /// <summary>
@@ -292,8 +253,10 @@ module public Timeline =
         (seedDeck: Deck option)
         (seedDiscards: Deck option)
         : Timeline =
-        let rec Rounds (players: Player list) (decks: Deck * Deck) : Timeline = seq {
-            let roundInstants = GoonSession random players [] decks 0u |> Seq.toList
+        let rec Rounds (session: uint) (players: Player list) (decks: Deck * Deck) : Timeline = seq {
+            let roundInstants =
+                GoonSession random players List.empty decks session |> Seq.toList
+
             yield! roundInstants
 
             let finalPlayers, (deck, discards) =
@@ -337,7 +300,7 @@ module public Timeline =
 
             // Base case: the game ends when anyone has reached 200 points
             if players' |> List.forall (fun player -> player.FirmScore < 200u) then
-                yield! Rounds players' (deck, discards')
+                yield! Rounds (session + 1u) players' (deck, discards')
         }
 
         let startingPlayers =
@@ -357,7 +320,7 @@ module public Timeline =
         if List.isEmpty startingPlayers then
             Seq.empty
         else
-            Rounds startingPlayers startingDecks
+            Rounds 1u startingPlayers startingDecks
 
     /// <summary>
     /// Simulates a full game and returns its timeline lazily: one instant per
