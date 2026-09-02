@@ -92,16 +92,254 @@ module public Timeline =
     let private HasSecondChance (player: Player) : bool =
         player.Hand |> List.exists (fun card -> card = ActionCard Card.SecondChance)
 
-    let rec private GoonSession
+    // Gives away a freshly drawn second chance that its holder cannot keep (a
+    // player may hold only one) to a random active player who has none, or to
+    // the discards if there is no such player. Returns the recipient's name (if
+    // any), the updated active players, and the updated decks. Shared by the
+    // normal draw path and the deal3 flip loop.
+    let private GiveAwaySecondChance
         (random: System.Random)
+        (card: Card)
+        (holder: string)
+        (active: Player list)
+        (decks: Deck * Deck)
+        : string option * Player list * (Deck * Deck) =
+        let candidates =
+            active
+            |> List.indexed
+            |> List.where (fun (_, player) -> player.Name <> holder && not (HasSecondChance player))
+
+        match candidates with
+        | [] ->
+            let deck, discards = decks
+            None, active, (deck, Deck.Increment discards card)
+        | _ ->
+            let index, recipient = candidates |> List.randomChoiceWith random
+            let recipient' = { recipient with Hand = card :: recipient.Hand }
+            Some recipient.Name, List.updateAt index recipient' active, decks
+
+    // Removes the first occurrence of a card from a hand.
+    let private RemoveFirst (card: Card) (hand: Hand) : Hand =
+        match hand |> List.tryFindIndex ((=) card) with
+        | Some index -> List.removeAt index hand
+        | None -> hand
+
+    // Resolves a deal3 given by source to the player at targetIndex in the
+    // active rotation. Cards are flipped one at a time and every card counts
+    // toward the three: number and modifier cards join the target's hand
+    // (stopping early on a bust or a flip7, so the remaining cards are never
+    // drawn), second chances are kept by the target or passed along per the
+    // usual rules (and can save a later bust within the same deal3), and freeze
+    // and deal3 cards are set aside until the flips finish. Set-asides are
+    // parked in the target's hand while pending: that keeps every card
+    // accounted for at every instant and, unlike parking them in the discards,
+    // keeps them from being reshuffled back into the deck mid-deal3. Once the
+    // flips finish they are resolved in flip order - unless the target busted
+    // or the round ended, in which case they stay in the (soon discarded) hand
+    // - with a nested deal3 resolving recursively.
+    let rec private ResolveDeal3
+        (random: System.Random)
+        (source: string)
+        (targetIndex: int)
         (active: Player list)
         (finished: Player list)
         (decks: Deck * Deck)
-        (session: uint)
+        : Instant list * Player list * Player list * (Deck * Deck) =
+
+        let targetName = (List.item targetIndex active).Name
+
+        let rec Flip
+            (remaining: uint)
+            (flipped: Card list)
+            (setAsides: Card list)
+            (active: Player list)
+            (decks: Deck * Deck)
+            : bool * Card list * Card list * Player list * (Deck * Deck) =
+            let target = List.item targetIndex active
+
+            if remaining = 0u || Hand.HasFlip7Bonus target.Hand then
+                false, List.rev flipped, List.rev setAsides, active, decks
+            else
+
+            let decks', card = Deck.Draw1With random decks
+            let deck', discards' = decks'
+            let flipped' = card :: flipped
+
+            match card with
+            // Parked in the target's hand (harmless: action cards do not score
+            // or bust) until the flips finish, then resolved below
+            | ActionCard Card.Freeze
+            | ActionCard Card.Deal3 ->
+                let target' = { target with Hand = card :: target.Hand }
+                Flip (remaining - 1u) flipped' (card :: setAsides) (List.updateAt targetIndex target' active) decks'
+
+            | ActionCard Card.SecondChance when not (HasSecondChance target) ->
+                let target' = { target with Hand = card :: target.Hand }
+                Flip (remaining - 1u) flipped' setAsides (List.updateAt targetIndex target' active) decks'
+
+            | ActionCard Card.SecondChance ->
+                let _, active', decks'' = GiveAwaySecondChance random card target.Name active decks'
+                Flip (remaining - 1u) flipped' setAsides active' decks''
+
+            | ValueCard _
+            | ModifierCard _ ->
+                let isBust, reducedHand, removedCards = Hand.Reduce(card :: target.Hand)
+                let decks'' = deck', List.fold Deck.Increment discards' removedCards
+                let active' = List.updateAt targetIndex { target with Hand = reducedHand } active
+
+                if isBust then
+                    true, List.rev flipped', List.rev setAsides, active', decks''
+                else
+                    Flip (remaining - 1u) flipped' setAsides active' decks''
+
+        let isBust, flipped, setAsides, active', decks' = Flip 3u [] [] active decks
+        let event = Dealt3(source, targetName, flipped)
+
+        if isBust then
+            let target' = List.item targetIndex active'
+            let active'' = List.removeAt targetIndex active'
+            let finished' = target' :: finished
+            [ MakeInstant event active'' finished' decks' ], active'', finished', decks'
+        else
+            let instant = MakeInstant event active' finished decks'
+
+            // Takes the pending set-aside card out of the target's hand
+            // (wherever the target sits now) so it can move to its destination.
+            let unpark (active: Player list) (finished: Player list) (card: Card) =
+                let take =
+                    List.map (fun p ->
+                        if p.Name = targetName then
+                            { p with Hand = RemoveFirst card p.Hand }
+                        else
+                            p
+                    )
+                take active, take finished
+
+            let ResolveSetAside
+                ((instants, active, finished, decks): Instant list * Player list * Player list * (Deck * Deck))
+                (setAside: Card)
+                =
+                let roundEnded =
+                    List.isEmpty active
+                    || active |> List.exists (fun player -> Hand.HasFlip7Bonus player.Hand)
+
+                match setAside with
+                | _ when roundEnded -> instants, active, finished, decks
+                | ActionCard Card.Freeze ->
+                    let index, frozen = active |> List.indexed |> List.randomChoiceWith random
+                    let active, finished = unpark active finished setAside
+                    let frozen' = {
+                        List.item index active with
+                            Hand = setAside :: (List.item index active).Hand
+                    }
+                    let active' = List.removeAt index active
+                    let finished' = frozen' :: finished
+                    let instant = MakeInstant (Froze(targetName, frozen.Name)) active' finished' decks
+                    instants @ [ instant ], active', finished', decks
+                | _ ->
+                    let active, finished = unpark active finished setAside
+                    let deck, discards = decks
+                    let decks = deck, Deck.Increment discards setAside
+                    let index, _ = active |> List.indexed |> List.randomChoiceWith random
+
+                    let nested, active', finished', decks' =
+                        ResolveDeal3 random targetName index active finished decks
+
+                    instants @ nested, active', finished', decks'
+
+            setAsides |> List.fold ResolveSetAside ([ instant ], active', finished, decks')
+
+    // Resolves a single card drawn by the current player on a hit: adds it to
+    // the hand, gives away or discards an unkeepable second chance, freezes a
+    // player, busts on a duplicate, or hands off to the deal3 resolver. Returns
+    // the instants produced and the active players, finished players, and decks
+    // to continue from. The decks passed in are already past the draw.
+    let private ResolveDraw
+        (random: System.Random)
+        (current: Player)
+        (others: Player list)
+        (finished: Player list)
+        (decks: Deck * Deck)
+        (card: Card)
+        : Instant list * Player list * Player list * (Deck * Deck) =
+        let deck, discards = decks
+
+        // Adds a card that can never bust the player to their hand and passes
+        // the turn
+        let keep () =
+            let current' = { current with Hand = card :: current.Hand }
+            let active' = others @ [ current' ]
+            [ MakeInstant (Drew(current.Name, card)) active' finished decks ], active', finished, decks
+
+        match card with
+        | ModifierCard _ -> keep ()
+        | ActionCard Card.SecondChance when not (HasSecondChance current) -> keep ()
+
+        // Can never bust on a second chance card, but you also can't hold two of
+        // them at the same time: give it away, or discard it if no one can hold
+        // it
+        | ActionCard Card.SecondChance ->
+            let recipient, active', decks' =
+                GiveAwaySecondChance random card current.Name (others @ [ current ]) decks
+
+            let event =
+                match recipient with
+                | Some name -> SecondChancePassed(current.Name, name)
+                | None -> SecondChanceDiscarded current.Name
+
+            [ MakeInstant event active' finished decks' ], active', finished, decks'
+
+        // Can never bust on a freeze card, just pick someone to freeze (possibly
+        // yourself); they bank their points and are done for the round
+        | ActionCard Card.Freeze ->
+            let rotated = others @ [ current ]
+            let index, target = rotated |> List.indexed |> List.randomChoiceWith random
+            let target' = { target with Hand = card :: target.Hand }
+            let active' = rotated |> List.removeAt index
+            let finished' = target' :: finished
+            [ MakeInstant (Froze(current.Name, target.Name)) active' finished' decks ], active', finished', decks
+
+        // Can bust on a value card, so reduce the hand to see whether the player
+        // is done
+        | ValueCard _ ->
+            let isBust, reducedHand, removedCards = Hand.Reduce(card :: current.Hand)
+            let decks' = deck, List.fold Deck.Increment discards removedCards
+            let current' = { current with Hand = reducedHand }
+
+            if isBust then
+                let finished' = current' :: finished
+                [ MakeInstant (Busted(current.Name, card)) others finished' decks' ], others, finished', decks'
+            else
+                let active' = others @ [ current' ]
+                [ MakeInstant (Drew(current.Name, card)) active' finished decks' ], active', finished, decks'
+
+        // The deal3 card itself is used up immediately; the receiving player
+        // (possibly yourself) then flips up to three cards
+        | ActionCard Card.Deal3 ->
+            let decks' = deck, Deck.Increment discards card
+            let rotated = others @ [ current ]
+            let index, _ = rotated |> List.indexed |> List.randomChoiceWith random
+            ResolveDeal3 random current.Name index rotated finished decks'
+
+    let rec private GoonSession
+        (random: System.Random)
+        (round: uint)
+        (turnsTaken: Map<string, uint>)
+        (active: Player list)
+        (finished: Player list)
+        (decks: Deck * Deck)
         : Timeline =
 
         // Invariant: active players should not have busted yet
         assert (active |> List.forall (fun player -> not (Hand.IsBust player.Hand)))
+
+        // Invariant: every card is accounted for across the deck, the discards,
+        // and the players' hands
+        assert
+            (active @ finished
+             |> List.map (fun player -> player.Hand)
+             |> Simulation.Issues (fst decks) (snd decks)
+             |> Seq.isEmpty)
 
         let flip7Winner =
             active |> List.tryFind (fun player -> Hand.HasFlip7Bonus player.Hand)
@@ -115,15 +353,21 @@ module public Timeline =
         | None, [] -> Seq.empty
 
         | None, current :: others ->
-            // Everyone is dealt at least one card before they may choose
+            let turn = (turnsTaken |> Map.tryFind current.Name |> Option.defaultValue 0u) + 1u
+            let turnsTaken = Map.add current.Name turn turnsTaken
+
+            // The first time play comes around the table each player is dealt a
+            // card before they may choose, and a player may never stand with no
+            // cards, so the opening turn is always a forced hit
             let hitOrStand =
-                if session = 1u then
+                if turn = 1u then
                     Strategy.Hit
                 else
                     Strategy.DecideWith
                         random
                         current.Strategy
-                        session
+                        round
+                        turn
                         (current.ToStrategyPlayer())
                         (others |> List.map (fun p -> p.ToStrategyPlayer()))
                         decks
@@ -132,108 +376,19 @@ module public Timeline =
             | Strategy.Stand -> seq {
                 let finished' = current :: finished
                 yield MakeInstant (Stood current.Name) others finished' decks
-                yield! GoonSession random others finished' decks session
+                yield! GoonSession random round turnsTaken others finished' decks
               }
 
             | Strategy.Hit ->
+                let decks', card = Deck.Draw1With random decks
 
-            let decks', card = Deck.Draw1With random decks
+                let instants, active', finished', decks'' =
+                    ResolveDraw random current others finished decks' card
 
-            match card with
-            // Can never bust on a modifier card or a first second chance card,
-            // so easy just add it to the player's hand and pass the turn
-            | ActionCard Card.SecondChance when not (HasSecondChance current) -> seq {
-                let current' = { current with Hand = card :: current.Hand }
-                let active' = others @ [ current' ]
-                yield MakeInstant (Drew(current.Name, card)) active' finished decks'
-                yield! GoonSession random active' finished decks' session
-              }
-
-            | ModifierCard _ -> seq {
-                let current' = { current with Hand = card :: current.Hand }
-                let active' = others @ [ current' ]
-                yield MakeInstant (Drew(current.Name, card)) active' finished decks'
-                yield! GoonSession random active' finished decks' session
-              }
-
-            // Can never bust on a second chance card, but you also can't hold
-            // two of them at the same time: give it to a random player who can
-            // hold it, or discard it if no one can
-            | ActionCard Card.SecondChance ->
-                let candidates =
-                    others |> List.indexed |> List.where (snd >> HasSecondChance >> not)
-
-                match candidates with
-                | [] -> seq {
-                    let deck', discards' = decks'
-                    let decks'' = deck', Deck.Increment discards' card
-                    let active' = others @ [ current ]
-                    yield MakeInstant (SecondChanceDiscarded current.Name) active' finished decks''
-                    yield! GoonSession random active' finished decks'' session
-                  }
-                | _ -> seq {
-                    let index, target = candidates |> List.randomChoiceWith random
-                    let target' = { target with Hand = card :: target.Hand }
-                    let active' = (others |> List.updateAt index target') @ [ current ]
-                    yield MakeInstant (SecondChancePassed(current.Name, target.Name)) active' finished decks'
-                    yield! GoonSession random active' finished decks' session
-                  }
-
-            // Can never bust on a freeze card, just pick someone to freeze
-            // (possibly yourself); they bank their points and are done for the
-            // round
-            | ActionCard Card.Freeze -> seq {
-                let rotated = others @ [ current ]
-                let index, target = rotated |> List.indexed |> List.randomChoiceWith random
-                let target' = { target with Hand = card :: target.Hand }
-                let active' = rotated |> List.removeAt index
-                let finished' = target' :: finished
-                yield MakeInstant (Froze(current.Name, target.Name)) active' finished' decks'
-                yield! GoonSession random active' finished' decks' session
-              }
-
-            // Can bust on a value card, so we need to check if they busted or
-            // not to determine if they are done
-            | ValueCard _ -> seq {
-                let deck', discards' = decks'
-                let hand' = card :: current.Hand
-                let isBust, reducedHand, removedCards = Hand.Reduce hand'
-                let decks'' = deck', List.fold Deck.Increment discards' removedCards
-                let current' = { current with Hand = reducedHand }
-
-                if isBust then
-                    let finished' = current' :: finished
-                    yield MakeInstant (Busted(current.Name, card)) others finished' decks''
-                    yield! GoonSession random others finished' decks'' session
-                else
-                    let active' = others @ [ current' ]
-                    yield MakeInstant (Drew(current.Name, card)) active' finished decks''
-                    yield! GoonSession random active' finished decks'' session
-              }
-
-            | ActionCard Card.Deal3 -> seq {
-                let (deck', discards'), drawn = Deck.Draw3With random decks'
-                let discards' = Deck.Increment discards' card
-
-                let rotated = others @ [ current ]
-                let index, target = rotated |> List.indexed |> List.randomChoiceWith random
-                let target' = { target with Hand = drawn @ target.Hand }
-
-                let isBust, reducedHand, removedCards = Hand.Reduce hand'
-                let decks'' = deck', List.fold Deck.Increment discards' removedCards
-                let target' = { target with Hand = reducedHand }
-                let event = Dealt3(current.Name, target.Name, drawn)
-
-                if isBust then
-                    let active' = rotated |> List.removeAt index
-                    let finished' = target' :: finished
-                    yield MakeInstant event active' finished' decks''
-                    yield! GoonSession random active' finished' decks'' session
-                else
-                    let active' = rotated |> List.updateAt index target'
-                    yield MakeInstant event active' finished decks''
-                    yield! GoonSession random active' finished decks'' session
-              }
+                seq {
+                    yield! instants
+                    yield! GoonSession random round turnsTaken active' finished' decks''
+                }
 
     /// <summary>
     /// Simulates a full game using the given source of randomness and returns
@@ -253,9 +408,9 @@ module public Timeline =
         (seedDeck: Deck option)
         (seedDiscards: Deck option)
         : Timeline =
-        let rec Rounds (session: uint) (players: Player list) (decks: Deck * Deck) : Timeline = seq {
+        let rec Rounds (round: uint) (players: Player list) (decks: Deck * Deck) : Timeline = seq {
             let roundInstants =
-                GoonSession random players List.empty decks session |> Seq.toList
+                GoonSession random round Map.empty players List.empty decks |> Seq.toList
 
             yield! roundInstants
 
@@ -283,8 +438,11 @@ module public Timeline =
                 |> List.collect (fun player -> player.Hand)
                 |> List.fold Deck.Increment discards
 
-            let players' =
-                finalPlayers
+            // Keep the round's turn order rather than finalPlayers' finish
+            // order, so the dealer rotation below is the only thing that
+            // reorders players between rounds
+            let scored =
+                players
                 |> List.map (fun player -> {
                     player with
                         FirmScore = player.FirmScore + Map.find player.Name scores
@@ -293,14 +451,21 @@ module public Timeline =
 
             yield {
                 Event = RoundEnded scores
-                Players = players'
+                Players = scored
                 Deck = deck
                 Discards = discards'
             }
 
             // Base case: the game ends when anyone has reached 200 points
-            if players' |> List.forall (fun player -> player.FirmScore < 200u) then
-                yield! Rounds (session + 1u) players' (deck, discards')
+            if scored |> List.forall (fun player -> player.FirmScore < 200u) then
+                // The deck passes to the next player for the following round, so
+                // turn order rotates by one each round
+                let rotated =
+                    match scored with
+                    | [] -> []
+                    | leader :: rest -> rest @ [ leader ]
+
+                yield! Rounds (round + 1u) rotated (deck, discards')
         }
 
         let startingPlayers =
