@@ -15,7 +15,10 @@ let public Run (names: string list) : unit =
         names
         |> List.mapi (fun index name -> name, strategies[index % strategies.Length])
 
+    let now = System.DateTime.Now.ToString "yyyy-MM-dd HH:mm:ss"
+    let replayName = sprintf "simulated game %s" now
+
     Timeline.Simulate players None None None None
     |> Seq.toArray
     |> Some
-    |> Replay.Run "simulated game"
+    |> Replay.Run replayName

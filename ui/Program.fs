@@ -15,10 +15,8 @@ let main args =
             Replay.Run directory None
             Console.Clear()
             0
-        with ex ->
+        finally
             Console.CursorVisible <- true
-            printfn "Error: %s" ex.Message
-            1
 
     // Simulate a game with specified player names and predefined strategies
     | "--simulate" :: names ->
@@ -28,10 +26,8 @@ let main args =
             Simulate.Run names
             Console.Clear()
             0
-        with ex ->
+        finally
             Console.CursorVisible <- true
-            printfn "Error: %s" ex.Message
-            1
 
     // Run an interactive game with specified player names
     | "--interactive" :: names ->
@@ -41,10 +37,8 @@ let main args =
             Interactive.Run names
             Console.Clear()
             0
-        with ex ->
+        finally
             Console.CursorVisible <- true
-            printfn "Error: %s" ex.Message
-            1
 
     // Usage
     | _ ->
