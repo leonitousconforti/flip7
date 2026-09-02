@@ -95,13 +95,16 @@ module public Strategy =
 
     /// <summary>
     /// Evaluates a strategy using the given source of randomness, given the
-    /// current session number, the player, the list of other players, and the
-    /// decks, returning whether to hit or stand.
+    /// current round number, the current turn (how many times play has come
+    /// around the table this round, counting from one for the player being
+    /// asked), the player, the list of other players, and the decks, returning
+    /// whether to hit or stand.
     /// </summary>
     let public DecideWith
         (random: System.Random)
         (strategy: Strategy)
-        (session: uint)
+        (round: uint)
+        (turn: uint)
         (player: StrategyPlayer)
         (otherPlayers: StrategyPlayer list)
         (decks: Deck * Deck)
@@ -166,7 +169,7 @@ module public Strategy =
                 |> List.fold max 0u
 
             if total < leader + margin then Hit else Stand
-        | StandsAfterTurn turns -> if session < turns then Hit else Stand
+        | StandsAfterTurn turns -> if turn <= turns then Hit else Stand
         | MaximizesExpectedValue ->
             let deck, discards = decks
             if Simulation.expectedValueOfHit deck discards player.Hand > 0.0 then
@@ -175,14 +178,17 @@ module public Strategy =
                 Stand
 
     /// <summary>
-    /// Evaluates a strategy given the current session number, the player, the
-    /// list of other players, and the decks, returning whether to hit or stand.
+    /// Evaluates a strategy given the current round number, the current turn
+    /// (how many times play has come around the table this round, counting from
+    /// one for the player being asked), the player, the list of other players,
+    /// and the decks, returning whether to hit or stand.
     /// </summary>
     let public Decide
         (strategy: Strategy)
-        (session: uint)
+        (round: uint)
+        (turn: uint)
         (player: StrategyPlayer)
         (otherPlayers: StrategyPlayer list)
         (decks: Deck * Deck)
         : HitOrStand =
-        DecideWith System.Random.Shared strategy session player otherPlayers decks
+        DecideWith System.Random.Shared strategy round turn player otherPlayers decks
