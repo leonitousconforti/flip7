@@ -63,7 +63,7 @@ module public Hand =
     /// boolean indicating whether the reduction still results in a bust (i.e.,
     /// there were more duplicate value cards than SecondChance cards).
     /// </summary>
-    let public Reduce (hand: Hand) : bool * Hand =
+    let public Reduce (hand: Hand) : bool * Hand * Hand =
         // The first fold counts the number of duplicate value cards and the
         // number of SecondChance cards in the hand.
         let folder =
@@ -77,12 +77,14 @@ module public Hand =
         // The second fold builds the reduced hand by skipping over the
         // appropriate number of duplicate value cards and SecondChance cards.
         let backFolder =
-            fun card (seen, dupsToDrop, scsToDrop, acc) ->
+            fun card (seen, dupsToDrop, scsToDrop, hand', removed') ->
                 match card with
-                | ActionCard(Card.SecondChance) when scsToDrop > 0 -> seen, dupsToDrop, scsToDrop - 1, acc
-                | ValueCard(vc) when Set.contains vc seen && dupsToDrop > 0 -> seen, dupsToDrop - 1, scsToDrop, acc
-                | ValueCard(vc) -> Set.add vc seen, dupsToDrop, scsToDrop, card :: acc
-                | _ -> seen, dupsToDrop, scsToDrop, card :: acc
+                | ActionCard(Card.SecondChance) when scsToDrop > 0 ->
+                    seen, dupsToDrop, scsToDrop - 1, hand', card :: removed'
+                | ValueCard(vc) when Set.contains vc seen && dupsToDrop > 0 ->
+                    seen, dupsToDrop - 1, scsToDrop, hand', card :: removed'
+                | ValueCard(vc) -> Set.add vc seen, dupsToDrop, scsToDrop, card :: hand', removed'
+                | _ -> seen, dupsToDrop, scsToDrop, card :: hand', removed'
 
         let numDups, numSCs =
             hand
@@ -92,12 +94,12 @@ module public Hand =
         let isBust = numDups > numSCs
         let numCancel = min numDups numSCs
 
-        let reducedHand =
-            (Set.empty, numCancel, numCancel, List.empty)
+        let reducedHand, removedCards =
+            (Set.empty, numCancel, numCancel, List.empty, List.empty)
             |> List.foldBack backFolder hand
-            |> fun (_seen, _dupsToDrop, _scsToDrop, reducedHand) -> reducedHand
+            |> fun (_seen, _dupsToDrop, _scsToDrop, reducedHand, removedCards) -> reducedHand, removedCards
 
-        isBust, reducedHand
+        isBust, reducedHand, removedCards
 
     /// <summary>
     /// Parses a hand from a sequence of lines, where each line represents a
