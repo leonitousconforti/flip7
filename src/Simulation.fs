@@ -47,15 +47,6 @@ module Simulation =
         + probabilityOfDuplicateValueCard
         + probabilityOfFreeze
 
-    /// <summary>
-    /// The expected change in banked score from taking exactly one more flip
-    /// and then standing. Value and modifier cards score through Hand.Reduce
-    /// and Hand.Score, so busts, second chance cancellations, the x2
-    /// modifier, and the flip7 bonus are all accounted for; action cards are
-    /// treated as not changing the player's own banked score. When the deck
-    /// is empty the discards are about to be reshuffled into the new deck, so
-    /// the draw is taken from them instead.
-    /// </summary>
     let public expectedValueOfHit (deck: Deck) (discards: Deck) (hand: Hand) : float =
         let effectiveDeck = if Deck.IsEmpty deck then discards else deck
         let currentScore = float (Hand.Score hand)
@@ -71,7 +62,7 @@ module Simulation =
                     | ActionCard _ -> currentScore
                     | ModifierCard _
                     | ValueCard _ ->
-                        let isBust, reducedHand = Hand.Reduce(card :: hand)
+                        let isBust, reducedHand, _ = Hand.Reduce(card :: hand)
                         if isBust then 0.0 else float (Hand.Score reducedHand)
 
                 probability * (score' - currentScore)
