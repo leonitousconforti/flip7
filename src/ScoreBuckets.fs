@@ -46,8 +46,8 @@ type public ScoreBuckets = {
     /// getting the flip7 bonus, times two for the double multiplier.
     /// </summary>
     static member public Max: ScoreBuckets = {
-        ModifierPoints = 12 + 11 + 10 + 9 + 8 + 7 + 6 |> uint
-        ValuePoints = 10 + 8 + 6 + 4 + 2 |> uint
+        ValuePoints = 12 + 11 + 10 + 9 + 8 + 7 + 6 |> uint
+        ModifierPoints = 10 + 8 + 6 + 4 + 2 |> uint
         BonusPoints = 15 |> uint
         Multiplier = 2 |> uint
     }

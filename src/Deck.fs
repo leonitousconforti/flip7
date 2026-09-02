@@ -144,13 +144,13 @@ module public Deck =
     /// </summary>
     let rec internal DrawWith (random: System.Random) (decks: Deck * Deck) (count: uint) : (Deck * Deck) * Card list =
         let deck, discards = decks
+        assert (Count deck + Count discards >= bigint count)
 
         if IsEmpty deck then
             DrawWith random (discards, Empty) count
         else
 
         assert (count > 0u)
-        assert (Count deck + Count discards >= bigint count)
         assert (IsEmpty deck |> not)
 
         let drawnCard =
