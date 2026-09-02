@@ -162,8 +162,8 @@ let private Render
 /// rounds, and clicking the progress bar jumps straight to that point.
 /// </summary>
 let public Run (source: string) (maybeTimeline: Instant array option) : unit =
-    let timeline =
-        Option.defaultValue (source |> Persistence.ReadTimeline |> Seq.toArray) maybeTimeline
+    let loadTimeline = fun () -> source |> Persistence.ReadTimeline |> Seq.toArray
+    let timeline = Option.defaultWith loadTimeline maybeTimeline
 
     if Array.isEmpty timeline then
         ()
