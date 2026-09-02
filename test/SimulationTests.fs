@@ -30,8 +30,10 @@ let ``Probability to bust simple when only player left`` () =
             ValueCard Card.Two, 1u
         ]
 
+    // A duplicate One (1/4) or a deal3 (1/4) that forces a bust across its
+    // flips; a drawn freeze would bank our points, so it is not a bust
     let probabilityToBust = Simulation.probabilityToBust deck discards hand true
-    Assert.Equal(0.75, probabilityToBust)
+    Assert.Equal(0.5, probabilityToBust)
 
 [<Fact>]
 let ``Expected value of hit weighs busts against gains`` () =
