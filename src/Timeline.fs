@@ -20,7 +20,7 @@ type public Event =
         | Drew(name, card) -> $"{name} drew {card}"
         | Stood name -> $"{name} stood"
         | Busted(name, card) -> $"{name} drew {card} and busted"
-        | Froze(source, target) when source = target -> $"{source} drew Freeze and froze thyself"
+        | Froze(source, target) when source = target -> $"{source} drew Freeze and froze themselves"
         | Froze(source, target) -> $"{source} drew Freeze and froze {target}"
         | SecondChancePassed(source, target) -> $"{source} passed a SecondChance to {target}"
         | SecondChanceDiscarded name -> $"{name} discarded a duplicate SecondChance"

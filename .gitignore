@@ -5,3 +5,5 @@ output/
 .direnv/
 .fsdocs/
 .DS_Store
+
+timelines/
