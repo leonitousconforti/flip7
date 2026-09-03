@@ -11,8 +11,7 @@ let private barWidth = width - 2
 let private CaptionStyle (event: Event) : string list =
     match event with
     | Busted _ -> [ Ansi.BrightRed ]
-    | Flip7Achieved _
-    | GameEnded _ -> [ Ansi.BrightGreen ]
+    | Flip7Achieved _ -> [ Ansi.BrightMagenta ]
     | RoundEnded _ -> [ Ansi.BrightYellow ]
     | Froze _ -> [ Ansi.BrightCyan ]
     | _ -> []
@@ -20,38 +19,43 @@ let private CaptionStyle (event: Event) : string list =
 let private padded (s: string) : string =
     s + String.replicate (max 0 (width - visualLength s)) " "
 
-let private ProgressBar (timeline: Instant array) (cursor: int) : string =
+let private ProgressBar (timeline: AnnotatedInstant array) (cursor: int) : string =
     let cellOf index = index * barWidth / timeline.Length
     let cells = Array.create barWidth "─"
 
     timeline
     |> Array.iteri (fun index instant ->
-        if instant.Event.IsRoundEnded then
+        if instant.Instant.Event.IsRoundEnded then
             cells[cellOf index] <- "┊"
     )
 
     cells[cellOf cursor] <- styled [ Ansi.BrightGreen ] "●"
     "├" + String.concat "" cells + "┤"
 
-let private Render
-    (source: string)
-    (timeline: Instant array)
-    (roundsBefore: int array)
-    (totalRounds: int)
-    (cursor: int)
-    : unit =
-    let instant = timeline[cursor]
-    let rule = String.replicate width "─"
+let private Render (source: string) (timeline: AnnotatedInstant array) (cursor: int) : unit =
+    let round = timeline[cursor].Round
+    let instant = timeline[cursor].Instant
+    let lastInstant = Array.last timeline
     let actor = instant.Event.Actor()
+    let totalRounds = lastInstant.Round
+    let rule = String.replicate width "─"
+
+    let caption, captionStyle =
+        if cursor = timeline.Length - 1 then
+            let winner = instant.Players |> List.maxBy (fun player -> player.FirmScore)
+            $"game over: {winner.Name} wins with {winner.FirmScore}pts!", [ Ansi.BrightGreen ]
+        else
+            string instant.Event, CaptionStyle instant.Event
 
     let status =
-        let round = min (roundsBefore[cursor] + 1) totalRounds
         let left = $"replay: {source}"
         let right = $"round {round}/{totalRounds}   instant {cursor + 1}/{timeline.Length}"
 
-        left
-        + String.replicate (max 1 (width - visualLength left - visualLength right)) " "
-        + right
+        let leftLength = visualLength left
+        let rightLength = visualLength right
+        let middle = String.replicate (max 1 (width - leftLength - rightLength)) " "
+
+        left + middle + right
 
     let playerRows =
         instant.Players
@@ -103,7 +107,7 @@ let private Render
         [
             rule
             padded status
-            padded (instant.Event |> string |> centered width |> styled (CaptionStyle instant.Event))
+            padded (caption |> centered width |> styled captionStyle)
             rule
         ]
         @ playerRows
@@ -116,49 +120,25 @@ let private Render
 let public Run (source: string) (maybeTimeline: Instant array option) : unit =
     let loadTimeline = fun () -> source |> Persistence.ReadTimeline |> Seq.toArray
     let timeline = Option.defaultWith loadTimeline maybeTimeline
+    let annotated = Timeline.Link timeline
 
     if Array.isEmpty timeline then
         ()
     else
 
-    let roundsBefore =
-        timeline
-        |> Array.map (fun instant -> if instant.Event.IsRoundEnded then 1 else 0)
-        |> Array.scan (+) 0
-        |> Array.take timeline.Length
-
-    let totalRounds =
-        timeline
-        |> Array.filter (fun instant -> instant.Event.IsRoundEnded)
-        |> Array.length
-
-    let clamp cursor =
-        max 0 (min (timeline.Length - 1) cursor)
-
-    let previousRoundEnd cursor =
-        [ 0 .. cursor - 1 ]
-        |> List.tryFindBack (fun index -> timeline[index].Event.IsRoundEnded)
-        |> Option.defaultValue 0
-
-    let nextRoundEnd cursor =
-        [ cursor + 1 .. timeline.Length - 1 ]
-        |> List.tryFind (fun index -> timeline[index].Event.IsRoundEnded)
-        |> Option.defaultValue (timeline.Length - 1)
-
     let rec loop (cursor: int) : unit =
-        Render source timeline roundsBefore totalRounds cursor
-
+        Render source annotated cursor
         match (Console.ReadKey true).Key with
         | ConsoleKey.Q
         | ConsoleKey.Escape -> ()
-        | ConsoleKey.LeftArrow -> loop (clamp (cursor - 1))
-        | ConsoleKey.RightArrow -> loop (clamp (cursor + 1))
-        | ConsoleKey.UpArrow
-        | ConsoleKey.PageUp -> loop (previousRoundEnd cursor)
-        | ConsoleKey.DownArrow
-        | ConsoleKey.PageDown -> loop (nextRoundEnd cursor)
-        | ConsoleKey.Home -> loop 0
+        | ConsoleKey.LeftArrow -> loop (max 0 (cursor - 1))
+        | ConsoleKey.RightArrow -> loop (min (timeline.Length - 1) (cursor + 1))
+        | ConsoleKey.UpArrow -> loop (annotated[cursor].BackwardsRoundEventIndex)
+        | ConsoleKey.PageUp -> loop (annotated[cursor].BackwardsRoundEventIndex)
+        | ConsoleKey.DownArrow -> loop (annotated[cursor].ForwardsRoundEventIndex)
+        | ConsoleKey.PageDown -> loop (annotated[cursor].ForwardsRoundEventIndex)
         | ConsoleKey.End -> loop (timeline.Length - 1)
+        | ConsoleKey.Home -> loop 0
         | _ -> loop cursor
 
     loop 0
