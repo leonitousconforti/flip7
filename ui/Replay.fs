@@ -33,11 +33,13 @@ let private Caption (event: Event) : string =
             |> String.concat "  "
 
         $"round over: {scores}"
+    | GameEnded winner -> $"game over: {winner} wins!"
 
 let private CaptionStyle (event: Event) : string list =
     match event with
     | Busted _ -> [ Ansi.BrightRed ]
-    | Flip7Achieved _ -> [ Ansi.BrightGreen ]
+    | Flip7Achieved _
+    | GameEnded _ -> [ Ansi.BrightGreen ]
     | RoundEnded _ -> [ Ansi.BrightYellow ]
     | Froze _ -> [ Ansi.BrightCyan ]
     | _ -> []
@@ -49,7 +51,8 @@ let private Actor (event: Event) : string option =
     | Stood name
     | Busted(name, _)
     | SecondChanceDiscarded name
-    | Flip7Achieved name -> Some name
+    | Flip7Achieved name
+    | GameEnded name -> Some name
     | Froze(_, target)
     | SecondChancePassed(_, target)
     | Dealt3(_, target, _) -> Some target
