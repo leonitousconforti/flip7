@@ -64,6 +64,18 @@ type public Instant = {
 }
 
 /// <summary>
+/// An annotated instant is an instant with additional metadata for replaying a
+/// game. It includes the index of the next and previous round-ending events and
+/// the round number of the instant.
+/// </summary>
+type public AnnotatedInstant = {
+    Instant: Instant
+    ForwardsRoundEventIndex: int
+    BackwardsRoundEventIndex: int
+    Round: int
+}
+
+/// <summary>
 /// A timeline is the full history of a game: one instant per event.
 /// </summary>
 type public Timeline = seq<Instant>
@@ -567,3 +579,83 @@ module public Timeline =
             instant.Players
             |> List.map (fun player -> player.Name, player.FirmScore)
             |> Map.ofList
+
+    /// <summary>
+    /// Annotates a timeline with the index of the next and previous
+    /// round-ending events and the round number of each instant. Enumerates the
+    /// entire timeline.
+    /// </summary>
+    let public Link (timeline: Instant array) : AnnotatedInstant array =
+        let seed =
+            Array.map (fun (instant: Instant) -> {
+                Instant = instant
+                ForwardsRoundEventIndex = 0
+                BackwardsRoundEventIndex = 0
+                Round = 0
+            })
+
+        let annotateRound (timeline: AnnotatedInstant array) =
+            let startingRound = 1
+
+            timeline
+            |> Array.mapFold
+                (fun round annotated ->
+                    let round' =
+                        if annotated.Instant.Event.IsRoundEnded then
+                            round + 1
+                        else
+                            round
+                    { annotated with Round = round' }, round'
+                )
+                startingRound
+            |> fst
+
+        let linkBackwards (timeline: (int * AnnotatedInstant) array) =
+            let startingBackwardsRoundEventIndex = 0
+
+            timeline
+            |> Array.mapFold
+                (fun prevRoundEventIndex (index, annotated) ->
+                    let prevRoundEventIndex' =
+                        if annotated.Instant.Event.IsRoundEnded then
+                            index
+                        else
+                            prevRoundEventIndex
+
+                    {
+                        annotated with
+                            BackwardsRoundEventIndex = prevRoundEventIndex'
+                    },
+                    prevRoundEventIndex'
+                )
+                startingBackwardsRoundEventIndex
+            |> fst
+
+        let linkForwards (timeline: (int * AnnotatedInstant) array) =
+            let startingForwardsRoundEventIndex = timeline.Length - 1
+
+            startingForwardsRoundEventIndex
+            |> Array.mapFoldBack
+                (fun (index, annotated) nextRoundEventIndex ->
+                    let nextRoundEventIndex' =
+                        if annotated.Instant.Event.IsRoundEnded then
+                            index
+                        else
+                            nextRoundEventIndex
+
+                    {
+                        annotated with
+                            ForwardsRoundEventIndex = nextRoundEventIndex'
+                    },
+                    nextRoundEventIndex'
+                )
+                timeline
+            |> fst
+
+        timeline
+        |> seed
+        |> annotateRound
+        |> Array.indexed
+        |> linkBackwards
+        |> Array.indexed
+        |> linkForwards
