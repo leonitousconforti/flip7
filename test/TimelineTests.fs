@@ -51,7 +51,7 @@ let ``simulated games uphold the invariants`` (seed: int) =
 
     // The game ends once someone reaches 200 points at the end of a round,
     // with a GameEnded instant naming a player with the most points
-    let scoreboard = Timeline.Scoreboard timeline
+    let scoreboard = Timeline.Scoreboard(List.toArray timeline)
     Assert.True(scoreboard |> Map.exists (fun _ score -> score >= 200u))
 
     match (List.last timeline).Event with
