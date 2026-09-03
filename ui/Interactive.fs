@@ -46,8 +46,8 @@ let private renderHelp () : unit =
 let rec private loop
     (deck: Deck)
     (discards: Deck)
-    (players: Map<uint, string * uint * Hand>)
-    (cursor: Choice<Card, uint, Choice<Card, uint>>)
+    (players: Map<int, string * uint * Hand>)
+    (cursor: Choice<Card, int, Choice<Card, int>>)
     : unit =
     Console.Clear()
 
@@ -280,10 +280,10 @@ let public Run (playerNames: string list) : unit =
     let discards: Deck = Deck.Empty
     let cursor = Choice1Of3(ValueCard Card.Zero)
 
-    let players: Map<uint, string * uint * Hand> =
+    let players: Map<int, string * uint * Hand> =
         playerNames
+        |> List.map (fun name -> name, 0u, List.empty)
         |> List.indexed
-        |> List.map (fun (tablePosition, name) -> uint tablePosition, (name, 0u, List.empty))
         |> Map.ofList
 
     loop deck discards players cursor
