@@ -36,6 +36,14 @@ let ``Probability to bust simple when only player left`` () =
     Assert.Equal(0.5, probabilityToBust)
 
 [<Fact>]
+let ``Probability to bust is zero while holding a second chance`` () =
+    // Every remaining card duplicates the hand, but the held second chance
+    // cancels the next duplicate
+    let deck = Map.ofList [ ValueCard Card.One, 2u ]
+    let hand = [ ActionCard Card.SecondChance; ValueCard Card.One ]
+    Assert.Equal(0.0, Simulation.probabilityToBust deck Deck.Empty hand false)
+
+[<Fact>]
 let ``Expected value of hit weighs busts against gains`` () =
     // Half the time bust and lose the 1, half the time draw the Two
     let deck = Map.ofList [ ValueCard Card.One, 1u; ValueCard Card.Two, 1u ]

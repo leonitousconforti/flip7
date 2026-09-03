@@ -4,10 +4,13 @@ module Simulation =
     let rec public probabilityToBust (deck: Deck) (discards: Deck) (hand: Hand) (onlyPlayer: bool) : float =
         let pdf = Deck.pdf deck
         let probabilityOfDuplicateValueCard =
-            hand
-            |> List.filter (fun card -> card.IsValueCard)
-            |> List.map (fun card -> Map.find card pdf)
-            |> List.sum
+            if hand |> List.contains (ActionCard Card.SecondChance) then
+                0.0
+            else
+                hand
+                |> List.filter (fun card -> card.IsValueCard)
+                |> List.map (fun card -> Map.find card pdf)
+                |> List.sum
 
         // Simple case: there are other players whom haven't stood or busted
         // yet so we don't consider the case of needing to play action cards
