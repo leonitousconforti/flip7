@@ -1,8 +1,28 @@
 module public Simulate
 
+open System
+
 open Flip7
 
 let public Run (playerNamesAndStrategies: string list) : unit =
+    System.Diagnostics.Debug.Assert(
+        playerNamesAndStrategies.Length > 0,
+        "Please provide at least one player name as a command-line argument."
+    )
+    System.Diagnostics.Debug.Assert(
+        playerNamesAndStrategies.Length <= 5,
+        "Please provide no more than five player names as command-line arguments."
+    )
+    System.Diagnostics.Debug.Assert(
+        playerNamesAndStrategies
+        |> List.forall (fun name -> not (String.IsNullOrWhiteSpace name)),
+        "Player names cannot be empty or whitespace."
+    )
+    System.Diagnostics.Debug.Assert(
+        playerNamesAndStrategies |> List.distinct |> List.length = playerNamesAndStrategies.Length,
+        "Player names must be unique."
+    )
+
     let parse =
         fun (nameAndStrategy: string) ->
             let parts = nameAndStrategy.Split ","

@@ -4,6 +4,11 @@ open System
 
 [<EntryPoint>]
 let main args =
+    System.Diagnostics.Debug.Assert(
+        Console.WindowWidth = 80 && Console.WindowHeight = 24,
+        "Console window should be 80x24, please resize it."
+    )
+
     match Array.toList args with
     // Replay a previously recorded game from a specified directory
     | [ "--replay"; directory ] ->

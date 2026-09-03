@@ -278,10 +278,6 @@ let public Run (playerNames: string list) : unit =
         playerNames |> List.distinct |> List.length = playerNames.Length,
         "Player names must be unique."
     )
-    System.Diagnostics.Debug.Assert(
-        Console.WindowWidth = 80 && Console.WindowHeight = 24,
-        "Console window should be 80x24, please resize it."
-    )
 
     let deck: Deck = Deck.Full
     let discards: Deck = Deck.Empty
