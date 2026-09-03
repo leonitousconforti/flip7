@@ -2,8 +2,6 @@ module Program
 
 open System
 
-open Flip7
-
 [<EntryPoint>]
 let main args =
     match Array.toList args with

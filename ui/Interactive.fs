@@ -165,7 +165,7 @@ let rec private loop
             let players' = Map.add player (firmScore, rest) players
             loop deck' discards players' cursor
 
-    let commitSession () =
+    let commitRound () =
         if issues <> [] then
             loop deck discards players cursor
         else
@@ -195,7 +195,7 @@ let rec private loop
     // Program flow control
     | ConsoleModifiers.None, ConsoleKey.Q, _ -> ()
     | ConsoleModifiers.None, ConsoleKey.Escape, _ -> ()
-    | ConsoleModifiers.None, ConsoleKey.Enter, _ -> commitSession ()
+    | ConsoleModifiers.None, ConsoleKey.Enter, _ -> commitRound ()
 
     // Opening the help page, remembering the cursor it was opened over
     | _, _, Choice1Of3 card when key.KeyChar = '?' || key.Key = ConsoleKey.H ->
@@ -288,8 +288,4 @@ let public Run (playerNames: string list) : unit =
     let players: Map<string, uint * Hand> =
         playerNames |> List.map (fun name -> name, (0u, List.empty)) |> Map.ofList
 
-    Console.Clear()
-    Console.CursorVisible <- false
     loop deck discards players cursor
-    Console.CursorVisible <- true
-    Console.Clear()
