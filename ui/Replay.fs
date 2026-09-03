@@ -50,72 +50,67 @@ let private Render (source: string) (timeline: AnnotatedInstant array) (cursor: 
     let status =
         let left = $"replay: {source}"
         let right = $"round {round}/{totalRounds}   instant {cursor + 1}/{timeline.Length}"
-
-        let leftLength = visualLength left
-        let rightLength = visualLength right
-        let middle = String.replicate (max 1 (width - leftLength - rightLength)) " "
-
+        let leftWidth = visualLength left
+        let rightWidth = visualLength right
+        let middle = String.replicate (max 0 (width - leftWidth - rightWidth)) " "
         left + middle + right
-
-    let playerRows =
-        instant.Players
-        |> List.collect (fun player ->
-            let onlyPlayerNotBusted =
-                instant.Players
-                |> List.forall (fun p -> Hand.IsBust p.Hand || p.Name = player.Name)
-
-            let probabilityToBust =
-                Simulation.probabilityToBust instant.Deck instant.Discards player.Hand onlyPlayerNotBusted
-                |> fun p -> p * 100.0
-
-            let tentativeScore =
-                if Hand.IsBust player.Hand then
-                    0u
-                else
-                    Hand.Score player.Hand
-
-            let preamble =
-                sprintf
-                    "%s %s (%dpts + %dpts?, %.2f%%): "
-                    player.Name
-                    (bustEmoji probabilityToBust)
-                    player.FirmScore
-                    tentativeScore
-                    probabilityToBust
-
-            handRows 40 preamble player.Hand
-            |> fun (top, mid, bot) ->
-                let isActor = actor = Some player.Name
-                let styles = if isActor then [ Ansi.Inverse ] else []
-                styled styles top, styled styles mid, styled styles bot
-            |> fun (top, mid, bot) ->
-                let isBust = Hand.IsBust player.Hand
-                let styles = if isBust then [ Ansi.Dim; Ansi.Italic ] else []
-                styled styles top, styled styles mid, styled styles bot
-            |> fun (top, mid, bot) -> [ padded top; padded mid; padded bot ]
-        )
-
-    let blankRows =
-        List.replicate ((playerSlots - List.length instant.Players) * 3) (String.replicate width " ")
 
     let footer =
         "[↔] scrub   [↕] jump rounds   [home/end] start/end   [q/esc] quit"
         |> centered width
         |> styled [ Ansi.Dim; Ansi.Cyan ]
 
-    let lines =
-        [
-            rule
-            padded status
-            padded (caption |> centered width |> styled captionStyle)
-            rule
-        ]
-        @ playerRows
-        @ blankRows
-        @ [ rule; ProgressBar timeline cursor; footer ]
-
+    // Overwrite in place rather than clearing, so scrubbing does not flicker;
+    // every line is padded to the full width to erase the previous frame
     Console.SetCursorPosition(0, 0)
-    Console.Out.Write(String.concat "\n" lines)
+    printfn "%s" (padded rule)
+    printfn "%s" (padded status)
+    printfn "%s" (padded (caption |> centered width |> styled captionStyle))
+    printfn "%s" (padded rule)
+
+    for player in instant.Players do
+        let onlyPlayerNotBusted =
+            instant.Players
+            |> List.forall (fun p -> Hand.IsBust p.Hand || p.Name = player.Name)
+
+        let probabilityToBust =
+            Simulation.probabilityToBust instant.Deck instant.Discards player.Hand onlyPlayerNotBusted
+            |> fun p -> p * 100.0
+
+        let tentativeScore =
+            if Hand.IsBust player.Hand then
+                0u
+            else
+                Hand.Score player.Hand
+
+        let preamble =
+            sprintf
+                "%s %s (%dpts + %dpts?, %.2f%%): "
+                player.Name
+                (bustEmoji probabilityToBust)
+                player.FirmScore
+                tentativeScore
+                probabilityToBust
+
+        handRows 40 preamble player.Hand
+        |> fun (top, mid, bot) ->
+            let isActor = actor = Some player.Name
+            let styles = if isActor then [ Ansi.Inverse ] else []
+            styled styles top, styled styles mid, styled styles bot
+        |> fun (top, mid, bot) ->
+            let isBust = Hand.IsBust player.Hand
+            let styles = if isBust then [ Ansi.Dim; Ansi.Italic ] else []
+            styled styles top, styled styles mid, styled styles bot
+        |> fun (top, mid, bot) -> [ padded top; padded mid; padded bot ]
+        |> String.concat "\n"
+        |> printfn "%s"
+
+    for _ in 1 .. (playerSlots - List.length instant.Players) * 3 do
+        printfn "%s" (padded "")
+
+    printfn "%s" (padded rule)
+    printfn "%s" (padded (ProgressBar timeline cursor))
+    printf "%s" (padded footer)
 
 let public Run (source: string) (maybeTimeline: Instant array option) : unit =
     let loadTimeline = fun () -> source |> Persistence.ReadTimeline |> Seq.toArray
@@ -133,10 +128,10 @@ let public Run (source: string) (maybeTimeline: Instant array option) : unit =
         | ConsoleKey.Escape -> ()
         | ConsoleKey.LeftArrow -> loop (max 0 (cursor - 1))
         | ConsoleKey.RightArrow -> loop (min (timeline.Length - 1) (cursor + 1))
-        | ConsoleKey.UpArrow -> loop (annotated[cursor].BackwardsRoundEventIndex)
-        | ConsoleKey.PageUp -> loop (annotated[cursor].BackwardsRoundEventIndex)
-        | ConsoleKey.DownArrow -> loop (annotated[cursor].ForwardsRoundEventIndex)
-        | ConsoleKey.PageDown -> loop (annotated[cursor].ForwardsRoundEventIndex)
+        | ConsoleKey.UpArrow -> loop (annotated[cursor].ForwardsRoundEventIndex)
+        | ConsoleKey.PageUp -> loop (annotated[cursor].ForwardsRoundEventIndex)
+        | ConsoleKey.DownArrow -> loop (annotated[cursor].BackwardsRoundEventIndex)
+        | ConsoleKey.PageDown -> loop (annotated[cursor].BackwardsRoundEventIndex)
         | ConsoleKey.End -> loop (timeline.Length - 1)
         | ConsoleKey.Home -> loop 0
         | _ -> loop cursor
