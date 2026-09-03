@@ -58,7 +58,7 @@ let private Render
         |> List.collect (fun player ->
             let onlyPlayerNotBusted =
                 instant.Players
-                |> List.forall (fun p -> Hand.IsBust p.Hand || p.Hand = player.Hand)
+                |> List.forall (fun p -> Hand.IsBust p.Hand || p.Name = player.Name)
 
             let probabilityToBust =
                 Simulation.probabilityToBust instant.Deck instant.Discards player.Hand onlyPlayerNotBusted

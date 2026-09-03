@@ -106,13 +106,14 @@ let rec private loop
     printfn "%s" (String.replicate 80 "─")
 
     for playerName, (firmScore, hand) in players |> Map.toList do
-        let tentativeScore = Hand.Score hand
+        let isBust, reducedHand, _ = Hand.Reduce hand
+        let tentativeScore = if isBust then 0u else Hand.Score reducedHand
 
         let onlyPlayerNotBusted =
-            players |> Map.forall (fun _ (_, h) -> Hand.IsBust h || h = hand)
+            players |> Map.forall (fun name (_, h) -> Hand.IsBust h || name = playerName)
 
         let probabilityToBust =
-            Simulation.probabilityToBust deck discards hand onlyPlayerNotBusted
+            Simulation.probabilityToBust deck discards reducedHand onlyPlayerNotBusted
             |> fun p -> p * 100.0
 
         let emojiStatus = bustEmoji probabilityToBust
@@ -126,7 +127,6 @@ let rec private loop
             let styles = if isHighlighted then [ Ansi.Inverse ] else []
             styled styles top, styled styles mid, styled styles bot
         |> fun (top, mid, bot) ->
-            let isBust = Hand.IsBust hand
             let styles = if isBust then [ Ansi.Dim; Ansi.Italic ] else []
             styled styles top, styled styles mid, styled styles bot
         |> fun (top, mid, bot) -> [ top; mid; bot ]
@@ -180,8 +180,9 @@ let rec private loop
         let players' =
             players
             |> Map.map (fun _ (score, hand) ->
-                let handScore = if Hand.IsBust hand then 0u else Hand.Score hand
-                score + uint handScore, List.empty
+                let isBust, reducedHand, _ = Hand.Reduce hand
+                let handScore = if isBust then 0u else Hand.Score reducedHand
+                score + handScore, List.empty
             )
 
         let cursor' = Choice1Of3(ValueCard Card.Zero)
