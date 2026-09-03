@@ -15,6 +15,42 @@ type public Event =
     | RoundEnded of Scores: Map<string, uint>
     | GameEnded of Winner: string
 
+    override self.ToString() : string =
+        match self with
+        | Drew(name, card) -> $"{name} drew {card}"
+        | Stood name -> $"{name} stood"
+        | Busted(name, card) -> $"{name} drew {card} and busted"
+        | Froze(source, target) when source = target -> $"{source} drew Freeze and froze thyself"
+        | Froze(source, target) -> $"{source} drew Freeze and froze {target}"
+        | SecondChancePassed(source, target) -> $"{source} passed a SecondChance to {target}"
+        | SecondChanceDiscarded name -> $"{name} discarded a duplicate SecondChance"
+        | Dealt3(source, target, cards) ->
+            let cards = cards |> List.map string |> String.concat ", "
+            $"{source} drew Deal3, dealing {target}: {cards}"
+        | Flip7Achieved name -> $"{name} flipped 7 and ended the round!"
+        | RoundEnded scores ->
+            let scores =
+                scores
+                |> Map.toList
+                |> List.map (fun (name, score) -> $"{name} +{score}")
+                |> String.concat "  "
+
+            $"round over: {scores}"
+        | GameEnded winner -> $"game over: {winner} wins!"
+
+    member public self.Actor() : string option =
+        match self with
+        | Drew(name, _) -> Some name
+        | Stood name -> Some name
+        | Busted(name, _) -> Some name
+        | SecondChanceDiscarded name -> Some name
+        | Flip7Achieved name -> Some name
+        | Froze(source, _) -> Some source
+        | SecondChancePassed(source, _) -> Some source
+        | Dealt3(source, _, _) -> Some source
+        | GameEnded source -> Some source
+        | RoundEnded _ -> None
+
 /// <summary>
 /// A snapshot of the game immediately after an event. Players still in the
 /// round come first (the next player to act at the head), followed by players

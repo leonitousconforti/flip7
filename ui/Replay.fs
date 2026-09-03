@@ -12,29 +12,6 @@ let private playerSlots = 5
 let private barRow = 4 + playerSlots * 3 + 1 + 1
 let private barWidth = width - 2
 
-let private Caption (event: Event) : string =
-    match event with
-    | Drew(name, card) -> $"{name} drew {card}"
-    | Stood name -> $"{name} stood"
-    | Busted(name, card) -> $"{name} drew {card} and busted"
-    | Froze(source, target) when source = target -> $"{source} drew Freeze and froze themselves"
-    | Froze(source, target) -> $"{source} drew Freeze and froze {target}"
-    | SecondChancePassed(source, target) -> $"{source} passed a SecondChance to {target}"
-    | SecondChanceDiscarded name -> $"{name} discarded a duplicate SecondChance"
-    | Dealt3(source, target, cards) ->
-        let cards = cards |> List.map string |> String.concat ", "
-        $"{source} drew Deal3, dealing {target}: {cards}"
-    | Flip7Achieved name -> $"{name} flipped 7 and ended the round!"
-    | RoundEnded scores ->
-        let scores =
-            scores
-            |> Map.toList
-            |> List.map (fun (name, score) -> $"{name} +{score}")
-            |> String.concat "  "
-
-        $"round over: {scores}"
-    | GameEnded winner -> $"game over: {winner} wins!"
-
 let private CaptionStyle (event: Event) : string list =
     match event with
     | Busted _ -> [ Ansi.BrightRed ]
@@ -43,20 +20,6 @@ let private CaptionStyle (event: Event) : string list =
     | RoundEnded _ -> [ Ansi.BrightYellow ]
     | Froze _ -> [ Ansi.BrightCyan ]
     | _ -> []
-
-// The player an event happened to, highlighted in the render
-let private Actor (event: Event) : string option =
-    match event with
-    | Drew(name, _)
-    | Stood name
-    | Busted(name, _)
-    | SecondChanceDiscarded name
-    | Flip7Achieved name
-    | GameEnded name -> Some name
-    | Froze(_, target)
-    | SecondChancePassed(_, target)
-    | Dealt3(_, target, _) -> Some target
-    | RoundEnded _ -> None
 
 let private padded (s: string) : string =
     s + String.replicate (max 0 (width - visualLength s)) " "
@@ -83,7 +46,7 @@ let private Render
     : unit =
     let instant = timeline[cursor]
     let rule = String.replicate width "─"
-    let actor = Actor instant.Event
+    let actor = instant.Event.Actor()
 
     let status =
         let left = $"replay: {source}"
@@ -144,12 +107,7 @@ let private Render
         [
             rule
             padded status
-            padded (
-                instant.Event
-                |> Caption
-                |> centered width
-                |> styled (CaptionStyle instant.Event)
-            )
+            padded (instant.Event |> string |> centered width |> styled (CaptionStyle instant.Event))
             rule
         ]
         @ playerRows
