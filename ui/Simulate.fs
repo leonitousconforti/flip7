@@ -5,24 +5,6 @@ open System
 open Flip7
 
 let public Run (playerNamesAndStrategies: string list) : unit =
-    System.Diagnostics.Debug.Assert(
-        playerNamesAndStrategies.Length > 0,
-        "Please provide at least one player name as a command-line argument."
-    )
-    System.Diagnostics.Debug.Assert(
-        playerNamesAndStrategies.Length <= 5,
-        "Please provide no more than five player names as command-line arguments."
-    )
-    System.Diagnostics.Debug.Assert(
-        playerNamesAndStrategies
-        |> List.forall (fun name -> not (String.IsNullOrWhiteSpace name)),
-        "Player names cannot be empty or whitespace."
-    )
-    System.Diagnostics.Debug.Assert(
-        playerNamesAndStrategies |> List.distinct |> List.length = playerNamesAndStrategies.Length,
-        "Player names must be unique."
-    )
-
     let parse =
         fun (nameAndStrategy: string) ->
             let parts = nameAndStrategy.Split ","
@@ -35,8 +17,9 @@ let public Run (playerNamesAndStrategies: string list) : unit =
 
             name, strategy
 
-    let now = System.DateTime.Now.ToString "yyyy-MM-dd HH:mm:ss"
-    let replayName = sprintf "simulated game %s" now
+    let now = DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss"
+    let directory = IO.Path.Combine("timelines", now)
+    let replayName = $"simulated game {now}"
 
     let players = playerNamesAndStrategies |> List.map parse
     let seededHands = Some Map.empty
@@ -44,7 +27,15 @@ let public Run (playerNamesAndStrategies: string list) : unit =
     let seededDeck = None
     let seededDiscards = None
 
+    if players.Length <= 0 then
+        raise (ArgumentException "Please provide at least one player name as a command-line argument.")
+    if players.Length > 5 then
+        raise (ArgumentException "Please provide no more than five player names as command-line arguments.")
+    if players |> List.map fst |> List.distinct |> List.length <> players.Length then
+        raise (ArgumentException "Player names must be unique.")
+
     Timeline.Simulate players seededHands seededScores seededDeck seededDiscards
+    |> Persistence.WriteTimelineLazy directory
     |> Seq.toArray
     |> Some
     |> Replay.Run replayName

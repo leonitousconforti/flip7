@@ -63,18 +63,15 @@ module public Persistence =
             Discards = discards
         }
 
-    let public WriteTimelineLazy (timeline: Timeline) : Timeline =
-        let identifier = DateTime.UtcNow.ToString "s"
-        let timelineDirectory = Path.Combine("timelines", identifier)
-
+    let public WriteTimelineLazy (directory: string) (timeline: Timeline) : Timeline =
         timeline
         |> Seq.mapi (fun index instant ->
-            let instantDirectory = Path.Combine(timelineDirectory, $"{index}")
+            let instantDirectory = Path.Combine(directory, $"{index}")
             WriteInstant instantDirectory instant
         )
 
-    let public WriteTimelineEager (timeline: Timeline) : Timeline =
-        let written = timeline |> WriteTimelineLazy |> Seq.cache
+    let public WriteTimelineEager (directory: string) (timeline: Timeline) : Timeline =
+        let written = timeline |> WriteTimelineLazy directory |> Seq.cache
         written |> Seq.iter ignore
         written
 

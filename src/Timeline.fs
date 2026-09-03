@@ -45,10 +45,10 @@ type public Event =
         | Busted(name, _) -> Some name
         | SecondChanceDiscarded name -> Some name
         | Flip7Achieved name -> Some name
-        | Froze(source, _) -> Some source
-        | SecondChancePassed(source, _) -> Some source
-        | Dealt3(source, _, _) -> Some source
-        | GameEnded source -> Some source
+        | Froze(_, target) -> Some target
+        | SecondChancePassed(_, target) -> Some target
+        | Dealt3(_, target, _) -> Some target
+        | GameEnded winner -> Some winner
         | RoundEnded _ -> None
 
 /// <summary>

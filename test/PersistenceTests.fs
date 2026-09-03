@@ -45,10 +45,7 @@ let ``a written timeline reads back identically`` () =
                 None
             |> Seq.toList
 
-        original
-        |> List.iteri (fun index instant ->
-            Persistence.WriteInstant (Path.Combine(directory, $"{index}")) instant |> ignore
-        )
+        Persistence.WriteTimelineEager directory original |> ignore
 
         Assert.Equal<Instant list>(original, Persistence.ReadTimeline directory |> Seq.toList)
     )

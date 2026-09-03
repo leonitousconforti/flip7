@@ -11,6 +11,10 @@ let main args =
 
     match Array.toList args with
     // Replay a previously recorded game from a specified directory
+    | [ "--replay"; directory ] when not (IO.Directory.Exists directory) ->
+        eprintfn $"Replay directory not found: {directory}"
+        1
+
     | [ "--replay"; directory ] ->
         try
             Console.Clear()
