@@ -13,7 +13,6 @@ type public Event =
     | Dealt3 of Source: string * Target: string * Cards: Card list
     | Flip7Achieved of Name: string
     | RoundEnded of Scores: Map<string, uint>
-    | GameEnded of Winner: string
 
     override self.ToString() : string =
         match self with
@@ -36,7 +35,6 @@ type public Event =
                 |> String.concat "  "
 
             $"round over: {scores}"
-        | GameEnded winner -> $"game over: {winner} wins!"
 
     member public self.Actor() : string option =
         match self with
@@ -48,7 +46,6 @@ type public Event =
         | Froze(_, target) -> Some target
         | SecondChancePassed(_, target) -> Some target
         | Dealt3(_, target, _) -> Some target
-        | GameEnded winner -> Some winner
         | RoundEnded _ -> None
 
 /// <summary>
@@ -99,7 +96,6 @@ module public Event =
             "RoundEnded"
             yield! scores |> Map.toList |> List.map (fun (name, score) -> $"{name}: {score}")
           |]
-        | GameEnded winner -> [| "GameEnded"; winner |]
 
     /// <summary>
     /// Parses an event from a sequence of lines: the event kind followed by
@@ -124,7 +120,6 @@ module public Event =
             )
             |> Map.ofList
             |> RoundEnded
-        | [ "GameEnded"; winner ] -> GameEnded winner
         | lines -> raise (System.FormatException $"Invalid event lines: %A{lines}")
 
 module public Timeline =
@@ -442,9 +437,8 @@ module public Timeline =
     /// Simulates a full game using the given source of randomness and returns
     /// its timeline lazily: one instant per event, with a RoundEnded instant
     /// closing out every round. The last instant of the timeline is the
-    /// GameEnded naming the winner, once a player has reached 200 points. Seed
-    /// values, when provided, apply to the first round only. A seeded random
-    /// makes the
+    /// RoundEnded in which a player first reaches 200 points. Seed values, when
+    /// provided, apply to the first round only. A seeded random makes the
     /// timeline reproducible, but note that the timeline is lazy: enumerating
     /// it advances the random, so enumerate it once (or cache it) when
     /// reproducibility matters.
@@ -505,7 +499,8 @@ module public Timeline =
                 Discards = discards'
             }
 
-            // Base case: the game ends when anyone has reached 200 points
+            // Base case: the game ends when anyone has reached 200 points, so
+            // the round's RoundEnded is the last instant of the timeline
             if scored |> List.forall (fun player -> player.FirmScore < 200u) then
                 // The deck passes to the next player for the following round, so
                 // turn order rotates by one each round
@@ -515,22 +510,6 @@ module public Timeline =
                     | leader :: rest -> rest @ [ leader ]
 
                 yield! Rounds (round + 1u) rotated (deck, discards')
-            else
-                // The player with the most points wins; a tie goes to whoever
-                // banked their points first during the final round (finished
-                // players sit behind the active ones in reverse finishing
-                // order, so reversing puts the earliest banker first)
-                let winner =
-                    finalPlayers
-                    |> List.rev
-                    |> List.maxBy (fun player -> player.FirmScore + Map.find player.Name scores)
-
-                yield {
-                    Event = GameEnded winner.Name
-                    Players = scored
-                    Deck = deck
-                    Discards = discards'
-                }
         }
 
         let startingPlayers =
@@ -555,9 +534,8 @@ module public Timeline =
     /// <summary>
     /// Simulates a full game and returns its timeline lazily: one instant per
     /// event, with a RoundEnded instant closing out every round. The last
-    /// instant of the timeline is the GameEnded naming the winner, once a
-    /// player has reached 200 points. Seed values, when provided, apply to the
-    /// first round only.
+    /// instant of the timeline is the RoundEnded in which a player first reaches
+    /// 200 points. Seed values, when provided, apply to the first round only.
     /// </summary>
     let public Simulate
         (players: list<string * Strategy>)
@@ -605,7 +583,7 @@ module public Timeline =
                             round + 1
                         else
                             round
-                    { annotated with Round = round' }, round'
+                    { annotated with Round = round }, round'
                 )
                 startingRound
             |> fst
@@ -624,7 +602,7 @@ module public Timeline =
 
                     {
                         annotated with
-                            BackwardsRoundEventIndex = prevRoundEventIndex'
+                            BackwardsRoundEventIndex = prevRoundEventIndex
                     },
                     prevRoundEventIndex'
                 )
@@ -645,7 +623,7 @@ module public Timeline =
 
                     {
                         annotated with
-                            ForwardsRoundEventIndex = nextRoundEventIndex'
+                            ForwardsRoundEventIndex = nextRoundEventIndex
                     },
                     nextRoundEventIndex'
                 )

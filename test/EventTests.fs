@@ -17,7 +17,6 @@ let ``Serialize and Deserialize round-trip every event`` () =
         Flip7Achieved "Alice"
         RoundEnded(Map.ofList [ "Alice", 45u; "Bob", 0u ])
         RoundEnded Map.empty
-        GameEnded "Alice"
     ]
     |> List.iter (fun event -> Assert.Equal(event, event |> Event.Serialize |> Event.Deserialize))
 

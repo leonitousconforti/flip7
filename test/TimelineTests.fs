@@ -49,14 +49,10 @@ let ``simulated games uphold the invariants`` (seed: int) =
         let hands = instant.Players |> List.map (fun player -> player.Hand)
         Assert.Empty(Simulation.Issues instant.Deck instant.Discards hands)
 
-    // The game ends once someone reaches 200 points at the end of a round,
-    // with a GameEnded instant naming a player with the most points
+    // The game ends once someone reaches 200 points, at the final RoundEnded
     let scoreboard = Timeline.Scoreboard(List.toArray timeline)
     Assert.True(scoreboard |> Map.exists (fun _ score -> score >= 200u))
-
-    match (List.last timeline).Event with
-    | GameEnded winner -> Assert.Equal(scoreboard |> Map.values |> Seq.max, scoreboard[winner])
-    | event -> failwith $"expected a GameEnded event, got %A{event}"
+    Assert.True((List.last timeline).Event.IsRoundEnded)
 
     // Firm scores only ever grow
     timeline
