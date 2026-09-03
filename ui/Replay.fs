@@ -45,16 +45,16 @@ let private Render
     let actor = instant.Event.Actor()
 
     let status =
+        let round = min (roundsBefore[cursor] + 1) totalRounds
         let left = $"replay: {source}"
-        let right =
-            $"round {roundsBefore[cursor] + 1}/{totalRounds}   instant {cursor + 1}/{timeline.Length}"
+        let right = $"round {round}/{totalRounds}   instant {cursor + 1}/{timeline.Length}"
+
         left
         + String.replicate (max 1 (width - visualLength left - visualLength right)) " "
         + right
 
     let playerRows =
         instant.Players
-        |> List.sortBy (fun player -> player.Name)
         |> List.collect (fun player ->
             let onlyPlayerNotBusted =
                 instant.Players
@@ -113,11 +113,6 @@ let private Render
     Console.SetCursorPosition(0, 0)
     Console.Out.Write(String.concat "\n" lines)
 
-/// <summary>
-/// Interactively scrubs through a timeline: the left and right arrow keys move
-/// the cursor instant by instant, up and down jump between rounds, and home
-/// and end snap to the start or end of the game.
-/// </summary>
 let public Run (source: string) (maybeTimeline: Instant array option) : unit =
     let loadTimeline = fun () -> source |> Persistence.ReadTimeline |> Seq.toArray
     let timeline = Option.defaultWith loadTimeline maybeTimeline

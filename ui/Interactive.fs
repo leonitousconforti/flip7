@@ -46,8 +46,8 @@ let private renderHelp () : unit =
 let rec private loop
     (deck: Deck)
     (discards: Deck)
-    (players: Map<string, (uint * Hand)>)
-    (cursor: Choice<Card, string, Choice<Card, string>>)
+    (players: Map<uint, string * uint * Hand>)
+    (cursor: Choice<Card, uint, Choice<Card, uint>>)
     : unit =
     Console.Clear()
 
@@ -105,12 +105,12 @@ let rec private loop
     printfn "%s" (String.replicate 0 " ")
     printfn "%s" (String.replicate 80 "─")
 
-    for playerName, (firmScore, hand) in players |> Map.toList do
+    for tablePosition, (playerName, firmScore, hand) in Map.toList players do
         let isBust, reducedHand, _ = Hand.Reduce hand
         let tentativeScore = if isBust then 0u else Hand.Score reducedHand
 
         let onlyPlayerNotBusted =
-            players |> Map.forall (fun name (_, h) -> Hand.IsBust h || name = playerName)
+            Map.forall (fun _ (name, _, hand) -> Hand.IsBust hand || name = playerName) players
 
         let probabilityToBust =
             Simulation.probabilityToBust deck discards reducedHand onlyPlayerNotBusted
@@ -123,7 +123,7 @@ let rec private loop
 
         handRows 40 preamble hand
         |> fun (top, mid, bot) ->
-            let isHighlighted = cursor = Choice2Of3 playerName
+            let isHighlighted = cursor = Choice2Of3 tablePosition
             let styles = if isHighlighted then [ Ansi.Inverse ] else []
             styled styles top, styled styles mid, styled styles bot
         |> fun (top, mid, bot) ->
@@ -134,16 +134,24 @@ let rec private loop
         |> printfn "%s"
 
     let issues =
-        Simulation.Issues deck discards (players |> Map.values |> Seq.map snd)
+        Simulation.Issues deck discards (players |> Map.values |> Seq.map (fun (_, __, hand) -> hand))
         |> Seq.toList
 
-    match issues with
-    | firstIssue :: _otherIssues ->
+    let winner =
+        let name, score, _ = players |> Map.values |> Seq.maxBy (fun (_, score, _) -> score)
+        if score >= 200u then Some(name, score) else None
+
+    match issues, winner with
+    | firstIssue :: _otherIssues, _ ->
         firstIssue
         |> styled [ Ansi.Underline ]
         |> centered 80
         |> styled [ Ansi.BrightRed ]
-    | [] ->
+    | [], Some(name, score) ->
+        $"game over: {name} wins with {score}pts!"
+        |> centered 80
+        |> styled [ Ansi.BrightGreen ]
+    | [], None ->
         "[↔] distributions   [↕] players   [?] help   [q/esc] quit"
         |> centered 80
         |> styled [ Ansi.Dim; Ansi.Cyan ]
@@ -151,18 +159,17 @@ let rec private loop
 
     let addCardToPlayer card player =
         let deck' = Deck.Decrement deck card
-        let firmScore, hand = Map.find player players
-        let hand' = card :: hand
-        let players' = Map.add player (firmScore, hand') players
+        let name, firmScore, hand = Map.find player players
+        let players' = Map.add player (name, firmScore, card :: hand) players
         loop deck' discards players' cursor
 
     let popCardFromPlayer player =
-        let firmScore, hand = Map.find player players
+        let name, firmScore, hand = Map.find player players
         match hand with
         | [] -> loop deck discards players cursor
         | card :: rest ->
             let deck' = Deck.Increment deck card
-            let players' = Map.add player (firmScore, rest) players
+            let players' = Map.add player (name, firmScore, rest) players
             loop deck' discards players' cursor
 
     let commitRound () =
@@ -173,16 +180,16 @@ let rec private loop
         let discards' =
             players
             |> Map.values
-            |> Seq.map snd
+            |> Seq.map (fun (_, _, hand) -> hand)
             |> Seq.collect id
             |> Seq.fold Deck.Increment discards
 
         let players' =
             players
-            |> Map.map (fun _ (score, hand) ->
+            |> Map.map (fun _ (name, score, hand) ->
                 let isBust, reducedHand, _ = Hand.Reduce hand
                 let handScore = if isBust then 0u else Hand.Score reducedHand
-                score + handScore, List.empty
+                name, score + handScore, List.empty
             )
 
         let cursor' = Choice1Of3(ValueCard Card.Zero)
@@ -262,27 +269,21 @@ let rec private loop
     | _ -> loop deck discards players cursor
 
 let public Run (playerNames: string list) : unit =
-    System.Diagnostics.Debug.Assert(
-        playerNames.Length > 0,
-        "Please provide at least one player name as a command-line argument."
-    )
-    System.Diagnostics.Debug.Assert(
-        playerNames.Length <= 5,
-        "Please provide no more than five player names as command-line arguments."
-    )
-    System.Diagnostics.Debug.Assert(
-        playerNames |> List.forall (fun name -> not (String.IsNullOrWhiteSpace name)),
-        "Player names cannot be empty or whitespace."
-    )
-    System.Diagnostics.Debug.Assert(
-        playerNames |> List.distinct |> List.length = playerNames.Length,
-        "Player names must be unique."
-    )
+    if playerNames.Length <= 0 then
+        raise (ArgumentException "Please provide at least one player name as a command-line argument.")
+    if playerNames.Length > 5 then
+        raise (ArgumentException "Please provide no more than five player names as command-line arguments.")
+    if playerNames |> List.distinct |> List.length <> playerNames.Length then
+        raise (ArgumentException "Player names must be unique.")
 
     let deck: Deck = Deck.Full
     let discards: Deck = Deck.Empty
     let cursor = Choice1Of3(ValueCard Card.Zero)
-    let players: Map<string, uint * Hand> =
-        playerNames |> List.map (fun name -> name, (0u, List.empty)) |> Map.ofList
+
+    let players: Map<uint, string * uint * Hand> =
+        playerNames
+        |> List.indexed
+        |> List.map (fun (tablePosition, name) -> uint tablePosition, (name, 0u, List.empty))
+        |> Map.ofList
 
     loop deck discards players cursor
