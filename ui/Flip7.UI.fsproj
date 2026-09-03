@@ -9,7 +9,6 @@
     <Compile Include="shared/Ansi.fs" />
     <Compile Include="shared/Sparkline.fs" />
     <Compile Include="shared/Render.fs" />
-    <Compile Include="shared/Input.fs" />
 
     <Compile Include="Interactive.fs" />
     <Compile Include="Replay.fs" />

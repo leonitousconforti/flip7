@@ -6,10 +6,6 @@ open Flip7
 
 let private width = 80
 let private playerSlots = 5
-
-// 1-based terminal row the progress bar is rendered on: 4 header lines plus
-// 3 rows for each of the 5 player slots plus 1 rule
-let private barRow = 4 + playerSlots * 3 + 1 + 1
 let private barWidth = width - 2
 
 let private CaptionStyle (event: Event) : string list =
@@ -99,7 +95,7 @@ let private Render
         List.replicate ((playerSlots - List.length instant.Players) * 3) (String.replicate width " ")
 
     let footer =
-        "[scroll/↔] scrub   [↕] jump rounds   [home/end] start/end   [q/esc] quit"
+        "[↔] scrub   [↕] jump rounds   [home/end] start/end   [q/esc] quit"
         |> centered width
         |> styled [ Ansi.Dim; Ansi.Cyan ]
 
@@ -118,9 +114,9 @@ let private Render
     Console.Out.Write(String.concat "\n" lines)
 
 /// <summary>
-/// Interactively scrubs through a timeline: the mouse wheel / trackpad (and
-/// arrow keys) move the cursor instant by instant, up and down jump between
-/// rounds, and clicking the progress bar jumps straight to that point.
+/// Interactively scrubs through a timeline: the left and right arrow keys move
+/// the cursor instant by instant, up and down jump between rounds, and home
+/// and end snap to the start or end of the game.
 /// </summary>
 let public Run (source: string) (maybeTimeline: Instant array option) : unit =
     let loadTimeline = fun () -> source |> Persistence.ReadTimeline |> Seq.toArray
@@ -154,35 +150,20 @@ let public Run (source: string) (maybeTimeline: Instant array option) : unit =
         |> List.tryFind (fun index -> timeline[index].Event.IsRoundEnded)
         |> Option.defaultValue (timeline.Length - 1)
 
-    Console.Out.Write Input.MouseOn
+    let rec loop (cursor: int) : unit =
+        Render source timeline roundsBefore totalRounds cursor
 
-    try
-        let rec loop (cursor: int) : unit =
-            Render source timeline roundsBefore totalRounds cursor
+        match (Console.ReadKey true).Key with
+        | ConsoleKey.Q
+        | ConsoleKey.Escape -> ()
+        | ConsoleKey.LeftArrow -> loop (clamp (cursor - 1))
+        | ConsoleKey.RightArrow -> loop (clamp (cursor + 1))
+        | ConsoleKey.UpArrow
+        | ConsoleKey.PageUp -> loop (previousRoundEnd cursor)
+        | ConsoleKey.DownArrow
+        | ConsoleKey.PageDown -> loop (nextRoundEnd cursor)
+        | ConsoleKey.Home -> loop 0
+        | ConsoleKey.End -> loop (timeline.Length - 1)
+        | _ -> loop cursor
 
-            match Input.ReadCoalesced() with
-            | Input.Wheel(delta, _col, _row) -> loop (clamp (cursor + delta))
-
-            | Input.Click(col, row) when row = barRow ->
-                let cell = max 0 (min (barWidth - 1) (col - 2))
-                loop (clamp (cell * timeline.Length / barWidth))
-
-            | Input.Click _ -> loop cursor
-
-            | Input.Key key ->
-                match key.Key with
-                | ConsoleKey.Q
-                | ConsoleKey.Escape -> ()
-                | ConsoleKey.LeftArrow -> loop (clamp (cursor - 1))
-                | ConsoleKey.RightArrow -> loop (clamp (cursor + 1))
-                | ConsoleKey.UpArrow
-                | ConsoleKey.PageUp -> loop (previousRoundEnd cursor)
-                | ConsoleKey.DownArrow
-                | ConsoleKey.PageDown -> loop (nextRoundEnd cursor)
-                | ConsoleKey.Home -> loop 0
-                | ConsoleKey.End -> loop (timeline.Length - 1)
-                | _ -> loop cursor
-
-        loop 0
-    finally
-        Console.Out.Write Input.MouseOff
+    loop 0
