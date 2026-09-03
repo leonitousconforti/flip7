@@ -42,6 +42,6 @@ let main args =
     | _ ->
         printfn "Usage:"
         printfn "  flip7.exe --replay <directory>"
-        printfn "  flip7.exe --simulate <player1> <player2> ..."
+        printfn "  flip7.exe --simulate <player1,strategy1> <player2,strategy2> ..."
         printfn "  flip7.exe --interactive <player1> <player2> ..."
         1

@@ -2,23 +2,29 @@ module public Simulate
 
 open Flip7
 
-let public Run (names: string list) : unit =
-    let strategies = [
-        Strategy.Random
-        HitUntilScore 25u
-        HitUntilNumCards 4u
-        RandomWithProbability 0.75
-        AlwaysHits
-    ]
+let public Run (playerNamesAndStrategies: string list) : unit =
+    let parse =
+        fun (nameAndStrategy: string) ->
+            let parts = nameAndStrategy.Split ","
+            let name = parts[0]
+            let strategy =
+                if parts.Length > 1 then
+                    Strategy.Parse parts[1]
+                else
+                    Strategy.Random
 
-    let players =
-        names
-        |> List.mapi (fun index name -> name, strategies[index % strategies.Length])
+            name, strategy
 
     let now = System.DateTime.Now.ToString "yyyy-MM-dd HH:mm:ss"
     let replayName = sprintf "simulated game %s" now
 
-    Timeline.Simulate players None None None None
+    let players = playerNamesAndStrategies |> List.map parse
+    let seededHands = Some Map.empty
+    let seededScores = Some Map.empty
+    let seededDeck = None
+    let seededDiscards = None
+
+    Timeline.Simulate players seededHands seededScores seededDeck seededDiscards
     |> Seq.toArray
     |> Some
     |> Replay.Run replayName
