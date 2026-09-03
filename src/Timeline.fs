@@ -560,8 +560,8 @@ module public Timeline =
     /// The final scoreboard of a timeline: each player's firm score at the
     /// last instant. Enumerates the entire timeline.
     /// </summary>
-    let public Scoreboard (timeline: Timeline) : Map<string, uint> =
-        match timeline |> Seq.tryLast with
+    let public Scoreboard (timeline: Instant array) : Map<string, uint> =
+        match timeline |> Array.tryLast with
         | None -> Map.empty
         | Some instant ->
             instant.Players
