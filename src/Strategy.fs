@@ -102,8 +102,9 @@ module public Strategy =
     /// Evaluates a strategy using the given source of randomness, given the
     /// current round number, the current turn (how many times play has come
     /// around the table this round, counting from one for the player being
-    /// asked), the player, the list of other players, and the decks, returning
-    /// whether to hit or stand.
+    /// asked), the player, the other players still in the round, the players
+    /// who already stood, busted, or were frozen this round, and the decks,
+    /// returning whether to hit or stand.
     /// </summary>
     let public DecideWith
         (random: System.Random)
@@ -112,6 +113,7 @@ module public Strategy =
         (turn: uint)
         (player: StrategyPlayer)
         (otherPlayers: StrategyPlayer list)
+        (finishedPlayers: StrategyPlayer list)
         (decks: Deck * Deck)
         : HitOrStand =
         match strategy with
@@ -168,10 +170,16 @@ module public Strategy =
                 Stand
         | HitWhileBehindLeader margin ->
             let total = player.FirmScore + Hand.Score player.Hand
-            let leader =
-                otherPlayers
-                |> List.map (fun other -> other.FirmScore + Hand.Score other.Hand)
-                |> List.fold max 0u
+
+            // The leader may already be out of the round: a stood or frozen
+            // player's hand is locked in, while a busted player's is worthless
+            let showing (other: StrategyPlayer) =
+                if Hand.IsBust other.Hand then
+                    other.FirmScore
+                else
+                    other.FirmScore + Hand.Score other.Hand
+
+            let leader = otherPlayers @ finishedPlayers |> List.map showing |> List.fold max 0u
 
             if total < leader + margin then Hit else Stand
         | StandsAfterTurn turns -> if turn <= turns then Hit else Stand
@@ -190,8 +198,9 @@ module public Strategy =
     /// <summary>
     /// Evaluates a strategy given the current round number, the current turn
     /// (how many times play has come around the table this round, counting from
-    /// one for the player being asked), the player, the list of other players,
-    /// and the decks, returning whether to hit or stand.
+    /// one for the player being asked), the player, the other players still in
+    /// the round, the players already finished this round, and the decks,
+    /// returning whether to hit or stand.
     /// </summary>
     let public Decide
         (strategy: Strategy)
@@ -199,6 +208,7 @@ module public Strategy =
         (turn: uint)
         (player: StrategyPlayer)
         (otherPlayers: StrategyPlayer list)
+        (finishedPlayers: StrategyPlayer list)
         (decks: Deck * Deck)
         : HitOrStand =
-        DecideWith System.Random.Shared strategy round turn player otherPlayers decks
+        DecideWith System.Random.Shared strategy round turn player otherPlayers finishedPlayers decks

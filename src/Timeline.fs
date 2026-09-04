@@ -561,11 +561,7 @@ module public Timeline =
         (seedDeck: Deck option)
         (seedDiscards: Deck option)
         : Timeline =
-        let decide: Decider =
-            fun strategy round turn player others _finished decks ->
-                Strategy.DecideWith random strategy round turn player others decks
-
-        SimulateWithDecider random decide players seedHands seedScores seedDeck seedDiscards
+        SimulateWithDecider random (Strategy.DecideWith random) players seedHands seedScores seedDeck seedDiscards
 
     /// <summary>
     /// Simulates a full game and returns its timeline lazily: one instant per

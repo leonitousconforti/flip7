@@ -182,10 +182,10 @@ let public Run (humanNames: string list) : unit =
         read ()
 
     let decide: Decider =
-        fun strategy round turn player others _finished decks ->
+        fun strategy round turn player others finished decks ->
             match strategy with
             | Prompt -> promptHuman player others decks
-            | strategy -> Strategy.DecideWith random strategy round turn player others decks
+            | strategy -> Strategy.DecideWith random strategy round turn player others finished decks
 
     // The play loop is single-threaded: pulling the timeline drives the game,
     // so the human prompt blocks inside the pull and every instant is on disk
