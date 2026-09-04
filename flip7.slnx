@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/analysis/">
+    <Project Path="analysis/Flip7.Analysis.fsproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Flip7.fsproj" />
   </Folder>
