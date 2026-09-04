@@ -364,7 +364,7 @@ module public Timeline =
         (active: Player list)
         (finished: Player list)
         (decks: Deck * Deck)
-        : seq<Instant> =
+        : AsyncSeq<Instant> =
 
         // Invariant: active players should not have busted yet
         assert (active |> List.forall (fun player -> not (Hand.IsBust player.Hand)))
@@ -383,55 +383,57 @@ module public Timeline =
         match flip7Winner, active with
         // Base case: if anyone has the Flip7 bonus, the round ends immediately
         // for everyone
-        | Some winner, _ -> Seq.singleton (MakeInstant (Flip7Achieved winner.Name) active finished decks)
+        | Some winner, _ -> AsyncSeq.singleton (MakeInstant (Flip7Achieved winner.Name) active finished decks)
 
         // Base case: everyone has stood, busted, or been frozen
-        | None, [] -> Seq.empty
+        | None, [] -> AsyncSeq.empty
 
         | None, current :: others ->
             let turn = (turnsTaken |> Map.tryFind current.Name |> Option.defaultValue 0u) + 1u
             let turnsTaken = Map.add current.Name turn turnsTaken
 
-            // The first time play comes around the table each player is dealt a
-            // card before they may choose, and a player may never stand with no
-            // cards, so the opening turn is always a forced hit
-            let hitOrStand =
-                if turn = 1u then
-                    Strategy.Hit
-                else
-                    decide
-                        current.Strategy
-                        round
-                        turn
-                        (current.ToStrategyPlayer())
-                        (others |> List.map (fun p -> p.ToStrategyPlayer()))
-                        (finished |> List.map (fun p -> p.ToStrategyPlayer()))
-                        decks
+            asyncSeq {
+                // The first time play comes around the table each player is
+                // dealt a card before they may choose, and a player may never
+                // stand with no cards, so the opening turn is always a forced
+                // hit
+                let! hitOrStand =
+                    if turn = 1u then
+                        async.Return Strategy.Hit
+                    else
+                        decide
+                            current.Strategy
+                            round
+                            turn
+                            (current.ToStrategyPlayer())
+                            (others |> List.map (fun p -> p.ToStrategyPlayer()))
+                            (finished |> List.map (fun p -> p.ToStrategyPlayer()))
+                            decks
 
-            match hitOrStand with
-            | Strategy.Stand -> seq {
-                let finished' = current :: finished
-                yield MakeInstant (Stood current.Name) others finished' decks
-                yield! GoonSession random decide round turnsTaken others finished' decks
-              }
+                match hitOrStand with
+                | Strategy.Stand ->
+                    let finished' = current :: finished
+                    yield MakeInstant (Stood current.Name) others finished' decks
+                    yield! GoonSession random decide round turnsTaken others finished' decks
 
-            | Strategy.Hit ->
-                let decks', card = Deck.Draw1With random decks
+                | Strategy.Hit ->
+                    let decks', card = Deck.Draw1With random decks
 
-                let instants, active', finished', decks'' =
-                    ResolveDraw random current others finished decks' card
+                    let instants, active', finished', decks'' =
+                        ResolveDraw random current others finished decks' card
 
-                seq {
-                    yield! instants
+                    for instant in instants do
+                        yield instant
+
                     yield! GoonSession random decide round turnsTaken active' finished' decks''
-                }
+            }
 
     /// <summary>
     /// Simulates a full game like SimulateWith, but every hit-or-stand
     /// decision is routed through the given decider, so Prompt strategies can
     /// be answered by a human at the terminal. Pulling the timeline drives
-    /// the game, so a decider may block (waiting on a key press, say) and the
-    /// game simply pauses there.
+    /// the game, so a decider may await (a key press, a network message) and
+    /// the game simply pauses there without holding a thread.
     /// </summary>
     let public SimulateWithDecider
         (random: System.Random)

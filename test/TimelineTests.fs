@@ -77,10 +77,12 @@ let ``SimulateWithDecider routes prompt players through the injected decider`` (
             | Prompt ->
                 decisions <- decisions + 1
 
-                if Hand.Score player.Hand < 18u then
-                    Strategy.Hit
-                else
-                    Strategy.Stand
+                async.Return(
+                    if Hand.Score player.Hand < 18u then
+                        Strategy.Hit
+                    else
+                        Strategy.Stand
+                )
             | strategy -> Strategy.DecideWith (System.Random 1) strategy round turn player others finished decks
 
     let timeline =
