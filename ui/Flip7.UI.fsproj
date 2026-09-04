@@ -12,6 +12,7 @@
 
     <Compile Include="Interactive.fs" />
     <Compile Include="Replay.fs" />
+    <Compile Include="Play.fs" />
     <Compile Include="Simulate.fs" />
 
     <Compile Include="Program.fs" />

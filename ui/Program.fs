@@ -36,6 +36,18 @@ let main args =
         finally
             Console.CursorVisible <- true
 
+    // Play interactively, with AIs on freshly drawn strategies filling the
+    // seats the humans leave open
+    | "--play" :: names ->
+        try
+            Console.Clear()
+            Console.CursorVisible <- false
+            Play.Run names
+            Console.Clear()
+            0
+        finally
+            Console.CursorVisible <- true
+
     // Run an interactive game with specified player names
     | "--interactive" :: names ->
         try
@@ -53,4 +65,5 @@ let main args =
         printfn "  flip7.exe --replay <directory>"
         printfn "  flip7.exe --simulate <player1,strategy1> <player2,strategy2> ..."
         printfn "  flip7.exe --interactive <player1> <player2> ..."
+        printfn "  flip7.exe --play <player1> [player2] ..."
         1

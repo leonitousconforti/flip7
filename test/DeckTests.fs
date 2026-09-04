@@ -26,22 +26,22 @@ let ``Full deck has correct per-card counts`` () =
 
 [<Fact>]
 let ``Draw1 returns exactly one card`` () =
-    let _, cards = Deck.Draw1(Deck.Full, Deck.Empty)
+    let _, cards = Deck.Draw1With (System.Random 1) (Deck.Full, Deck.Empty)
     Assert.Equal(1, List.length [ cards ])
 
 [<Fact>]
 let ``Draw1 reduces deck count by 1`` () =
-    let (deck', _), _ = Deck.Draw1(Deck.Full, Deck.Empty)
+    let (deck', _), _ = Deck.Draw1With (System.Random 1) (Deck.Full, Deck.Empty)
     Assert.Equal(93I, Deck.Count deck')
 
 [<Fact>]
 let ``Draw3 returns exactly three cards`` () =
-    let _, cards = Deck.Draw3(Deck.Full, Deck.Empty)
+    let _, cards = Deck.Draw3With (System.Random 1) (Deck.Full, Deck.Empty)
     Assert.Equal(3, List.length cards)
 
 [<Fact>]
 let ``Draw3 reduces deck count by 3`` () =
-    let (deck', _), _ = Deck.Draw3(Deck.Full, Deck.Empty)
+    let (deck', _), _ = Deck.Draw3With (System.Random 1) (Deck.Full, Deck.Empty)
     Assert.Equal(91I, Deck.Count deck')
 
 [<Fact>]
@@ -124,24 +124,24 @@ let ``cdf of two-card-type deck - cumulative values are correct`` () =
 
 [<Fact>]
 let ``Draw returns the requested number of cards`` () =
-    let _, cards = Deck.Draw (Deck.Full, Deck.Empty) 5u
+    let _, cards = Deck.DrawWith (System.Random 1) (Deck.Full, Deck.Empty) 5u
     Assert.Equal(5, List.length cards)
 
 [<Fact>]
 let ``Draw reduces deck count by the requested amount`` () =
-    let (deck', _), _ = Deck.Draw (Deck.Full, Deck.Empty) 5u
+    let (deck', _), _ = Deck.DrawWith (System.Random 1) (Deck.Full, Deck.Empty) 5u
     Assert.Equal(89I, Deck.Count deck')
 
 [<Fact>]
 let ``Draw from single-card deck continues from discards`` () =
     let singleCard = Deck.Empty |> Map.add (ValueCard Card.Five) 1u
-    let _, cards = Deck.Draw (singleCard, Deck.Full) 3u
+    let _, cards = Deck.DrawWith (System.Random 1) (singleCard, Deck.Full) 3u
     Assert.Equal(3, List.length cards)
 
 [<Fact>]
 let ``Draw 1 card from single-card deck returns that card`` () =
     let singleCard = Deck.Empty |> Map.add (ValueCard Card.Five) 1u
-    let _, cards = Deck.Draw (singleCard, Deck.Empty) 1u
+    let _, cards = Deck.DrawWith (System.Random 1) (singleCard, Deck.Empty) 1u
     Assert.Equal<Card list>([ ValueCard Card.Five ], cards)
 
 [<Fact>]
