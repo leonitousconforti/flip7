@@ -78,6 +78,13 @@ module public Deck =
             Full
 
     /// <summary>
+    /// A random deck with the corresponding discards.
+    /// </summary>
+    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.RandomWith instead",
+                      true)>]
+    let public Random: Deck * Deck = RandomWith System.Random.Shared
+
+    /// <summary>
     /// Parses a deck from an array of lines, where each line is in the format
     /// "Card: Count".
     /// </summary>
@@ -172,6 +179,16 @@ module public Deck =
             lastDecks, drawnCard :: lastDrawnCards
 
     /// <summary>
+    /// Draws a card from the deck, returning the new deck, the new discards,
+    /// and the drawn card. If the deck is empty, the discards are shuffled and
+    /// become the new deck, and the discards become empty.
+    /// </summary>
+    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.DrawWith instead",
+                      true)>]
+    let internal Draw (decks: Deck * Deck) (count: uint) : (Deck * Deck) * Card list =
+        DrawWith System.Random.Shared decks count
+
+    /// <summary>
     /// Draws one card from the deck using the given source of randomness,
     /// returning the new deck, the new discards, and the drawn card. If the
     /// deck is empty, the discards are shuffled and become the new deck, and
@@ -181,12 +198,30 @@ module public Deck =
         DrawWith random decks 1u |> fun (decks, cards) -> decks, cards.Head
 
     /// <summary>
+    /// Draws one card from the deck, returning the new deck, the new discards,
+    /// and the drawn card. If the deck is empty, the discards are shuffled and
+    /// become the new deck, and the discards become empty.
+    /// </summary>
+    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.Draw1With instead",
+                      true)>]
+    let public Draw1 (decks: Deck * Deck) = Draw1With System.Random.Shared decks
+
+    /// <summary>
     /// Draws three cards from the deck using the given source of randomness,
     /// returning the new deck, the new discards and the drawn cards. If the
     /// deck is empty, the discards are shuffled and become the new deck, and
     /// the discards become empty.
     /// </summary>
     let public Draw3With (random: System.Random) (decks: Deck * Deck) = DrawWith random decks 3u
+
+    /// <summary>
+    /// Draws three cards from the deck, returning the new deck, the new
+    /// discards and the drawn cards. If the deck is empty, the discards are
+    /// shuffled and become the new deck, and the discards become empty.
+    /// </summary>
+    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.Draw3With instead",
+                      true)>]
+    let public Draw3 (decks: Deck * Deck) = Draw3With System.Random.Shared decks
 
     /// <summary>
     /// The probability distribution function of the deck, which maps each card

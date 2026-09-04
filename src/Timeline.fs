@@ -544,3 +544,17 @@ module public Timeline =
         (seedDiscards: Deck option)
         : Timeline =
         SimulateWithDecider random (Strategy.DecideWith random) players seedHands seedScores seedDeck seedDiscards
+
+    /// <summary>
+    /// Simulates a full game without threading a source of randomness.
+    /// </summary>
+    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Timeline.SimulateWith instead",
+                      true)>]
+    let public Simulate
+        (players: list<string * Strategy>)
+        (seedHands: Map<string, Hand> option)
+        (seedScores: Map<string, uint> option)
+        (seedDeck: Deck option)
+        (seedDiscards: Deck option)
+        : Timeline =
+        SimulateWith System.Random.Shared players seedHands seedScores seedDeck seedDiscards

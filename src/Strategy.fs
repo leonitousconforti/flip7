@@ -204,3 +204,10 @@ module public Strategy =
                     System.InvalidOperationException
                         $"{strategy} is decided externally via Timeline.SimulateWithDecider, not by DecideWith"
                 )
+
+    /// <summary>
+    /// Evaluates a strategy without threading a source of randomness.
+    /// </summary>
+    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Strategy.DecideWith instead",
+                      true)>]
+    let public Decide: Decider = DecideWith System.Random.Shared
