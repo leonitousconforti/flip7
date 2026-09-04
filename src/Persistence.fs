@@ -98,9 +98,14 @@ module public Persistence =
     }
 
     let public WriteTimelineEager (directory: string) (timeline: Timeline) : Timeline =
+        // The cache lives outside the sequence so re-enumeration replays it
+        // rather than re-pulling the source and re-writing the files
         let written = timeline |> WriteTimelineLazy directory |> AsyncSeq.cache
-        written |> AsyncSeq.iter ignore |> Async.RunSynchronously |> ignore
-        written
+
+        asyncSeq {
+            do! written |> AsyncSeq.iter ignore
+            yield! written
+        }
 
     let public ReadTimeline (directory: string) : Timeline = asyncSeq {
         let instantDirectories =

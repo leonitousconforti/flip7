@@ -50,7 +50,9 @@ let ``a written timeline reads back identically`` () =
             |> AsyncSeq.toListAsync
             |> Async.RunSynchronously
 
-        Persistence.WriteTimelineEager directory (AsyncSeq.ofSeq original) |> ignore
+        Persistence.WriteTimelineEager directory (AsyncSeq.ofSeq original)
+        |> AsyncSeq.iter ignore
+        |> Async.RunSynchronously
 
         let readBack =
             Persistence.ReadTimeline directory
