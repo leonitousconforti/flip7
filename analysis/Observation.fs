@@ -5,16 +5,19 @@ open Flip7
 /// <summary>
 /// A single voluntary hit-or-stand decision reconstructed from a timeline: the
 /// actor's pre-decision state (taken from the instant immediately before the
-/// event) and the choice they made. Session, Player, OtherPlayers, and Decks
-/// mirror exactly what Strategy.DecideWith receives, so any candidate strategy
-/// can be replayed against an observation.
+/// event) and the choice they made. Round, Turn, Player, OtherPlayers, and
+/// Decks mirror exactly what Strategy.DecideWith receives, so any candidate
+/// strategy can be replayed against an observation.
 /// </summary>
 type public Observation = {
     Name: string
     Choice: Strategy.HitOrStand
-    /// The round's turn counter at decision time, equal to the produced
-    /// instant's index within its round.
-    Session: uint
+    /// The round number at decision time, counting from one.
+    Round: uint
+    /// How many times play had come around to the actor within the round,
+    /// counting this decision, mirroring the turn GoonSession passes to
+    /// Strategy.DecideWith.
+    Turn: uint
     Player: Strategy.StrategyPlayer
     OtherPlayers: Strategy.StrategyPlayer list
     Decks: Deck * Deck
@@ -58,53 +61,68 @@ module public Observation =
     /// their still-bust hands, players who stood or were frozen by replaying
     /// the round's events.
     /// </summary>
-    let public FromTimeline (timeline: Timeline) : Observation list =
-        let observe (finished: Set<string>) (session: uint) (before: Instant) (event: Event) : Observation option =
-            Actor event
-            |> Option.bind (fun (name, choice) ->
-                before.Players
-                |> List.tryFind (fun player -> player.Name = name)
-                |> Option.filter (fun actor -> not (List.isEmpty actor.Hand))
-                |> Option.map (fun actor -> {
-                    Name = name
-                    Choice = choice
-                    Session = session
-                    Player = ToStrategyPlayer actor
-                    OtherPlayers =
-                        before.Players
-                        |> List.filter (fun player ->
-                            player.Name <> name
-                            && not (Set.contains player.Name finished)
-                            && not (Hand.IsBust player.Hand)
-                        )
-                        |> List.map ToStrategyPlayer
-                    Decks = before.Deck, before.Discards
-                })
-            )
-
-        // Session is the index of the instant about to be processed within
-        // its round, which is exactly the turn counter GoonSession passes to
-        // Strategy.DecideWith for the decision that produced the instant
+    let public FromTimeline (timeline: Instant seq) : Observation list =
         let step
-            (finished: Set<string>, session: uint, previous: Instant option, observations: Observation list)
+            (
+                finished: Set<string>,
+                round: uint,
+                turns: Map<string, uint>,
+                previous: Instant option,
+                observations: Observation list
+            )
             (instant: Instant)
             =
+            // Every event an actor produces counts as their turn coming
+            // around, mirroring GoonSession's per-player turn counter. The
+            // forced first hit counts too, though the empty-hand filter below
+            // keeps it out of the observations.
+            let turns' =
+                match Actor instant.Event with
+                | Some(name, _) ->
+                    let taken = turns |> Map.tryFind name |> Option.defaultValue 0u
+                    turns |> Map.add name (taken + 1u)
+                | None -> turns
+
+            let observe (before: Instant) : Observation option =
+                Actor instant.Event
+                |> Option.bind (fun (name, choice) ->
+                    before.Players
+                    |> List.tryFind (fun player -> player.Name = name)
+                    |> Option.filter (fun actor -> not (List.isEmpty actor.Hand))
+                    |> Option.map (fun actor -> {
+                        Name = name
+                        Choice = choice
+                        Round = round
+                        Turn = turns' |> Map.find name
+                        Player = ToStrategyPlayer actor
+                        OtherPlayers =
+                            before.Players
+                            |> List.filter (fun player ->
+                                player.Name <> name
+                                && not (Set.contains player.Name finished)
+                                && not (Hand.IsBust player.Hand)
+                            )
+                            |> List.map ToStrategyPlayer
+                        Decks = before.Deck, before.Discards
+                    })
+                )
+
             let observations' =
-                match previous |> Option.bind (fun before -> observe finished session before instant.Event) with
+                match previous |> Option.bind observe with
                 | Some observation -> observation :: observations
                 | None -> observations
 
-            let finished', session' =
+            let finished', round', turns'' =
                 match instant.Event with
-                | Stood name -> Set.add name finished, session + 1u
-                | Froze(_, target) -> Set.add target finished, session + 1u
-                | RoundEnded _ -> Set.empty, 0u
-                | _ -> finished, session + 1u
+                | Stood name -> Set.add name finished, round, turns'
+                | Froze(_, target) -> Set.add target finished, round, turns'
+                | RoundEnded _ -> Set.empty, round + 1u, Map.empty
+                | _ -> finished, round, turns'
 
-            finished', session', Some instant, observations'
+            finished', round', turns'', Some instant, observations'
 
-        let _, _, _, observations =
-            timeline |> Seq.fold step (Set.empty, 0u, None, [])
+        let _, _, _, _, observations =
+            timeline |> Seq.fold step (Set.empty, 1u, Map.empty, None, [])
 
         observations |> List.rev
 
@@ -112,5 +130,5 @@ module public Observation =
     /// Extracts and pools the decisions of many timelines, e.g. every
     /// persisted game a household has played.
     /// </summary>
-    let public FromTimelines (timelines: Timeline seq) : Observation list =
+    let public FromTimelines (timelines: Instant seq seq) : Observation list =
         timelines |> Seq.collect FromTimeline |> Seq.toList

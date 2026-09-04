@@ -2,6 +2,7 @@ module Flip7.Analysis.Program
 
 open System
 open System.IO
+open FSharp.Control
 open Flip7
 open Flip7.Analysis
 
@@ -19,7 +20,8 @@ let private bar (probability: float) : string =
 
 let private describe (observations: Observation list) (model: PlayerModel) : unit =
     let mostLikely = Inference.MostLikely model
-    let mine = observations |> List.filter (fun observation -> observation.Name = model.Name)
+    let mine =
+        observations |> List.filter (fun observation -> observation.Name = model.Name)
     let accuracy = Inference.Accuracy mostLikely mine
 
     printfn ""
@@ -29,8 +31,13 @@ let private describe (observations: Observation list) (model: PlayerModel) : uni
     for candidate, probability in model.Posterior |> List.truncate 5 do
         printfn $"  %5.1f{probability * 100.0}%%  %s{(string candidate).PadRight 26} %s{bar probability}"
 
+let private ReadTimelineEager (directory: string) : Instant list =
+    Persistence.ReadTimeline directory
+    |> AsyncSeq.toListAsync
+    |> Async.RunSynchronously
+
 let private report (timelines: Instant list list) : PlayerModel list =
-    let observations = timelines |> List.collect (Seq.ofList >> Observation.FromTimeline)
+    let observations = timelines |> List.collect Observation.FromTimeline
     let models = Inference.Fit observations
 
     printfn
@@ -42,34 +49,35 @@ let private report (timelines: Instant list list) : PlayerModel list =
     models
 
 let private analyze (directories: string list) : int =
-    let timelines = directories |> List.map (Persistence.ReadTimeline >> Seq.toList)
+    let timelines = directories |> List.map ReadTimelineEager
     report timelines |> ignore
     0
 
 let private demo (games: int) : int =
     let random = Random 7
-    let root = Path.Combine(Path.GetTempPath(), "flip7-analysis-demo")
+    let root = Path.Join(Path.GetTempPath(), "flip7-analysis-demo")
 
     if Directory.Exists root then
         Directory.Delete(root, true)
 
     let directories =
-        List.init games (fun game ->
-            let directory = Path.Combine(root, $"game-{game}")
+        List.init
+            games
+            (fun game ->
+                let directory = Path.Join(root, $"game-{game}")
 
-            Timeline.SimulateWith random GroundTruth None None None None
-            |> Seq.iteri (fun index instant ->
-                Persistence.WriteInstant (Path.Combine(directory, string index)) instant |> ignore
+                Timeline.SimulateWith random GroundTruth None None None None
+                |> Persistence.WriteTimelineEager directory
+                |> ignore
+
+                directory
             )
-
-            directory
-        )
 
     printfn $"simulated %d{games} games with hidden strategies and persisted them to %s{root}"
     printfn "reading the games back from disk and fitting player models..."
     printfn ""
 
-    let timelines = directories |> List.map (Persistence.ReadTimeline >> Seq.toList)
+    let timelines = directories |> List.map ReadTimelineEager
     let models = report timelines
 
     printfn ""

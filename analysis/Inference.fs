@@ -28,7 +28,10 @@ module public Inference =
         | AlwaysStands -> 0.0
         | RandomWithProbability probability -> probability
         | HitUntilScore threshold ->
-            if Hand.Score observation.Player.Hand < threshold then 1.0 else 0.0
+            if Hand.Score observation.Player.Hand < threshold then
+                1.0
+            else
+                0.0
         | HitUntilNumCards threshold ->
             if uint (List.length observation.Player.Hand) < threshold then
                 1.0
@@ -64,13 +67,19 @@ module public Inference =
             else
                 0.0
         | ChasesFlip7(score, uniques) ->
-            if uint (Hand.UniqueValueCards observation.Player.Hand) >= uniques then 1.0
-            elif Hand.Score observation.Player.Hand < score then 1.0
-            else 0.0
+            if uint (Hand.UniqueValueCards observation.Player.Hand) >= uniques then
+                1.0
+            elif Hand.Score observation.Player.Hand < score then
+                1.0
+            else
+                0.0
         | EmboldenedBySecondChance threshold ->
-            if observation.Player.Hand |> List.contains (ActionCard Card.SecondChance) then 1.0
-            elif Hand.Score observation.Player.Hand < threshold then 1.0
-            else 0.0
+            if observation.Player.Hand |> List.contains (ActionCard Card.SecondChance) then
+                1.0
+            elif Hand.Score observation.Player.Hand < threshold then
+                1.0
+            else
+                0.0
         | HitWhileBehindLeader margin ->
             let total = observation.Player.FirmScore + Hand.Score observation.Player.Hand
 
@@ -80,7 +89,7 @@ module public Inference =
                 |> List.fold max 0u
 
             if total < leader + margin then 1.0 else 0.0
-        | StandsAfterTurn turns -> if observation.Session < turns then 1.0 else 0.0
+        | StandsAfterTurn turns -> if observation.Turn <= turns then 1.0 else 0.0
         | MaximizesExpectedValue ->
             let deck, discards = observation.Decks
 
@@ -99,7 +108,8 @@ module public Inference =
         @ ([ 0.25; 0.5; 0.75 ] |> List.map RandomWithProbability)
         @ ([ 2u .. 2u .. 40u ] |> List.map HitUntilScore)
         @ ([ 1u .. 7u ] |> List.map HitUntilNumCards)
-        @ ([ 1 .. 9 ] |> List.map (fun tenths -> HitUntilBustProbability(float tenths / 10.0)))
+        @ ([ 1..9 ]
+           |> List.map (fun tenths -> HitUntilBustProbability(float tenths / 10.0)))
 
     /// <summary>
     /// The probability of the observed choice under a candidate strategy,
@@ -119,7 +129,11 @@ module public Inference =
     /// Fits a posterior over the candidate strategies for every player that
     /// appears in the observations, starting from a uniform prior.
     /// </summary>
-    let public FitWith (epsilon: float) (candidates: Strategy list) (observations: Observation list) : PlayerModel list =
+    let public FitWith
+        (epsilon: float)
+        (candidates: Strategy list)
+        (observations: Observation list)
+        : PlayerModel list =
         observations
         |> List.groupBy (fun observation -> observation.Name)
         |> List.map (fun (name, decisions) ->
@@ -191,6 +205,10 @@ module public Inference =
         let rec pick (roll: float) (candidates: (Strategy * float) list) : Strategy =
             match candidates with
             | [] -> MostLikely model
-            | (candidate, probability) :: rest -> if roll < probability then candidate else pick (roll - probability) rest
+            | (candidate, probability) :: rest ->
+                if roll < probability then
+                    candidate
+                else
+                    pick (roll - probability) rest
 
         pick (random.NextDouble()) model.Posterior

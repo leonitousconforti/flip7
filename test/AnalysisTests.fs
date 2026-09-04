@@ -1,10 +1,12 @@
 module AnalysisTests
 
+open FSharp.Control
 open Xunit
 open Flip7
 open Flip7.Analysis
 
-let private player (name: string) (hand: Hand) : Player = Player.Make(name, Strategy.Random, hand = hand)
+let private player (name: string) (hand: Hand) : Player =
+    Player.Make(name, Strategy.Random, hand = hand)
 
 let private instant (event: Event) (players: Player list) : Instant = {
     Event = event
@@ -37,7 +39,8 @@ let private handWorth (score: uint) : Hand =
         else
             match available |> List.tryFind (fun (points, _) -> points <= remaining) with
             | None -> failwith $"cannot build a hand worth {score}"
-            | Some(points, card) -> build (remaining - points) (available |> List.except [ points, card ]) (card :: hand)
+            | Some(points, card) ->
+                build (remaining - points) (available |> List.except [ points, card ]) (card :: hand)
 
     if score = 0u then
         [ ValueCard Card.Zero ]
@@ -100,6 +103,8 @@ let ``ProbabilityOfHit matches DecideWith for deterministic strategies`` () =
 
     let observations =
         Timeline.SimulateWith random [ "A", HitUntilScore 20u; "B", HitUntilNumCards 4u ] None None None None
+        |> AsyncSeq.toListAsync
+        |> Async.RunSynchronously
         |> Observation.FromTimeline
 
     Assert.NotEmpty observations
@@ -127,7 +132,8 @@ let ``ProbabilityOfHit matches DecideWith for deterministic strategies`` () =
                     Strategy.DecideWith
                         random
                         strategy
-                        observation.Session
+                        observation.Round
+                        observation.Turn
                         observation.Player
                         observation.OtherPlayers
                         observation.Decks
@@ -144,7 +150,8 @@ let ``Players who stood busted or were frozen are excluded from other players`` 
     let c = player "C" [ ValueCard Card.Two; ValueCard Card.Two ]
     let d = player "D" [ ValueCard Card.Nine ]
     let d' = player "D" [ ValueCard Card.Three; ValueCard Card.Nine ]
-    let frozen = player "D" [ ActionCard Card.Freeze; ValueCard Card.Three; ValueCard Card.Nine ]
+    let frozen =
+        player "D" [ ActionCard Card.Freeze; ValueCard Card.Three; ValueCard Card.Nine ]
 
     let timeline = [
         instant (Busted("C", ValueCard Card.Two)) [ b; d; a; c ]
@@ -155,12 +162,15 @@ let ``Players who stood busted or were frozen are excluded from other players`` 
     ]
 
     let observations = timeline |> Seq.ofList |> Observation.FromTimeline
-    let othersOf (observation: Observation) = observation.OtherPlayers |> List.map (fun player -> player.Name)
+    let othersOf (observation: Observation) =
+        observation.OtherPlayers |> List.map (fun player -> player.Name)
 
     Assert.Equal(4, List.length observations)
 
-    // All instants are in one round, so sessions count up from the second
-    Assert.Equal<uint list>([ 1u; 2u; 3u; 4u ], observations |> List.map (fun observation -> observation.Session))
+    // Turns count per player within the round: B's first, D's first, then A's
+    // first and second
+    Assert.Equal<uint list>([ 1u; 1u; 1u; 2u ], observations |> List.map (fun observation -> observation.Turn))
+    Assert.All(observations, (fun observation -> Assert.Equal(1u, observation.Round)))
 
     // B stood while C had already busted, so C is excluded from B's others
     Assert.Equal("B", observations[0].Name)
@@ -189,7 +199,8 @@ let ``Fit recovers a hit-until-score threshold from clean decisions`` () =
             {
                 Name = "Dad"
                 Choice = (if score < 20u then Strategy.Hit else Strategy.Stand)
-                Session = 0u
+                Round = 1u
+                Turn = 1u
                 Player = { Name = "Dad"; FirmScore = 0u; Hand = hand }
                 OtherPlayers = []
                 Decks = Deck.Full, Deck.Empty
@@ -219,9 +230,18 @@ let ``Fit recovers a bust-probability threshold from clean decisions`` () =
 
             {
                 Name = "Mom"
-                Choice = (if float ones / 10.0 < 0.4 then Strategy.Hit else Strategy.Stand)
-                Session = 0u
-                Player = { Name = "Mom"; FirmScore = 0u; Hand = [ ValueCard Card.One ] }
+                Choice =
+                    (if float ones / 10.0 < 0.4 then
+                         Strategy.Hit
+                     else
+                         Strategy.Stand)
+                Round = 1u
+                Turn = 1u
+                Player = {
+                    Name = "Mom"
+                    FirmScore = 0u
+                    Hand = [ ValueCard Card.One ]
+                }
                 OtherPlayers = [ other ]
                 Decks = deck, Deck.Empty
             }
