@@ -79,8 +79,8 @@ type private TimelineStore(directory: string) =
         try
             if
                 ingestPacer.ElapsedMilliseconds >= ingestDelayMilliseconds
-                && not isComplete
                 && Directory.Exists(Path.Join(directory, $"{count}"))
+                && not isComplete
             then
                 let instant = self.Read count
 
