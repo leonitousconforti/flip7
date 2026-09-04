@@ -72,7 +72,7 @@ let ``SimulateWithDecider routes prompt players through the injected decider`` (
     let mutable decisions = 0
 
     let decide: Decider =
-        fun strategy round turn player others decks ->
+        fun strategy round turn player others _finished decks ->
             match strategy with
             | Prompt ->
                 decisions <- decisions + 1

@@ -196,10 +196,12 @@ let public Run (humanName: string) : unit =
         read ()
 
     let decide: Decider =
-        fun strategy round turn player others decks ->
+        fun strategy round turn player others finished decks ->
             match strategy with
             | Prompt -> promptHuman player others decks
-            | Adaptive -> sage.Decide random round turn player others decks
+            | Adaptive ->
+                "Sage is thinking..." |> centered width |> styled [ Ansi.Dim ] |> WriteFooter
+                sage.Decide random round turn player others finished decks
             | strategy -> Strategy.DecideWith random strategy round turn player others decks
 
     // The play loop is single-threaded: pulling the timeline drives the game,

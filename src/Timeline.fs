@@ -71,16 +71,18 @@ type public Timeline = AsyncSeq<Instant>
 
 /// <summary>
 /// Decides hit-or-stand for one player: given the player's declared strategy,
-/// the round, the turn, the player, the other active players, and the decks.
-/// Injecting one into Timeline.SimulateWithDecider lets Prompt and Adaptive
-/// strategies be decided by a human at the terminal or by a model, while
-/// everything else defers to Strategy.DecideWith.
+/// the round, the turn, the player, the other active players, the players who
+/// already stood, busted, or were frozen this round, and the decks. Injecting
+/// one into Timeline.SimulateWithDecider lets Prompt and Adaptive strategies
+/// be decided by a human at the terminal or by a model, while everything else
+/// defers to Strategy.DecideWith (which does not see the finished players).
 /// </summary>
 type public Decider =
     Strategy
         -> uint
         -> uint
         -> Strategy.StrategyPlayer
+        -> Strategy.StrategyPlayer list
         -> Strategy.StrategyPlayer list
         -> (Deck * Deck)
         -> Strategy.HitOrStand
@@ -421,6 +423,7 @@ module public Timeline =
                         turn
                         (current.ToStrategyPlayer())
                         (others |> List.map (fun p -> p.ToStrategyPlayer()))
+                        (finished |> List.map (fun p -> p.ToStrategyPlayer()))
                         decks
 
             match hitOrStand with
@@ -558,7 +561,11 @@ module public Timeline =
         (seedDeck: Deck option)
         (seedDiscards: Deck option)
         : Timeline =
-        SimulateWithDecider random (Strategy.DecideWith random) players seedHands seedScores seedDeck seedDiscards
+        let decide: Decider =
+            fun strategy round turn player others _finished decks ->
+                Strategy.DecideWith random strategy round turn player others decks
+
+        SimulateWithDecider random decide players seedHands seedScores seedDeck seedDiscards
 
     /// <summary>
     /// Simulates a full game and returns its timeline lazily: one instant per
