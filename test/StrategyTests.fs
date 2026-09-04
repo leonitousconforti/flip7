@@ -35,8 +35,24 @@ let ``ToString and Parse round-trip every strategy`` () =
         HitWhileBehindLeader 10u
         StandsAfterTurn 12u
         MaximizesExpectedValue
+        Prompt
+        Adaptive
     ]
     |> List.iter (fun strategy -> Assert.Equal(strategy, Strategy.Parse(string strategy)))
+
+[<Fact>]
+let ``Externally decided strategies cannot be evaluated by DecideWith`` () =
+    let player: Strategy.StrategyPlayer = {
+        Name = "You"
+        FirmScore = 0u
+        Hand = [ ValueCard Card.Seven ]
+    }
+
+    for strategy in [ Prompt; Adaptive ] do
+        Assert.Throws<System.InvalidOperationException>(fun () ->
+            Strategy.DecideWith (System.Random 1) strategy 1u 2u player [] decks |> ignore
+        )
+        |> ignore
 
 [<Fact>]
 let ``TryParse returns None for invalid strings`` () =

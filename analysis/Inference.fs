@@ -97,6 +97,12 @@ module public Inference =
                 1.0
             else
                 0.0
+        | Prompt
+        | Adaptive ->
+            raise (
+                System.InvalidOperationException
+                    $"{strategy} is a label for externally decided players, not a candidate with a hit probability"
+            )
 
     /// <summary>
     /// The default candidate grid: every existing Strategy case at a spread of

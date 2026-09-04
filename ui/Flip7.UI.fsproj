@@ -12,6 +12,7 @@
 
     <Compile Include="Interactive.fs" />
     <Compile Include="Replay.fs" />
+    <Compile Include="Play.fs" />
     <Compile Include="Simulate.fs" />
 
     <Compile Include="Program.fs" />
@@ -19,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\src\Flip7.fsproj" />
+    <ProjectReference Include="..\analysis\Flip7.Analysis.fsproj" />
   </ItemGroup>
 
 </Project>

@@ -249,3 +249,56 @@ let ``Fit recovers a bust-probability threshold from clean decisions`` () =
 
     let model = Inference.Fit observations |> List.exactlyOne
     Assert.Equal(HitUntilBustProbability 0.4, Inference.MostLikely model)
+
+[<Fact>]
+let ``SuperAI models players from past games`` () =
+    let history =
+        [ 1; 2; 3 ]
+        |> List.map (fun seed ->
+            Timeline.SimulateWith
+                (System.Random seed)
+                [ "You", HitUntilScore 24u; "Rival", HitUntilNumCards 4u ]
+                None
+                None
+                None
+                None
+            |> AsyncSeq.toListAsync
+            |> Async.RunSynchronously
+        )
+
+    let sage = SuperAI history
+    Assert.Equal(HitUntilScore 24u, Inference.MostLikely (sage.ModelOf "You").Value)
+    Assert.Equal(HitUntilNumCards 4u, Inference.MostLikely (sage.ModelOf "Rival").Value)
+
+[<Fact>]
+let ``SuperAI races an opponent its model projects to win`` () =
+    // Teach Sage that Leader stands around 30 points a round
+    let history =
+        [ 1; 2 ]
+        |> List.map (fun seed ->
+            Timeline.SimulateWith
+                (System.Random seed)
+                [ "Leader", HitUntilScore 30u; "Foil", HitUntilNumCards 3u ]
+                None
+                None
+                None
+                None
+            |> AsyncSeq.toListAsync
+            |> Async.RunSynchronously
+        )
+
+    // Sage holds 30 tentative points: pure expected value says stand, but the
+    // model projects Leader to close the game at 210, so standing concedes
+    let me: Strategy.StrategyPlayer = {
+        Name = "Sage"
+        FirmScore = 150u
+        Hand = [ ValueCard Card.Twelve; ValueCard Card.Eleven; ValueCard Card.Seven ]
+    }
+
+    let leader: Strategy.StrategyPlayer = { Name = "Leader"; FirmScore = 180u; Hand = [] }
+    let decks = Deck.Full, Deck.Empty
+
+    Assert.Equal(Strategy.Hit, (SuperAI history).Decide (System.Random 1) 8u 3u me [ leader ] decks)
+
+    // Without the model the same state is a plain expected-value stand
+    Assert.Equal(Strategy.Stand, (SuperAI []).Decide (System.Random 1) 8u 3u me [ leader ] decks)
