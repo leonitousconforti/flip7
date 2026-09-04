@@ -80,8 +80,7 @@ module public Deck =
     /// <summary>
     /// A random deck with the corresponding discards.
     /// </summary>
-    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.RandomWith instead",
-                      true)>]
+    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.RandomWith instead")>]
     let public Random: Deck * Deck = RandomWith System.Random.Shared
 
     /// <summary>
@@ -183,8 +182,7 @@ module public Deck =
     /// and the drawn card. If the deck is empty, the discards are shuffled and
     /// become the new deck, and the discards become empty.
     /// </summary>
-    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.DrawWith instead",
-                      true)>]
+    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.DrawWith instead")>]
     let internal Draw (decks: Deck * Deck) (count: uint) : (Deck * Deck) * Card list =
         DrawWith System.Random.Shared decks count
 
@@ -202,8 +200,7 @@ module public Deck =
     /// and the drawn card. If the deck is empty, the discards are shuffled and
     /// become the new deck, and the discards become empty.
     /// </summary>
-    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.Draw1With instead",
-                      true)>]
+    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.Draw1With instead")>]
     let public Draw1 (decks: Deck * Deck) = Draw1With System.Random.Shared decks
 
     /// <summary>
@@ -219,8 +216,7 @@ module public Deck =
     /// discards and the drawn cards. If the deck is empty, the discards are
     /// shuffled and become the new deck, and the discards become empty.
     /// </summary>
-    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.Draw3With instead",
-                      true)>]
+    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.Draw3With instead")>]
     let public Draw3 (decks: Deck * Deck) = Draw3With System.Random.Shared decks
 
     /// <summary>

@@ -21,8 +21,6 @@ type public Strategy =
     | HitWhileBehindLeader of uint
     | StandsAfterTurn of uint
     | MaximizesExpectedValue
-    /// Decided by a human at the terminal; label only, routed to the decider
-    /// injected into Timeline.SimulateWithDecider rather than DecideWith.
     | Prompt
 
     override self.ToString() : string =
@@ -180,9 +178,6 @@ module public Strategy =
                     Stand
             | HitWhileBehindLeader margin ->
                 let total = player.FirmScore + Hand.Score player.Hand
-
-                // The leader may already be out of the round: a stood or frozen
-                // player's hand is locked in, while a busted player's is worthless
                 let showing (other: StrategyPlayer) =
                     if Hand.IsBust other.Hand then
                         other.FirmScore
@@ -190,7 +185,6 @@ module public Strategy =
                         other.FirmScore + Hand.Score other.Hand
 
                 let leader = otherPlayers @ finishedPlayers |> List.map showing |> List.fold max 0u
-
                 if total < leader + margin then Hit else Stand
             | StandsAfterTurn turns -> if turn <= turns then Hit else Stand
             | MaximizesExpectedValue ->
@@ -208,6 +202,5 @@ module public Strategy =
     /// <summary>
     /// Evaluates a strategy without threading a source of randomness.
     /// </summary>
-    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Strategy.DecideWith instead",
-                      true)>]
+    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Strategy.DecideWith instead")>]
     let public Decide: Decider = DecideWith System.Random.Shared

@@ -548,8 +548,7 @@ module public Timeline =
     /// <summary>
     /// Simulates a full game without threading a source of randomness.
     /// </summary>
-    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Timeline.SimulateWith instead",
-                      true)>]
+    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Timeline.SimulateWith instead")>]
     let public Simulate
         (players: list<string * Strategy>)
         (seedHands: Map<string, Hand> option)
