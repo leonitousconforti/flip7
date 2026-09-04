@@ -2,6 +2,7 @@ module public Replay
 
 open System
 open System.Collections.Generic
+open System.Diagnostics
 open System.IO
 open System.Threading
 
@@ -12,7 +13,7 @@ let private playerSlots = 5
 let private barWidth = width - 2
 let private cacheCapacity = 64
 let private pollMilliseconds = 30
-let private ingestBatch = 64
+let private ingestDelayMilliseconds = 100L
 
 // The round number (starting at 1) of the instant at the cursor, given the
 // ascending indices of the RoundEnded instants seen so far. A RoundEnded
@@ -44,6 +45,7 @@ let private PrevRoundEnded (roundEnds: ResizeArray<int>) (cursor: int) : int =
 /// only source.
 /// </summary>
 type private TimelineStore(directory: string) =
+    let ingestPacer = Stopwatch.StartNew()
     let roundEnds = ResizeArray<int>()
     let cache = Dictionary<int, Instant>()
     let cacheOrder = Queue<int>()
@@ -74,12 +76,12 @@ type private TimelineStore(directory: string) =
             instant
 
     member self.Ingest() : unit =
-        let mutable remaining = ingestBatch
-
         try
-            while remaining > 0
-                  && not isComplete
-                  && Directory.Exists(Path.Join(directory, $"{count}")) do
+            if
+                ingestPacer.ElapsedMilliseconds >= ingestDelayMilliseconds
+                && not isComplete
+                && Directory.Exists(Path.Join(directory, $"{count}"))
+            then
                 let instant = self.Read count
 
                 if instant.Event.IsRoundEnded then
@@ -89,7 +91,7 @@ type private TimelineStore(directory: string) =
                         isComplete <- true
 
                 count <- count + 1
-                remaining <- remaining - 1
+                ingestPacer.Restart()
         with exn ->
             error <- Some exn.Message
             isComplete <- true
