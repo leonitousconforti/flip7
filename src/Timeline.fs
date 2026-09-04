@@ -544,18 +544,3 @@ module public Timeline =
         (seedDiscards: Deck option)
         : Timeline =
         SimulateWithDecider random (Strategy.DecideWith random) players seedHands seedScores seedDeck seedDiscards
-
-    /// <summary>
-    /// Simulates a full game and returns its timeline lazily: one instant per
-    /// event, with a RoundEnded instant closing out every round. The last
-    /// instant of the timeline is the RoundEnded in which a player first reaches
-    /// 200 points. Seed values, when provided, apply to the first round only.
-    /// </summary>
-    let public Simulate
-        (players: list<string * Strategy>)
-        (seedHands: Map<string, Hand> option)
-        (seedScores: Map<string, uint> option)
-        (seedDeck: Deck option)
-        (seedDiscards: Deck option)
-        : Timeline =
-        SimulateWith System.Random.Shared players seedHands seedScores seedDeck seedDiscards

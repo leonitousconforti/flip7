@@ -38,7 +38,7 @@ let public Run (playerNamesAndStrategies: string list) : unit =
 
     use cancellation = new Threading.CancellationTokenSource()
     let producer =
-        Timeline.Simulate players seededHands seededScores seededDeck seededDiscards
+        Timeline.SimulateWith (Random()) players seededHands seededScores seededDeck seededDiscards
         |> Persistence.WriteTimelineLazy directory
         |> AsyncSeq.takeWhile (fun _ -> not cancellation.IsCancellationRequested)
         |> AsyncSeq.iter ignore

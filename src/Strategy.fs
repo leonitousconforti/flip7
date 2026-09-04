@@ -3,7 +3,7 @@ namespace Flip7
 /// <summary>
 /// A strategy decides whether a player hits or stands. Strategies are
 /// represented as data rather than functions so that they can be serialized
-/// and deserialized; use Strategy.Decide to evaluate one.
+/// and deserialized; use Strategy.DecideWith to evaluate one.
 /// </summary>
 type public Strategy =
     | AlwaysHits
@@ -204,12 +204,3 @@ module public Strategy =
                     System.InvalidOperationException
                         $"{strategy} is decided externally via Timeline.SimulateWithDecider, not by DecideWith"
                 )
-
-    /// <summary>
-    /// Evaluates a strategy given the current round number, the current turn
-    /// (how many times play has come around the table this round, counting from
-    /// one for the player being asked), the player, the other players still in
-    /// the round, the players already finished this round, and the decks,
-    /// returning whether to hit or stand.
-    /// </summary>
-    let public Decide: Decider = DecideWith System.Random.Shared
