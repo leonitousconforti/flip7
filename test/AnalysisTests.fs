@@ -249,3 +249,76 @@ let ``Fit recovers a bust-probability threshold from clean decisions`` () =
 
     let model = Inference.Fit observations |> List.exactlyOne
     Assert.Equal(HitUntilBustProbability 0.4, Inference.MostLikely model)
+
+[<Fact>]
+let ``SuperAI models players from past games`` () =
+    let history =
+        [ 1; 2; 3 ]
+        |> List.map (fun seed ->
+            Timeline.SimulateWith
+                (System.Random seed)
+                [ "You", HitUntilScore 24u; "Rival", HitUntilNumCards 4u ]
+                None
+                None
+                None
+                None
+            |> AsyncSeq.toListAsync
+            |> Async.RunSynchronously
+        )
+
+    let sage = SuperAI history
+    Assert.Equal(HitUntilScore 24u, Inference.MostLikely (sage.ModelOf "You").Value)
+    Assert.Equal(HitUntilNumCards 4u, Inference.MostLikely (sage.ModelOf "Rival").Value)
+
+let private teach (strategy: Strategy) (seeds: int list) : Instant list list =
+    seeds
+    |> List.map (fun seed ->
+        Timeline.SimulateWith
+            (System.Random seed)
+            [ "Rival", strategy; "Foil", HitUntilNumCards 3u ]
+            None
+            None
+            None
+            None
+        |> AsyncSeq.toListAsync
+        |> Async.RunSynchronously
+    )
+
+[<Fact>]
+let ``SuperAI stands when standing wins the game outright`` () =
+    // Sage can bank 202 right now; the modeled rival races to 30 a round from
+    // 150, so hitting only risks busting into a losing endgame
+    let sage = SuperAI(teach (HitUntilScore 30u) [ 1; 2 ])
+
+    let me: Strategy.StrategyPlayer = {
+        Name = "Sage"
+        FirmScore = 170u
+        Hand = [ ValueCard Card.Twelve; ValueCard Card.Eleven; ValueCard Card.Nine ]
+    }
+
+    let rival: Strategy.StrategyPlayer = { Name = "Rival"; FirmScore = 150u; Hand = [] }
+    let decks = me.Hand |> List.fold Deck.Decrement Deck.Full, Deck.Empty
+
+    Assert.Equal(Strategy.Stand, sage.Decide (System.Random 1) 5u 3u me [ rival ] [] decks)
+
+[<Fact>]
+let ``SuperAI hits when its model shows that standing concedes the game`` () =
+    // The modeled rival always stands, locking 202 this round; Sage at 195
+    // loses every rollout by standing, while hitting can still pass 202
+    let sage = SuperAI(teach AlwaysStands [ 1; 2 ])
+
+    let me: Strategy.StrategyPlayer = {
+        Name = "Sage"
+        FirmScore = 165u
+        Hand = [ ValueCard Card.Twelve; ValueCard Card.Eleven; ValueCard Card.Seven ]
+    }
+
+    let rival: Strategy.StrategyPlayer = {
+        Name = "Rival"
+        FirmScore = 190u
+        Hand = [ ValueCard Card.Twelve ]
+    }
+
+    let decks = me.Hand @ rival.Hand |> List.fold Deck.Decrement Deck.Full, Deck.Empty
+
+    Assert.Equal(Strategy.Hit, sage.Decide (System.Random 1) 5u 3u me [ rival ] [] decks)

@@ -69,6 +69,24 @@ type public Instant = {
 /// </summary>
 type public Timeline = AsyncSeq<Instant>
 
+/// <summary>
+/// Decides hit-or-stand for one player: given the player's declared strategy,
+/// the round, the turn, the player, the other active players, the players who
+/// already stood, busted, or were frozen this round, and the decks. Injecting
+/// one into Timeline.SimulateWithDecider lets Prompt and Adaptive strategies
+/// be decided by a human at the terminal or by a model, while everything else
+/// defers to Strategy.DecideWith (which does not see the finished players).
+/// </summary>
+type public Decider =
+    Strategy
+        -> uint
+        -> uint
+        -> Strategy.StrategyPlayer
+        -> Strategy.StrategyPlayer list
+        -> Strategy.StrategyPlayer list
+        -> (Deck * Deck)
+        -> Strategy.HitOrStand
+
 module public Event =
     /// <summary>
     /// Converts an event to an array of lines: the event kind followed by its
@@ -358,6 +376,7 @@ module public Timeline =
 
     let rec private GoonSession
         (random: System.Random)
+        (decide: Decider)
         (round: uint)
         (turnsTaken: Map<string, uint>)
         (active: Player list)
@@ -398,20 +417,20 @@ module public Timeline =
                 if turn = 1u then
                     Strategy.Hit
                 else
-                    Strategy.DecideWith
-                        random
+                    decide
                         current.Strategy
                         round
                         turn
                         (current.ToStrategyPlayer())
                         (others |> List.map (fun p -> p.ToStrategyPlayer()))
+                        (finished |> List.map (fun p -> p.ToStrategyPlayer()))
                         decks
 
             match hitOrStand with
             | Strategy.Stand -> seq {
                 let finished' = current :: finished
                 yield MakeInstant (Stood current.Name) others finished' decks
-                yield! GoonSession random round turnsTaken others finished' decks
+                yield! GoonSession random decide round turnsTaken others finished' decks
               }
 
             | Strategy.Hit ->
@@ -422,21 +441,19 @@ module public Timeline =
 
                 seq {
                     yield! instants
-                    yield! GoonSession random round turnsTaken active' finished' decks''
+                    yield! GoonSession random decide round turnsTaken active' finished' decks''
                 }
 
     /// <summary>
-    /// Simulates a full game using the given source of randomness and returns
-    /// its timeline lazily: one instant per event, with a RoundEnded instant
-    /// closing out every round. The last instant of the timeline is the
-    /// RoundEnded in which a player first reaches 200 points. Seed values, when
-    /// provided, apply to the first round only. A seeded random makes the
-    /// timeline reproducible, but note that the timeline is lazy: enumerating
-    /// it advances the random, so enumerate it once (or cache it) when
-    /// reproducibility matters.
+    /// Simulates a full game like SimulateWith, but every hit-or-stand
+    /// decision is routed through the given decider, so Prompt and Adaptive
+    /// strategies can be answered by a human at the terminal or by an
+    /// external model. Pulling the timeline drives the game, so a decider may
+    /// block (waiting on a key press, say) and the game simply pauses there.
     /// </summary>
-    let public SimulateWith
+    let public SimulateWithDecider
         (random: System.Random)
+        (decide: Decider)
         (players: list<string * Strategy>)
         (seedHands: Map<string, Hand> option)
         (seedScores: Map<string, uint> option)
@@ -472,7 +489,7 @@ module public Timeline =
             while not gameOver do
                 let mutable lastInstant = None
 
-                for instant in GoonSession random round Map.empty players List.empty decks do
+                for instant in GoonSession random decide round Map.empty players List.empty decks do
                     lastInstant <- Some instant
                     yield instant
 
@@ -525,6 +542,30 @@ module public Timeline =
                 else
                     gameOver <- true
         }
+
+    /// <summary>
+    /// Simulates a full game using the given source of randomness and returns
+    /// its timeline lazily: one instant per event, with a RoundEnded instant
+    /// closing out every round. The last instant of the timeline is the
+    /// RoundEnded in which a player first reaches 200 points. Seed values, when
+    /// provided, apply to the first round only. A seeded random makes the
+    /// timeline reproducible, but note that the timeline is lazy: enumerating
+    /// it advances the random, so enumerate it once (or cache it) when
+    /// reproducibility matters.
+    /// </summary>
+    let public SimulateWith
+        (random: System.Random)
+        (players: list<string * Strategy>)
+        (seedHands: Map<string, Hand> option)
+        (seedScores: Map<string, uint> option)
+        (seedDeck: Deck option)
+        (seedDiscards: Deck option)
+        : Timeline =
+        let decide: Decider =
+            fun strategy round turn player others _finished decks ->
+                Strategy.DecideWith random strategy round turn player others decks
+
+        SimulateWithDecider random decide players seedHands seedScores seedDeck seedDiscards
 
     /// <summary>
     /// Simulates a full game and returns its timeline lazily: one instant per
