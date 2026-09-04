@@ -104,18 +104,28 @@ let private RenderFrame (round: int) (instant: Instant) (footer: string) : unit 
     printfn "%s" (padded "")
     printf "%s" (padded footer)
 
-let public Run (humanName: string) : unit =
-    let botNames = [ "Ada"; "Bea"; "Cyd"; "Dee" ]
+let public Run (humanNames: string list) : unit =
+    if humanNames.Length < 1 || humanNames.Length > 5 then
+        raise (ArgumentException "Please provide one to five player names as command-line arguments.")
 
-    if humanName |> String.IsNullOrWhiteSpace then
-        raise (ArgumentException "Please provide your name as a command-line argument.")
+    if humanNames |> List.exists String.IsNullOrWhiteSpace then
+        raise (ArgumentException "Player names must not be empty.")
 
-    if botNames |> List.contains humanName then
-        raise (ArgumentException $"{humanName} is taken by one of the AIs, please pick another name.")
+    if humanNames |> List.distinct |> List.length <> humanNames.Length then
+        raise (ArgumentException "Player names must be unique.")
+
+    // The AIs fill whatever seats the humans leave open at the five-player table
+    let botNames =
+        [ "Ada"; "Bea"; "Cyd"; "Dee"; "Eve" ]
+        |> List.take (playerSlots - humanNames.Length)
+
+    match humanNames |> List.tryFind (fun name -> botNames |> List.contains name) with
+    | Some taken -> raise (ArgumentException $"{taken} is taken by one of the AIs, please pick another name.")
+    | None -> ()
 
     let random = Random()
 
-    // The table: four distinct non-trivial strategies drawn fresh each game
+    // The AI seats get distinct non-trivial strategies drawn fresh each game
     let pool = [
         HitUntilScore 22u
         HitUntilScore 26u
@@ -133,7 +143,7 @@ let public Run (humanName: string) : unit =
         pool |> List.sortBy (fun _ -> random.Next()) |> List.take botNames.Length
 
     let players =
-        (humanName, Prompt) :: List.zip botNames naive
+        (humanNames |> List.map (fun name -> name, Prompt)) @ List.zip botNames naive
         |> List.sortBy (fun _ -> random.Next())
 
     let directory =
@@ -156,7 +166,7 @@ let public Run (humanName: string) : unit =
         while Console.KeyAvailable do
             Console.ReadKey true |> ignore
 
-        $"your turn: %d{Hand.Score player.Hand}pts held, %.0f{bust}%% bust, EV %+.1f{ev}   [h]it   [s]tand   [q]uit"
+        $"{player.Name}: %d{Hand.Score player.Hand}pts held, %.0f{bust}%% bust, EV %+.1f{ev}   [h]it   [s]tand   [q]uit"
         |> centered width
         |> styled [ Ansi.Bright ]
         |> WriteFooter
