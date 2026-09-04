@@ -1,5 +1,7 @@
 namespace Flip7
 
+open FSharp.Control
+
 /// <summary>
 /// What happened at a single moment of a game.
 /// </summary>
@@ -61,21 +63,11 @@ type public Instant = {
 }
 
 /// <summary>
-/// An annotated instant is an instant with additional metadata for replaying a
-/// game. It includes the index of the next and previous round-ending events and
-/// the round number of the instant.
+/// A timeline is the full history of a game: one instant per event, produced
+/// asynchronously so consumers can render or persist instants as they arrive
+/// rather than waiting for the whole game to finish.
 /// </summary>
-type public AnnotatedInstant = {
-    Instant: Instant
-    ForwardsRoundEventIndex: int
-    BackwardsRoundEventIndex: int
-    Round: int
-}
-
-/// <summary>
-/// A timeline is the full history of a game: one instant per event.
-/// </summary>
-type public Timeline = seq<Instant>
+type public Timeline = AsyncSeq<Instant>
 
 module public Event =
     /// <summary>
@@ -371,7 +363,7 @@ module public Timeline =
         (active: Player list)
         (finished: Player list)
         (decks: Deck * Deck)
-        : Timeline =
+        : seq<Instant> =
 
         // Invariant: active players should not have busted yet
         assert (active |> List.forall (fun player -> not (Hand.IsBust player.Hand)))
@@ -451,67 +443,6 @@ module public Timeline =
         (seedDeck: Deck option)
         (seedDiscards: Deck option)
         : Timeline =
-        let rec Rounds (round: uint) (players: Player list) (decks: Deck * Deck) : Timeline = seq {
-            let roundInstants =
-                GoonSession random round Map.empty players List.empty decks |> Seq.toList
-
-            yield! roundInstants
-
-            let finalPlayers, (deck, discards) =
-                roundInstants
-                |> List.tryLast
-                |> Option.map (fun instant -> instant.Players, (instant.Deck, instant.Discards))
-                |> Option.defaultValue (players, decks)
-
-            // Bank each player's round score and discard their hands
-            let scores =
-                finalPlayers
-                |> List.map (fun player ->
-                    let score =
-                        if Hand.IsBust player.Hand then
-                            0u
-                        else
-                            Hand.Score player.Hand
-                    player.Name, score
-                )
-                |> Map.ofList
-
-            let discards' =
-                finalPlayers
-                |> List.collect (fun player -> player.Hand)
-                |> List.fold Deck.Increment discards
-
-            // Keep the round's turn order rather than finalPlayers' finish
-            // order, so the dealer rotation below is the only thing that
-            // reorders players between rounds
-            let scored =
-                players
-                |> List.map (fun player -> {
-                    player with
-                        FirmScore = player.FirmScore + Map.find player.Name scores
-                        Hand = List.empty
-                })
-
-            yield {
-                Event = RoundEnded scores
-                Players = scored
-                Deck = deck
-                Discards = discards'
-            }
-
-            // Base case: the game ends when anyone has reached 200 points, so
-            // the round's RoundEnded is the last instant of the timeline
-            if scored |> List.forall (fun player -> player.FirmScore < 200u) then
-                // The deck passes to the next player for the following round, so
-                // turn order rotates by one each round
-                let rotated =
-                    match scored with
-                    | [] -> []
-                    | leader :: rest -> rest @ [ leader ]
-
-                yield! Rounds (round + 1u) rotated (deck, discards')
-        }
-
         let startingPlayers =
             players
             |> List.map (fun (name, strategy) ->
@@ -527,9 +458,73 @@ module public Timeline =
             seedDeck |> Option.defaultValue Deck.Full, seedDiscards |> Option.defaultValue Deck.Empty
 
         if List.isEmpty startingPlayers then
-            Seq.empty
+            AsyncSeq.empty
         else
-            Rounds 1u startingPlayers startingDecks
+
+        // A loop rather than recursion so an arbitrarily long game cannot
+        // accumulate nested asyncSeq appends
+        asyncSeq {
+            let mutable round = 1u
+            let mutable players = startingPlayers
+            let mutable decks = startingDecks
+            let mutable gameOver = false
+
+            while not gameOver do
+                let mutable lastInstant = None
+
+                for instant in GoonSession random round Map.empty players List.empty decks do
+                    lastInstant <- Some instant
+                    yield instant
+
+                let finalPlayers, (deck, discards) =
+                    lastInstant
+                    |> Option.map (fun instant -> instant.Players, (instant.Deck, instant.Discards))
+                    |> Option.defaultValue (players, decks)
+
+                let scores =
+                    finalPlayers
+                    |> List.map (fun player ->
+                        let score =
+                            if Hand.IsBust player.Hand then
+                                0u
+                            else
+                                Hand.Score player.Hand
+                        player.Name, score
+                    )
+                    |> Map.ofList
+
+                let discards' =
+                    finalPlayers
+                    |> List.collect (fun player -> player.Hand)
+                    |> List.fold Deck.Increment discards
+
+                let scored =
+                    players
+                    |> List.map (fun player -> {
+                        player with
+                            FirmScore = player.FirmScore + Map.find player.Name scores
+                            Hand = List.empty
+                    })
+
+                yield {
+                    Event = RoundEnded scores
+                    Players = scored
+                    Deck = deck
+                    Discards = discards'
+                }
+
+                if scored |> List.forall (fun player -> player.FirmScore < 200u) then
+                    let rotated =
+                        match scored with
+                        | [] -> []
+                        | leader :: rest -> rest @ [ leader ]
+
+                    round <- round + 1u
+                    players <- rotated
+                    decks <- deck, discards'
+                else
+                    gameOver <- true
+        }
 
     /// <summary>
     /// Simulates a full game and returns its timeline lazily: one instant per
@@ -545,95 +540,3 @@ module public Timeline =
         (seedDiscards: Deck option)
         : Timeline =
         SimulateWith System.Random.Shared players seedHands seedScores seedDeck seedDiscards
-
-    /// <summary>
-    /// The final scoreboard of a timeline: each player's firm score at the
-    /// last instant. Enumerates the entire timeline.
-    /// </summary>
-    let public Scoreboard (timeline: Instant array) : Map<string, uint> =
-        match timeline |> Array.tryLast with
-        | None -> Map.empty
-        | Some instant ->
-            instant.Players
-            |> List.map (fun player -> player.Name, player.FirmScore)
-            |> Map.ofList
-
-    /// <summary>
-    /// Annotates a timeline with the index of the next and previous
-    /// round-ending events and the round number of each instant. Enumerates the
-    /// entire timeline.
-    /// </summary>
-    let public Link (timeline: Instant array) : AnnotatedInstant array =
-        let seed =
-            Array.map (fun (instant: Instant) -> {
-                Instant = instant
-                ForwardsRoundEventIndex = 0
-                BackwardsRoundEventIndex = 0
-                Round = 0
-            })
-
-        let annotateRound (timeline: AnnotatedInstant array) =
-            let startingRound = 1
-
-            timeline
-            |> Array.mapFold
-                (fun round annotated ->
-                    let round' =
-                        if annotated.Instant.Event.IsRoundEnded then
-                            round + 1
-                        else
-                            round
-                    { annotated with Round = round }, round'
-                )
-                startingRound
-            |> fst
-
-        let linkBackwards (timeline: (int * AnnotatedInstant) array) =
-            let startingBackwardsRoundEventIndex = 0
-
-            timeline
-            |> Array.mapFold
-                (fun prevRoundEventIndex (index, annotated) ->
-                    let prevRoundEventIndex' =
-                        if annotated.Instant.Event.IsRoundEnded then
-                            index
-                        else
-                            prevRoundEventIndex
-
-                    {
-                        annotated with
-                            BackwardsRoundEventIndex = prevRoundEventIndex
-                    },
-                    prevRoundEventIndex'
-                )
-                startingBackwardsRoundEventIndex
-            |> fst
-
-        let linkForwards (timeline: (int * AnnotatedInstant) array) =
-            let startingForwardsRoundEventIndex = timeline.Length - 1
-
-            startingForwardsRoundEventIndex
-            |> Array.mapFoldBack
-                (fun (index, annotated) nextRoundEventIndex ->
-                    let nextRoundEventIndex' =
-                        if annotated.Instant.Event.IsRoundEnded then
-                            index
-                        else
-                            nextRoundEventIndex
-
-                    {
-                        annotated with
-                            ForwardsRoundEventIndex = nextRoundEventIndex
-                    },
-                    nextRoundEventIndex'
-                )
-                timeline
-            |> fst
-
-        timeline
-        |> seed
-        |> annotateRound
-        |> Array.indexed
-        |> linkBackwards
-        |> Array.indexed
-        |> linkForwards

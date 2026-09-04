@@ -26,4 +26,8 @@
     <Compile Include="Persistence.fs" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="FSharp.Control.AsyncSeq" Version="4.15.0" />
+  </ItemGroup>
+
 </Project>

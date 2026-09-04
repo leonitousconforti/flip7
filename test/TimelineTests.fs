@@ -1,5 +1,6 @@
 module TimelineTests
 
+open FSharp.Control
 open Xunit
 open Flip7
 
@@ -18,7 +19,8 @@ let ``the same seed produces the exact same timeline`` () =
             None
             None
             None
-        |> Seq.toList
+        |> AsyncSeq.toListAsync
+        |> Async.RunSynchronously
 
     Assert.Equal<Instant list>(simulate 42, simulate 42)
     Assert.NotEqual<Instant list>(simulate 42, simulate 43)
@@ -42,7 +44,8 @@ let ``simulated games uphold the invariants`` (seed: int) =
             None
             None
             None
-        |> Seq.toList
+        |> AsyncSeq.toListAsync
+        |> Async.RunSynchronously
 
     // Every card is accounted for at every instant
     for instant in timeline do
@@ -50,9 +53,9 @@ let ``simulated games uphold the invariants`` (seed: int) =
         Assert.Empty(Simulation.Issues instant.Deck instant.Discards hands)
 
     // The game ends once someone reaches 200 points, at the final RoundEnded
-    let scoreboard = Timeline.Scoreboard(List.toArray timeline)
-    Assert.True(scoreboard |> Map.exists (fun _ score -> score >= 200u))
-    Assert.True((List.last timeline).Event.IsRoundEnded)
+    let finalInstant = List.last timeline
+    Assert.True(finalInstant.Players |> List.exists (fun player -> player.FirmScore >= 200u))
+    Assert.True(finalInstant.Event.IsRoundEnded)
 
     // Firm scores only ever grow
     timeline

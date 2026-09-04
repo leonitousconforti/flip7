@@ -2,11 +2,12 @@ module PersistenceTests
 
 open System
 open System.IO
+open FSharp.Control
 open Xunit
 open Flip7
 
 let private inTempDirectory (test: string -> unit) : unit =
-    let directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())
+    let directory = Path.Join(Path.GetTempPath(), Guid.NewGuid().ToString())
 
     try
         test directory
@@ -28,8 +29,11 @@ let ``WriteInstant and ReadInstant round-trip`` () =
             Discards = Deck.Empty |> Map.add (ValueCard Card.Twelve) 2u
         }
 
-        Persistence.WriteInstant directory instant |> ignore
-        Assert.Equal(instant, Persistence.ReadInstant directory)
+        Persistence.WriteInstantAsync directory instant
+        |> Async.RunSynchronously
+        |> ignore
+
+        Assert.Equal(instant, Persistence.ReadInstantAsync directory |> Async.RunSynchronously)
     )
 
 [<Fact>]
@@ -43,9 +47,15 @@ let ``a written timeline reads back identically`` () =
                 None
                 None
                 None
-            |> Seq.toList
+            |> AsyncSeq.toListAsync
+            |> Async.RunSynchronously
 
-        Persistence.WriteTimelineEager directory original |> ignore
+        Persistence.WriteTimelineEager directory (AsyncSeq.ofSeq original) |> ignore
 
-        Assert.Equal<Instant list>(original, Persistence.ReadTimeline directory |> Seq.toList)
+        let readBack =
+            Persistence.ReadTimeline directory
+            |> AsyncSeq.toListAsync
+            |> Async.RunSynchronously
+
+        Assert.Equal<Instant list>(original, readBack)
     )

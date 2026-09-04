@@ -4,80 +4,105 @@ module public Persistence =
     open System.IO
     open System
 
-    let public WriteInstant (directory: string) (instant: Instant) : Instant =
+    open FSharp.Control
+
+    let public WriteInstantAsync (directory: string) (instant: Instant) : Async<Instant> = async {
         let path = Directory.CreateDirectory directory
-        let toDirectory = fun file -> Path.Combine(path.FullName, file)
-        let write = fun file lines -> File.WriteAllLines(toDirectory file, lines)
+        let toDirectory = fun file -> Path.Join(path.FullName, file)
+        let write (file: string) (lines: string seq) : Async<unit> =
+            File.WriteAllLinesAsync(toDirectory file, lines) |> Async.AwaitTask
 
-        instant.Deck |> Deck.Serialize |> write "deck.txt"
-        instant.Discards |> Deck.Serialize |> write "discards.txt"
-        instant.Event |> Event.Serialize |> write "event.txt"
+        let! writeDeckTask =
+            instant.Deck |> Deck.Serialize |> write "deck.txt" |> Async.StartChild
+        let! writeDiscardsTask =
+            instant.Discards |> Deck.Serialize |> write "discards.txt" |> Async.StartChild
+        let! writeEventTask =
+            instant.Event |> Event.Serialize |> write "event.txt" |> Async.StartChild
 
-        instant.Players
-        |> List.iteri (fun index player ->
-            write $"player{index}.txt" [|
-                $"{player.Name}"
-                $"{player.Strategy}"
-                $"{player.FirmScore}"
-                String.Empty
-                yield! Hand.Serialize player.Hand
-            |]
-        )
+        let! writePlayerTasks =
+            instant.Players
+            |> List.indexed
+            |> List.map (fun (index, player) ->
+                write $"player{index}.txt" [|
+                    $"{player.Name}"
+                    $"{player.Strategy}"
+                    $"{player.FirmScore}"
+                    String.Empty
+                    yield! Hand.Serialize player.Hand
+                |]
+            )
+            |> Async.Parallel
+            |> Async.Ignore
+            |> Async.StartChild
 
-        instant
+        do! writeDeckTask
+        do! writeDiscardsTask
+        do! writeEventTask
+        do! writePlayerTasks
 
-    let public ReadInstant (directory: string) : Instant =
-        let toDirectory = fun file -> Path.Combine(directory, file)
-        let read = fun file -> File.ReadLines(toDirectory file)
+        return instant
+    }
 
-        let deck = read "deck.txt" |> Deck.Deserialize
-        let discards = read "discards.txt" |> Deck.Deserialize
-        let event = read "event.txt" |> Event.Deserialize
+    let public ReadInstantAsync (directory: string) : Async<Instant> = async {
+        let toDirectory = fun file -> Path.Join(directory, file)
+        let read = fun file -> File.ReadAllLinesAsync(toDirectory file) |> Async.AwaitTask
 
         let playerFiles =
             Directory.GetFiles(directory, "player*.txt")
             |> Array.sortBy (fun file -> int (Path.GetFileNameWithoutExtension file).[6..])
 
-        let players =
+        let! readDeckTask = read "deck.txt" |> Async.StartChild
+        let! readDiscardsTask = read "discards.txt" |> Async.StartChild
+        let! readEventTask = read "event.txt" |> Async.StartChild
+
+        let! readPlayerTasks =
             playerFiles
-            |> Array.map (fun file ->
-                let lines = File.ReadLines file |> Seq.cache
-                let name = lines |> Seq.item 0
-                let strategy = lines |> Seq.item 1 |> Strategy.Parse
-                let firmScore = lines |> Seq.item 2 |> uint
-                let hand = lines |> Seq.skip 4 |> Hand.Deserialize
-
-                {
-                    Name = name
-                    Strategy = strategy
-                    FirmScore = firmScore
-                    Hand = hand
+            |> Array.map (fun file -> async {
+                let! lines = File.ReadAllLinesAsync file |> Async.AwaitTask
+                return {
+                    Name = lines[0]
+                    Strategy = lines[1] |> Strategy.Parse
+                    FirmScore = lines[2] |> uint
+                    Hand = lines |> Seq.skip 4 |> Hand.Deserialize
                 }
-            )
-            |> Array.toList
+            })
+            |> Async.Parallel
+            |> Async.StartChild
 
-        {
-            Event = event
-            Players = players
-            Deck = deck
-            Discards = discards
+        let! deck = readDeckTask
+        let! discards = readDiscardsTask
+        let! event = readEventTask
+        let! players = readPlayerTasks
+
+        return {
+            Event = event |> Event.Deserialize
+            Players = players |> List.ofSeq
+            Deck = deck |> Deck.Deserialize
+            Discards = discards |> Deck.Deserialize
         }
+    }
 
-    let public WriteTimelineLazy (directory: string) (timeline: Timeline) : Timeline =
-        timeline
-        |> Seq.mapi (fun index instant ->
-            let instantDirectory = Path.Combine(directory, $"{index}")
-            WriteInstant instantDirectory instant
-        )
+    let public WriteTimelineLazy (directory: string) (timeline: Timeline) : Timeline = asyncSeq {
+        let mutable index = 0
+
+        for instant in timeline do
+            let instantDirectory = Path.Join(directory, $"{index}")
+            let! written = WriteInstantAsync instantDirectory instant
+            index <- index + 1
+            yield written
+    }
 
     let public WriteTimelineEager (directory: string) (timeline: Timeline) : Timeline =
-        let written = timeline |> WriteTimelineLazy directory |> Seq.cache
-        written |> Seq.iter ignore
+        let written = timeline |> WriteTimelineLazy directory |> AsyncSeq.cache
+        written |> AsyncSeq.iter ignore |> Async.RunSynchronously |> ignore
         written
 
-    let public ReadTimeline (directory: string) : Timeline =
+    let public ReadTimeline (directory: string) : Timeline = asyncSeq {
         let instantDirectories =
             Directory.GetDirectories directory
             |> Array.sortBy (fun dir -> int (Path.GetFileName dir))
 
-        instantDirectories |> Array.toSeq |> Seq.map ReadInstant
+        for instantDirectory in instantDirectories do
+            let! instant = ReadInstantAsync instantDirectory
+            yield instant
+    }
