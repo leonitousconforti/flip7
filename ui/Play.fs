@@ -10,7 +10,6 @@ let private width = 80
 let private playerSlots = 5
 let private paceMilliseconds = 400
 let private footerRow = 21
-let private playDirectory = Path.Join("timelines", "play")
 
 type private QuitException() =
     inherit Exception()
@@ -24,47 +23,24 @@ let rec private IsQuit (error: exn) : bool =
     | error when not (isNull error.InnerException) -> IsQuit error.InnerException
     | _ -> false
 
-type private KeyMessage =
-    | Pressed of ConsoleKeyInfo
-    | NextKey of AsyncReplyChannel<ConsoleKeyInfo>
-
-// Console keys flow through an agent so a prompt can await one without
-// holding a thread. Keys pressed while nobody is waiting are dropped by the
-// loop, which is exactly the rule that keys pressed during the bots' turns
-// are not decisions.
-let private StartKeyPump () : MailboxProcessor<KeyMessage> =
-    let agent =
-        MailboxProcessor.Start(fun inbox ->
-            let rec loop () = async {
-                match! inbox.Receive() with
-                | Pressed _ -> return! loop ()
-                | NextKey reply ->
-                    let! key =
-                        inbox.Scan(
-                            function
-                            | Pressed key -> Some(async.Return key)
-                            | NextKey _ -> None
-                        )
-
-                    reply.Reply key
-                    return! loop ()
-            }
-
-            loop ()
-        )
-
-    // A dedicated background thread turns blocking console reads into posts
+// Console keys are broadcast as an event so a prompt can await one without
+// holding a thread. A key fired while nobody is awaiting simply vanishes,
+// which is exactly the rule that keys pressed during the bots' turns are not
+// decisions. Awaiting resumes the game on the pump thread until its next
+// async hop.
+let private StartKeyPump () : IEvent<ConsoleKeyInfo> =
+    let keyPressed = Event<ConsoleKeyInfo>()
     let pump =
         Thread(
             ThreadStart(fun () ->
                 while true do
-                    agent.Post(Pressed(Console.ReadKey true))
+                    keyPressed.Trigger(Console.ReadKey true)
             )
         )
 
     pump.IsBackground <- true
     pump.Start()
-    agent
+    keyPressed.Publish
 
 let private CaptionStyle (event: Event) : string list =
     match event with
@@ -81,20 +57,18 @@ let private WriteFooter (text: string) : unit =
     Console.SetCursorPosition(0, footerRow)
     printf "%s" (padded text)
 
-// Renders one instant as a full frame, overwriting in place like the replay
-// view so nothing flickers
 let private RenderFrame (round: int) (instant: Instant) (footer: string) : unit =
     let actor = instant.Event.Actor()
     let rule = String.replicate width "─"
+    let caption = string instant.Event
 
     let status =
         let left = "play: first to 200pts wins"
         let right = $"round {round}"
-        let middle =
-            String.replicate (max 0 (width - visualLength left - visualLength right)) " "
+        let leftWidth = visualLength left
+        let rightWidth = visualLength right
+        let middle = String.replicate (max 0 (width - leftWidth - rightWidth)) " "
         left + middle + right
-
-    let caption = string instant.Event
 
     Console.SetCursorPosition(0, 0)
     printfn "%s" (padded rule)
@@ -156,9 +130,8 @@ let public Run (humanNames: string list) : unit =
     if humanNames |> List.distinct |> List.length <> humanNames.Length then
         raise (ArgumentException "Player names must be unique.")
 
-    // The AIs fill whatever seats the humans leave open at the five-player table
     let botNames =
-        [ "Ada"; "Bea"; "Cyd"; "Dee"; "Eve" ]
+        [ "Alice"; "Bob"; "Chloe"; "Dave"; "Ethan" ]
         |> List.take (playerSlots - humanNames.Length)
 
     match humanNames |> List.tryFind (fun name -> botNames |> List.contains name) with
@@ -166,8 +139,6 @@ let public Run (humanNames: string list) : unit =
     | None -> ()
 
     let random = Random()
-
-    // The AI seats get distinct non-trivial strategies drawn fresh each game
     let pool = [
         HitUntilScore 22u
         HitUntilScore 26u
@@ -188,9 +159,7 @@ let public Run (humanNames: string list) : unit =
         (humanNames |> List.map (fun name -> name, Prompt)) @ List.zip botNames naive
         |> List.sortBy (fun _ -> random.Next())
 
-    let directory =
-        Path.Join(playDirectory, DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss")
-
+    let directory = Path.Join("timelines", DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss")
     let keys = StartKeyPump()
 
     let promptHuman
@@ -206,25 +175,24 @@ let public Run (humanNames: string list) : unit =
 
         let ev = Simulation.expectedValueOfHit deck discards player.Hand
 
-        $"{player.Name}: %d{Hand.Score player.Hand}pts held, %.0f{bust}%% bust, EV %+.1f{ev}   [h]it   [s]tand   [q]uit"
+        $"{player.Name}: %d{Hand.Score player.Hand}pts in hand, %.0f{bust}%% bust, EV %+.1f{ev}   [h]it   [s]tand   [q]uit"
         |> centered width
         |> styled [ Ansi.Bright ]
         |> WriteFooter
 
         let rec read () = async {
-            let! key = keys.PostAndAsyncReply NextKey
-
+            let! key = Async.AwaitEvent keys
             match key.Key with
             | ConsoleKey.H -> return Strategy.Hit
             | ConsoleKey.S -> return Strategy.Stand
-            | ConsoleKey.Q
+            | ConsoleKey.Q -> return raise (QuitException())
             | ConsoleKey.Escape -> return raise (QuitException())
             | _ -> return! read ()
         }
 
         read ()
 
-    let decide: Strategy.Decider =
+    let decider: Strategy.Decider =
         fun strategy round turn player others finished decks ->
             match strategy with
             | Prompt -> promptHuman player others decks
@@ -234,7 +202,7 @@ let public Run (humanNames: string list) : unit =
     // the game, a prompt awaits its key without holding a thread, and every
     // instant is on disk (write-through) before it is rendered
     let timeline =
-        Timeline.SimulateWithDecider random decide players None None None None
+        Timeline.SimulateWithDecider random decider players None None None None
         |> Persistence.WriteTimelineLazy directory
 
     Console.Clear()
@@ -288,7 +256,7 @@ let public Run (humanNames: string list) : unit =
             |> styled [ Ansi.BrightGreen ]
             |> WriteFooter
 
-            do! keys.PostAndAsyncReply NextKey |> Async.Ignore
+            do! Async.AwaitEvent keys |> Async.Ignore
     }
 
     Async.RunSynchronously play
