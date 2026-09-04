@@ -181,7 +181,7 @@ let public Run (humanNames: string list) : unit =
 
         read ()
 
-    let decide: Decider =
+    let decide: Strategy.Decider =
         fun strategy round turn player others finished decks ->
             match strategy with
             | Prompt -> promptHuman player others decks

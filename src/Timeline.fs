@@ -69,24 +69,6 @@ type public Instant = {
 /// </summary>
 type public Timeline = AsyncSeq<Instant>
 
-/// <summary>
-/// Decides hit-or-stand for one player: given the player's declared strategy,
-/// the round, the turn, the player, the other active players, the players who
-/// already stood, busted, or were frozen this round, and the decks. Injecting
-/// one into Timeline.SimulateWithDecider lets Prompt strategies be decided by
-/// a human at the terminal, while everything else defers to
-/// Strategy.DecideWith (which does not see the finished players).
-/// </summary>
-type public Decider =
-    Strategy
-        -> uint
-        -> uint
-        -> Strategy.StrategyPlayer
-        -> Strategy.StrategyPlayer list
-        -> Strategy.StrategyPlayer list
-        -> (Deck * Deck)
-        -> Strategy.HitOrStand
-
 module public Event =
     /// <summary>
     /// Converts an event to an array of lines: the event kind followed by its
@@ -376,7 +358,7 @@ module public Timeline =
 
     let rec private GoonSession
         (random: System.Random)
-        (decide: Decider)
+        (decide: Strategy.Decider)
         (round: uint)
         (turnsTaken: Map<string, uint>)
         (active: Player list)
@@ -453,7 +435,7 @@ module public Timeline =
     /// </summary>
     let public SimulateWithDecider
         (random: System.Random)
-        (decide: Decider)
+        (decide: Strategy.Decider)
         (players: list<string * Strategy>)
         (seedHands: Map<string, Hand> option)
         (seedScores: Map<string, uint> option)

@@ -94,6 +94,24 @@ module public Strategy =
     type public StrategyPlayer = { Name: string; FirmScore: uint; Hand: Hand }
 
     /// <summary>
+    /// Decides hit-or-stand for one player: given the player's declared
+    /// strategy, the round, the turn, the player, the other active players,
+    /// the players who already stood, busted, or were frozen this round, and
+    /// the decks. DecideWith is the canonical Decider; injecting a different
+    /// one into Timeline.SimulateWithDecider lets Prompt strategies be decided
+    /// by a human at the terminal.
+    /// </summary>
+    type public Decider =
+        Strategy
+            -> uint
+            -> uint
+            -> StrategyPlayer
+            -> StrategyPlayer list
+            -> StrategyPlayer list
+            -> (Deck * Deck)
+            -> HitOrStand
+
+    /// <summary>
     /// A strategy that randomly hits or stands with a 50% probability.
     /// </summary>
     let public Random: Strategy = RandomWithProbability 0.5
@@ -106,94 +124,86 @@ module public Strategy =
     /// who already stood, busted, or were frozen this round, and the decks,
     /// returning whether to hit or stand.
     /// </summary>
-    let public DecideWith
-        (random: System.Random)
-        (strategy: Strategy)
-        (round: uint)
-        (turn: uint)
-        (player: StrategyPlayer)
-        (otherPlayers: StrategyPlayer list)
-        (finishedPlayers: StrategyPlayer list)
-        (decks: Deck * Deck)
-        : HitOrStand =
-        match strategy with
-        | AlwaysHits -> Hit
-        | AlwaysStands -> Stand
-        | RandomWithProbability probability -> if random.NextDouble() < probability then Hit else Stand
-        | HitUntilScore threshold -> if Hand.Score player.Hand < threshold then Hit else Stand
-        | HitUntilNumCards threshold ->
-            if uint (List.length player.Hand) < threshold then
-                Hit
-            else
-                Stand
-        | HitUntilBustProbability threshold ->
-            let deck, discards = decks
-            let onlyPlayer = List.isEmpty otherPlayers
-            if Simulation.probabilityToBust deck discards player.Hand onlyPlayer < threshold then
-                Hit
-            else
-                Stand
-        | HitUntilNaiveBustProbability threshold ->
-            let unseen = player.Hand |> List.fold Deck.Decrement Deck.Full
-            let onlyPlayer = List.isEmpty otherPlayers
-            if Simulation.probabilityToBust unseen Deck.Empty player.Hand onlyPlayer < threshold then
-                Hit
-            else
-                Stand
-        | SoftHitUntilScore(threshold, temperature) ->
-            let distance = float (Hand.Score player.Hand) - float threshold
-            let probability = 1.0 / (1.0 + exp (distance / temperature))
-            if random.NextDouble() < probability then Hit else Stand
-        | HitUntilTotal target ->
-            if player.FirmScore + Hand.Score player.Hand < target then
-                Hit
-            else
-                Stand
-        | HitUntilUniqueValues threshold ->
-            if uint (Hand.UniqueValueCards player.Hand) < threshold then
-                Hit
-            else
-                Stand
-        | ChasesFlip7(score, uniques) ->
-            if uint (Hand.UniqueValueCards player.Hand) >= uniques then
-                Hit
-            elif Hand.Score player.Hand < score then
-                Hit
-            else
-                Stand
-        | EmboldenedBySecondChance threshold ->
-            if player.Hand |> List.contains (ActionCard Card.SecondChance) then
-                Hit
-            elif Hand.Score player.Hand < threshold then
-                Hit
-            else
-                Stand
-        | HitWhileBehindLeader margin ->
-            let total = player.FirmScore + Hand.Score player.Hand
-
-            // The leader may already be out of the round: a stood or frozen
-            // player's hand is locked in, while a busted player's is worthless
-            let showing (other: StrategyPlayer) =
-                if Hand.IsBust other.Hand then
-                    other.FirmScore
+    let public DecideWith (random: System.Random) : Decider =
+        fun strategy round turn player otherPlayers finishedPlayers decks ->
+            match strategy with
+            | AlwaysHits -> Hit
+            | AlwaysStands -> Stand
+            | RandomWithProbability probability -> if random.NextDouble() < probability then Hit else Stand
+            | HitUntilScore threshold -> if Hand.Score player.Hand < threshold then Hit else Stand
+            | HitUntilNumCards threshold ->
+                if uint (List.length player.Hand) < threshold then
+                    Hit
                 else
-                    other.FirmScore + Hand.Score other.Hand
+                    Stand
+            | HitUntilBustProbability threshold ->
+                let deck, discards = decks
+                let onlyPlayer = List.isEmpty otherPlayers
+                if Simulation.probabilityToBust deck discards player.Hand onlyPlayer < threshold then
+                    Hit
+                else
+                    Stand
+            | HitUntilNaiveBustProbability threshold ->
+                let unseen = player.Hand |> List.fold Deck.Decrement Deck.Full
+                let onlyPlayer = List.isEmpty otherPlayers
+                if Simulation.probabilityToBust unseen Deck.Empty player.Hand onlyPlayer < threshold then
+                    Hit
+                else
+                    Stand
+            | SoftHitUntilScore(threshold, temperature) ->
+                let distance = float (Hand.Score player.Hand) - float threshold
+                let probability = 1.0 / (1.0 + exp (distance / temperature))
+                if random.NextDouble() < probability then Hit else Stand
+            | HitUntilTotal target ->
+                if player.FirmScore + Hand.Score player.Hand < target then
+                    Hit
+                else
+                    Stand
+            | HitUntilUniqueValues threshold ->
+                if uint (Hand.UniqueValueCards player.Hand) < threshold then
+                    Hit
+                else
+                    Stand
+            | ChasesFlip7(score, uniques) ->
+                if uint (Hand.UniqueValueCards player.Hand) >= uniques then
+                    Hit
+                elif Hand.Score player.Hand < score then
+                    Hit
+                else
+                    Stand
+            | EmboldenedBySecondChance threshold ->
+                if player.Hand |> List.contains (ActionCard Card.SecondChance) then
+                    Hit
+                elif Hand.Score player.Hand < threshold then
+                    Hit
+                else
+                    Stand
+            | HitWhileBehindLeader margin ->
+                let total = player.FirmScore + Hand.Score player.Hand
 
-            let leader = otherPlayers @ finishedPlayers |> List.map showing |> List.fold max 0u
+                // The leader may already be out of the round: a stood or frozen
+                // player's hand is locked in, while a busted player's is worthless
+                let showing (other: StrategyPlayer) =
+                    if Hand.IsBust other.Hand then
+                        other.FirmScore
+                    else
+                        other.FirmScore + Hand.Score other.Hand
 
-            if total < leader + margin then Hit else Stand
-        | StandsAfterTurn turns -> if turn <= turns then Hit else Stand
-        | MaximizesExpectedValue ->
-            let deck, discards = decks
-            if Simulation.expectedValueOfHit deck discards player.Hand > 0.0 then
-                Hit
-            else
-                Stand
-        | Prompt ->
-            raise (
-                System.InvalidOperationException
-                    $"{strategy} is decided externally via Timeline.SimulateWithDecider, not by DecideWith"
-            )
+                let leader = otherPlayers @ finishedPlayers |> List.map showing |> List.fold max 0u
+
+                if total < leader + margin then Hit else Stand
+            | StandsAfterTurn turns -> if turn <= turns then Hit else Stand
+            | MaximizesExpectedValue ->
+                let deck, discards = decks
+                if Simulation.expectedValueOfHit deck discards player.Hand > 0.0 then
+                    Hit
+                else
+                    Stand
+            | Prompt ->
+                raise (
+                    System.InvalidOperationException
+                        $"{strategy} is decided externally via Timeline.SimulateWithDecider, not by DecideWith"
+                )
 
     /// <summary>
     /// Evaluates a strategy given the current round number, the current turn
@@ -202,13 +212,4 @@ module public Strategy =
     /// the round, the players already finished this round, and the decks,
     /// returning whether to hit or stand.
     /// </summary>
-    let public Decide
-        (strategy: Strategy)
-        (round: uint)
-        (turn: uint)
-        (player: StrategyPlayer)
-        (otherPlayers: StrategyPlayer list)
-        (finishedPlayers: StrategyPlayer list)
-        (decks: Deck * Deck)
-        : HitOrStand =
-        DecideWith System.Random.Shared strategy round turn player otherPlayers finishedPlayers decks
+    let public Decide: Decider = DecideWith System.Random.Shared

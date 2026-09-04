@@ -71,7 +71,7 @@ let ``simulated games uphold the invariants`` (seed: int) =
 let ``SimulateWithDecider routes prompt players through the injected decider`` () =
     let mutable decisions = 0
 
-    let decide: Decider =
+    let decide: Strategy.Decider =
         fun strategy round turn player others finished decks ->
             match strategy with
             | Prompt ->
