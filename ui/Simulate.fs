@@ -2,6 +2,8 @@ module public Simulate
 
 open System
 
+open FSharp.Control
+
 open Flip7
 
 let public Run (playerNamesAndStrategies: string list) : unit =
@@ -18,7 +20,7 @@ let public Run (playerNamesAndStrategies: string list) : unit =
             name, strategy
 
     let now = DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss"
-    let directory = IO.Path.Combine("timelines", now)
+    let directory = IO.Path.Join("timelines", now)
     let replayName = $"simulated game {now}"
 
     let players = playerNamesAndStrategies |> List.map parse
@@ -34,8 +36,14 @@ let public Run (playerNamesAndStrategies: string list) : unit =
     if players |> List.map fst |> List.distinct |> List.length <> players.Length then
         raise (ArgumentException "Player names must be unique.")
 
-    Timeline.Simulate players seededHands seededScores seededDeck seededDiscards
-    |> Persistence.WriteTimelineLazy directory
-    |> Seq.toArray
-    |> Some
-    |> Replay.Run replayName
+    use cancellation = new Threading.CancellationTokenSource()
+    let producer =
+        Timeline.Simulate players seededHands seededScores seededDeck seededDiscards
+        |> Persistence.WriteTimelineLazy directory
+        |> AsyncSeq.takeWhile (fun _ -> not cancellation.IsCancellationRequested)
+        |> AsyncSeq.iter ignore
+        |> Async.StartAsTask
+
+    Replay.Run replayName directory
+    cancellation.Cancel()
+    producer.Wait()

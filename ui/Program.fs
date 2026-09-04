@@ -19,7 +19,7 @@ let main args =
         try
             Console.Clear()
             Console.CursorVisible <- false
-            Replay.Run directory None
+            Replay.Run directory directory
             Console.Clear()
             0
         finally

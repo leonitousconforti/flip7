@@ -83,11 +83,16 @@ module public Persistence =
     }
 
     let public WriteTimelineLazy (directory: string) (timeline: Timeline) : Timeline = asyncSeq {
+        let stagingDirectory = Path.Join(directory, ".staging")
         let mutable index = 0
+
+        if Directory.Exists stagingDirectory then
+            Directory.Delete(stagingDirectory, true)
 
         for instant in timeline do
             let instantDirectory = Path.Join(directory, $"{index}")
-            let! written = WriteInstantAsync instantDirectory instant
+            let! written = WriteInstantAsync stagingDirectory instant
+            Directory.Move(stagingDirectory, instantDirectory)
             index <- index + 1
             yield written
     }
@@ -100,9 +105,14 @@ module public Persistence =
     let public ReadTimeline (directory: string) : Timeline = asyncSeq {
         let instantDirectories =
             Directory.GetDirectories directory
-            |> Array.sortBy (fun dir -> int (Path.GetFileName dir))
+            |> Array.choose (fun dir ->
+                match Int32.TryParse(Path.GetFileName dir) with
+                | true, index -> Some(index, dir)
+                | false, _ -> None
+            )
+            |> Array.sortBy fst
 
-        for instantDirectory in instantDirectories do
+        for _, instantDirectory in instantDirectories do
             let! instant = ReadInstantAsync instantDirectory
             yield instant
     }
