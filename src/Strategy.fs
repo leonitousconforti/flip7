@@ -21,6 +21,9 @@ type public Strategy =
     | HitWhileBehindLeader of uint
     | StandsAfterTurn of uint
     | MaximizesExpectedValue
+    /// Decided by a human at the terminal; label only, routed to the decider
+    /// injected into Timeline.SimulateWithDecider rather than DecideWith.
+    | Prompt
 
     override self.ToString() : string =
         let writeFloat (value: float) =
@@ -42,6 +45,7 @@ type public Strategy =
         | HitWhileBehindLeader margin -> $"HitWhileBehindLeader {margin}"
         | StandsAfterTurn turns -> $"StandsAfterTurn {turns}"
         | MaximizesExpectedValue -> "MaximizesExpectedValue"
+        | Prompt -> "Prompt"
 
     static member public Parse(string: string) : Strategy =
         let readFloat (value: string) =
@@ -66,6 +70,7 @@ type public Strategy =
         | [| "HitWhileBehindLeader"; margin |] -> HitWhileBehindLeader(readUint margin)
         | [| "StandsAfterTurn"; turns |] -> StandsAfterTurn(readUint turns)
         | [| "MaximizesExpectedValue" |] -> MaximizesExpectedValue
+        | [| "Prompt" |] -> Prompt
         | _ -> raise (System.ArgumentException $"Invalid strategy string: {string}")
 
     static member TryParse(string: string) : Strategy option =
@@ -176,6 +181,11 @@ module public Strategy =
                 Hit
             else
                 Stand
+        | Prompt ->
+            raise (
+                System.InvalidOperationException
+                    $"{strategy} is decided externally via Timeline.SimulateWithDecider, not by DecideWith"
+            )
 
     /// <summary>
     /// Evaluates a strategy given the current round number, the current turn

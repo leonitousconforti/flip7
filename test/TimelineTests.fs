@@ -66,3 +66,39 @@ let ``simulated games uphold the invariants`` (seed: int) =
     )
     |> List.pairwise
     |> List.iter (fun (before, after) -> before |> Map.iter (fun name score -> Assert.True(score <= after[name])))
+
+[<Fact>]
+let ``SimulateWithDecider routes prompt players through the injected decider`` () =
+    let mutable decisions = 0
+
+    let decide: Decider =
+        fun strategy round turn player others _finished decks ->
+            match strategy with
+            | Prompt ->
+                decisions <- decisions + 1
+
+                if Hand.Score player.Hand < 18u then
+                    Strategy.Hit
+                else
+                    Strategy.Stand
+            | strategy -> Strategy.DecideWith (System.Random 1) strategy round turn player others decks
+
+    let timeline =
+        Timeline.SimulateWithDecider
+            (System.Random 5)
+            decide
+            [ "You", Prompt; "Bot", HitUntilScore 25u ]
+            None
+            None
+            None
+            None
+        |> AsyncSeq.toListAsync
+        |> Async.RunSynchronously
+
+    // The game runs to completion with the decider standing in for the human
+    Assert.True(decisions > 0)
+    Assert.True((List.last timeline).Event.IsRoundEnded)
+    Assert.True(
+        (List.last timeline).Players
+        |> List.exists (fun player -> player.FirmScore >= 200u)
+    )
