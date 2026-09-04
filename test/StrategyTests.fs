@@ -17,8 +17,11 @@ let private other: Strategy.StrategyPlayer = {
 
 let private decks = Deck.Full, Deck.Empty
 
-// Tests are an edge of the program, so they inject the randomness
-let private decide: Strategy.Decider = Strategy.DecideWith(System.Random 1)
+// Tests are an edge of the program, so they inject the randomness and run
+// the asynchronous decider synchronously
+let private decide strategy round turn player others finished decks =
+    Strategy.DecideWith (System.Random 1) strategy round turn player others finished decks
+    |> Async.RunSynchronously
 
 [<Fact>]
 let ``ToString and Parse round-trip every strategy`` () =
@@ -74,7 +77,12 @@ let ``RandomWithProbability is deterministic at the extremes`` () =
 [<Fact>]
 let ``RandomWithProbability is reproducible with a seeded random`` () =
     let decisions seed =
-        List.init 100 (fun _ -> Strategy.DecideWith (System.Random seed) Strategy.Random 0u 0u player [] [] decks)
+        List.init
+            100
+            (fun _ ->
+                Strategy.DecideWith (System.Random seed) Strategy.Random 0u 0u player [] [] decks
+                |> Async.RunSynchronously
+            )
 
     Assert.Equal<Strategy.HitOrStand list>(decisions 42, decisions 42)
 

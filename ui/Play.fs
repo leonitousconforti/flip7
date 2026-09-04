@@ -24,6 +24,48 @@ let rec private IsQuit (error: exn) : bool =
     | error when not (isNull error.InnerException) -> IsQuit error.InnerException
     | _ -> false
 
+type private KeyMessage =
+    | Pressed of ConsoleKeyInfo
+    | NextKey of AsyncReplyChannel<ConsoleKeyInfo>
+
+// Console keys flow through an agent so a prompt can await one without
+// holding a thread. Keys pressed while nobody is waiting are dropped by the
+// loop, which is exactly the rule that keys pressed during the bots' turns
+// are not decisions.
+let private StartKeyPump () : MailboxProcessor<KeyMessage> =
+    let agent =
+        MailboxProcessor.Start(fun inbox ->
+            let rec loop () = async {
+                match! inbox.Receive() with
+                | Pressed _ -> return! loop ()
+                | NextKey reply ->
+                    let! key =
+                        inbox.Scan(
+                            function
+                            | Pressed key -> Some(async.Return key)
+                            | NextKey _ -> None
+                        )
+
+                    reply.Reply key
+                    return! loop ()
+            }
+
+            loop ()
+        )
+
+    // A dedicated background thread turns blocking console reads into posts
+    let pump =
+        Thread(
+            ThreadStart(fun () ->
+                while true do
+                    agent.Post(Pressed(Console.ReadKey true))
+            )
+        )
+
+    pump.IsBackground <- true
+    pump.Start()
+    agent
+
 let private CaptionStyle (event: Event) : string list =
     match event with
     | Busted _ -> [ Ansi.BrightRed ]
@@ -149,11 +191,13 @@ let public Run (humanNames: string list) : unit =
     let directory =
         Path.Join(playDirectory, DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss")
 
+    let keys = StartKeyPump()
+
     let promptHuman
         (player: Strategy.StrategyPlayer)
         (others: Strategy.StrategyPlayer list)
         (decks: Deck * Deck)
-        : Strategy.HitOrStand =
+        : Async<Strategy.HitOrStand> =
         let deck, discards = decks
 
         let bust =
@@ -162,22 +206,21 @@ let public Run (humanNames: string list) : unit =
 
         let ev = Simulation.expectedValueOfHit deck discards player.Hand
 
-        // Keys pressed while the bots were playing are not decisions
-        while Console.KeyAvailable do
-            Console.ReadKey true |> ignore
-
         $"{player.Name}: %d{Hand.Score player.Hand}pts held, %.0f{bust}%% bust, EV %+.1f{ev}   [h]it   [s]tand   [q]uit"
         |> centered width
         |> styled [ Ansi.Bright ]
         |> WriteFooter
 
-        let rec read () =
-            match (Console.ReadKey true).Key with
-            | ConsoleKey.H -> Strategy.Hit
-            | ConsoleKey.S -> Strategy.Stand
+        let rec read () = async {
+            let! key = keys.PostAndAsyncReply NextKey
+
+            match key.Key with
+            | ConsoleKey.H -> return Strategy.Hit
+            | ConsoleKey.S -> return Strategy.Stand
             | ConsoleKey.Q
-            | ConsoleKey.Escape -> raise (QuitException())
-            | _ -> read ()
+            | ConsoleKey.Escape -> return raise (QuitException())
+            | _ -> return! read ()
+        }
 
         read ()
 
@@ -187,34 +230,31 @@ let public Run (humanNames: string list) : unit =
             | Prompt -> promptHuman player others decks
             | strategy -> Strategy.DecideWith random strategy round turn player others finished decks
 
-    // The play loop is single-threaded: pulling the timeline drives the game,
-    // so the human prompt blocks inside the pull and every instant is on disk
-    // (write-through) before it is rendered
+    // The play loop is asynchronous end to end: pulling the timeline drives
+    // the game, a prompt awaits its key without holding a thread, and every
+    // instant is on disk (write-through) before it is rendered
     let timeline =
         Timeline.SimulateWithDecider random decide players None None None None
         |> Persistence.WriteTimelineLazy directory
 
-    let enumerator = timeline.GetAsyncEnumerator()
-
-    let pull () =
-        enumerator.MoveNextAsync().AsTask() |> Async.AwaitTask |> Async.RunSynchronously
-
-    let mutable instants: Instant list = []
-    let mutable rounds = 0
-    let mutable finished = false
-
     Console.Clear()
 
-    try
+    let play = async {
+        let enumerator = timeline.GetAsyncEnumerator()
+        let mutable instants: Instant list = []
+        let mutable rounds = 0
+        let mutable finished = false
+
         try
             let mutable pulling = true
 
             while pulling do
-                match pull () with
-                | false ->
+                let! pulled = enumerator.MoveNextAsync().AsTask() |> Async.AwaitTask
+
+                if not pulled then
                     pulling <- false
                     finished <- true
-                | true ->
+                else
                     let instant = enumerator.Current
                     instants <- instant :: instants
                     let displayRound = rounds + 1
@@ -227,24 +267,28 @@ let public Run (humanNames: string list) : unit =
 
                     RenderFrame displayRound instant footer
 
-                    Thread.Sleep(
-                        if instant.Event.IsRoundEnded then
-                            2 * paceMilliseconds
-                        else
-                            paceMilliseconds
-                    )
+                    do!
+                        Async.Sleep(
+                            if instant.Event.IsRoundEnded then
+                                2 * paceMilliseconds
+                            else
+                                paceMilliseconds
+                        )
         with error when IsQuit error ->
             ()
-    finally
-        enumerator.DisposeAsync().AsTask() |> Async.AwaitTask |> Async.RunSynchronously
 
-    if finished && not (List.isEmpty instants) then
-        let final = List.head instants
-        let winner = final.Players |> List.maxBy (fun player -> player.FirmScore)
+        do! enumerator.DisposeAsync().AsTask() |> Async.AwaitTask
 
-        $"game over: {winner.Name} wins with {winner.FirmScore}pts!   [any key]"
-        |> centered width
-        |> styled [ Ansi.BrightGreen ]
-        |> WriteFooter
+        if finished && not (List.isEmpty instants) then
+            let final = List.head instants
+            let winner = final.Players |> List.maxBy (fun player -> player.FirmScore)
 
-        Console.ReadKey true |> ignore
+            $"game over: {winner.Name} wins with {winner.FirmScore}pts!   [any key]"
+            |> centered width
+            |> styled [ Ansi.BrightGreen ]
+            |> WriteFooter
+
+            do! keys.PostAndAsyncReply NextKey |> Async.Ignore
+    }
+
+    Async.RunSynchronously play
