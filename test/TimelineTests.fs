@@ -62,7 +62,7 @@ let ``SimulateWithDecider routes prompt players through the injected decider`` (
     let decide: Strategy.Decider =
         fun strategy round turn player others finished decks ->
             match strategy with
-            | Prompt ->
+            | Custom name ->
                 decisions <- decisions + 1
 
                 async.Return(
