@@ -82,20 +82,23 @@ module public Persistence =
         }
     }
 
-    let public WriteTimelineLazy (directory: string) (timeline: Timeline) : Timeline = asyncSeq {
+    let public WriteTimelineLazyFrom (directory: string) (startIndex: int) (timeline: Timeline) : Timeline = asyncSeq {
         let stagingDirectory = Path.Join(directory, ".staging")
-        let mutable index = 0
+        let mutable index = startIndex
 
         if Directory.Exists stagingDirectory then
             Directory.Delete(stagingDirectory, true)
 
         for instant in timeline do
-            let instantDirectory = Path.Join(directory, $"{index}")
+            let instantDirectory = Path.Join(directory, string index)
             let! written = WriteInstantAsync stagingDirectory instant
             Directory.Move(stagingDirectory, instantDirectory)
             index <- index + 1
             yield written
     }
+
+    let public WriteTimelineLazy (directory: string) (timeline: Timeline) : Timeline =
+        WriteTimelineLazyFrom directory 0 timeline
 
     let public WriteTimelineEager (directory: string) (timeline: Timeline) : Timeline =
         // The cache lives outside the sequence so re-enumeration replays it

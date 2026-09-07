@@ -24,10 +24,6 @@ let public Run (playerNamesAndStrategies: string list) : unit =
     let replayName = $"simulated game {now}"
 
     let players = playerNamesAndStrategies |> List.map parse
-    let seededHands = Some Map.empty
-    let seededScores = Some Map.empty
-    let seededDeck = None
-    let seededDiscards = None
 
     if players.Length <= 0 then
         raise (ArgumentException "Please provide at least one player name as a command-line argument.")
@@ -38,7 +34,7 @@ let public Run (playerNamesAndStrategies: string list) : unit =
 
     use cancellation = new Threading.CancellationTokenSource()
     let producer =
-        Timeline.SimulateWith (Random()) players seededHands seededScores seededDeck seededDiscards
+        Timeline.SimulateWith (Random()) players
         |> Persistence.WriteTimelineLazy directory
         |> AsyncSeq.takeWhile (fun _ -> not cancellation.IsCancellationRequested)
         |> AsyncSeq.iter ignore

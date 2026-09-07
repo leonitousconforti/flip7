@@ -40,13 +40,7 @@ let ``WriteInstant and ReadInstant round-trip`` () =
 let ``a written timeline reads back identically`` () =
     inTempDirectory (fun directory ->
         let original =
-            Timeline.SimulateWith
-                (System.Random 42)
-                [ "Alice", Strategy.Random; "Bob", HitUntilScore 25u ]
-                None
-                None
-                None
-                None
+            Timeline.SimulateWith (System.Random 42) [ "Alice", Strategy.Random; "Bob", HitUntilScore 25u ]
             |> AsyncSeq.toListAsync
             |> Async.RunSynchronously
 
@@ -60,4 +54,38 @@ let ``a written timeline reads back identically`` () =
             |> Async.RunSynchronously
 
         Assert.Equal<Instant list>(original, readBack)
+    )
+
+[<Fact>]
+let ``a continuation appends to a persisted timeline`` () =
+    inTempDirectory (fun directory ->
+        let first =
+            Timeline.SimulateWith (System.Random 7) [ "Alice", Strategy.Random; "Bob", HitUntilScore 25u ]
+            |> AsyncSeq.toListAsync
+            |> Async.RunSynchronously
+
+        Persistence.WriteTimelineLazy directory (AsyncSeq.ofSeq first)
+        |> AsyncSeq.iter ignore
+        |> Async.RunSynchronously
+
+        // An edit fork appends behind the instants already on disk
+        let last = List.last first
+
+        let edited = {
+            Event = Edited "Alice"
+            Players = last.Players
+            Deck = last.Deck
+            Discards = last.Discards
+        }
+
+        Persistence.WriteTimelineLazyFrom directory first.Length (AsyncSeq.ofSeq [ edited ])
+        |> AsyncSeq.iter ignore
+        |> Async.RunSynchronously
+
+        let readBack =
+            Persistence.ReadTimeline directory
+            |> AsyncSeq.toListAsync
+            |> Async.RunSynchronously
+
+        Assert.Equal<Instant list>(first @ [ edited ], readBack)
     )

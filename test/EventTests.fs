@@ -15,6 +15,7 @@ let ``Serialize and Deserialize round-trip every event`` () =
         Dealt3("Alice", "Bob", [ ValueCard Card.One; ModifierCard Card.Double; ActionCard Card.SecondChance ])
         Dealt3("Alice", "Alice", [])
         Flip7Achieved "Alice"
+        Edited "Alice"
         RoundEnded(Map.ofList [ "Alice", 45u; "Bob", 0u ])
         RoundEnded Map.empty
     ]

@@ -14,6 +14,7 @@ type public Event =
     | SecondChanceDiscarded of Name: string
     | Dealt3 of Source: string * Target: string * Cards: Card list
     | Flip7Achieved of Name: string
+    | Edited of Name: string
     | RoundEnded of Scores: Map<string, uint>
 
     override self.ToString() : string =
@@ -29,6 +30,7 @@ type public Event =
             let cards = cards |> List.map string |> String.concat ", "
             $"{source} drew Deal3, dealing {target}: {cards}"
         | Flip7Achieved name -> $"{name} flipped 7 and ended the round!"
+        | Edited name -> $"{name} edited the table"
         | RoundEnded scores ->
             let scores =
                 scores
@@ -48,6 +50,7 @@ type public Event =
         | Froze(_, target) -> Some target
         | SecondChancePassed(_, target) -> Some target
         | Dealt3(_, target, _) -> Some target
+        | Edited _ -> None
         | RoundEnded _ -> None
 
 /// <summary>
@@ -84,6 +87,7 @@ module public Event =
         | SecondChanceDiscarded name -> [| "SecondChanceDiscarded"; name |]
         | Dealt3(source, target, cards) -> [| "Dealt3"; source; target; yield! cards |> List.map string |]
         | Flip7Achieved name -> [| "Flip7Achieved"; name |]
+        | Edited name -> [| "Edited"; name |]
         | RoundEnded scores -> [|
             "RoundEnded"
             yield! scores |> Map.toList |> List.map (fun (name, score) -> $"{name}: {score}")
@@ -103,6 +107,7 @@ module public Event =
         | [ "SecondChanceDiscarded"; name ] -> SecondChanceDiscarded name
         | "Dealt3" :: source :: target :: cards -> Dealt3(source, target, cards |> List.map Card.Parse)
         | [ "Flip7Achieved"; name ] -> Flip7Achieved name
+        | [ "Edited"; name ] -> Edited name
         | "RoundEnded" :: scores ->
             scores
             |> List.map (fun line ->
@@ -429,58 +434,54 @@ module public Timeline =
             }
 
     /// <summary>
-    /// Simulates a full game like SimulateWith, but every hit-or-stand
-    /// decision is routed through the given decider, so Prompt strategies can
-    /// be answered by a human at the terminal. Pulling the timeline drives
-    /// the game, so a decider may await (a key press, a network message) and
-    /// the game simply pauses there without holding a thread.
+    /// Continues a game from a mid-round state: the active players in rotation
+    /// order (the next actor at the head), the players already finished this
+    /// round, the round number, how many turns each player has taken, and the
+    /// decks. The round plays out from there and whole rounds follow until a
+    /// player first reaches 200 points at a RoundEnded, which is the last
+    /// instant of the timeline. A player whose turn count is zero is dealt a
+    /// forced first hit, so a continuation should count at least one turn for
+    /// anyone already holding cards. The next round's rotation derives from
+    /// the given ordering, since the original seating is not recoverable.
     /// </summary>
-    let public SimulateWithDecider
+    let public ContinueWith
         (random: System.Random)
         (decide: Strategy.Decider)
-        (players: list<string * Strategy>)
-        (seedHands: Map<string, Hand> option)
-        (seedScores: Map<string, uint> option)
-        (seedDeck: Deck option)
-        (seedDiscards: Deck option)
+        (startingRound: uint)
+        (startingTurnsTaken: Map<string, uint>)
+        (startingActive: Player list)
+        (startingFinished: Player list)
+        (startingDecks: Deck * Deck)
         : Timeline =
-        let startingPlayers =
-            players
-            |> List.map (fun (name, strategy) ->
-                Player.Make(
-                    name,
-                    strategy,
-                    ?firmScore = (seedScores |> Option.bind (Map.tryFind name)),
-                    ?hand = (seedHands |> Option.bind (Map.tryFind name))
-                )
-            )
-
-        let startingDecks =
-            seedDeck |> Option.defaultValue Deck.Full, seedDiscards |> Option.defaultValue Deck.Empty
-
-        if List.isEmpty startingPlayers then
+        if List.isEmpty startingActive && List.isEmpty startingFinished then
             AsyncSeq.empty
         else
 
         // A loop rather than recursion so an arbitrarily long game cannot
         // accumulate nested asyncSeq appends
         asyncSeq {
-            let mutable round = 1u
-            let mutable players = startingPlayers
+            let mutable round = startingRound
+            let mutable turnsTaken = startingTurnsTaken
+            let mutable active = startingActive
+            let mutable finished = startingFinished
+
+            // The round's turn order, which keeps scoring independent of the
+            // order players finish in
+            let mutable roster = startingActive @ startingFinished
             let mutable decks = startingDecks
             let mutable gameOver = false
 
             while not gameOver do
                 let mutable lastInstant = None
 
-                for instant in GoonSession random decide round Map.empty players List.empty decks do
+                for instant in GoonSession random decide round turnsTaken active finished decks do
                     lastInstant <- Some instant
                     yield instant
 
                 let finalPlayers, (deck, discards) =
                     lastInstant
                     |> Option.map (fun instant -> instant.Players, (instant.Deck, instant.Discards))
-                    |> Option.defaultValue (players, decks)
+                    |> Option.defaultValue (roster, decks)
 
                 let scores =
                     finalPlayers
@@ -500,7 +501,7 @@ module public Timeline =
                     |> List.fold Deck.Increment discards
 
                 let scored =
-                    players
+                    roster
                     |> List.map (fun player -> {
                         player with
                             FirmScore = player.FirmScore + Map.find player.Name scores
@@ -521,41 +522,47 @@ module public Timeline =
                         | leader :: rest -> rest @ [ leader ]
 
                     round <- round + 1u
-                    players <- rotated
+                    turnsTaken <- Map.empty
+                    roster <- rotated
+                    active <- rotated
+                    finished <- []
                     decks <- deck, discards'
                 else
                     gameOver <- true
         }
 
     /// <summary>
+    /// Simulates a full game like SimulateWith, but every hit or stand
+    /// decision is routed through the given decider, so Prompt strategies can
+    /// be answered by a human at the terminal. Pulling the timeline drives
+    /// the game, so a decider may await (a key press, a network message) and
+    /// the game simply pauses there without holding a thread.
+    /// </summary>
+    let public SimulateWithDecider
+        (random: System.Random)
+        (decide: Strategy.Decider)
+        (players: list<string * Strategy>)
+        : Timeline =
+        let startingPlayers =
+            players |> List.map (fun (name, strategy) -> Player.Make(name, strategy))
+
+        ContinueWith random decide 1u Map.empty startingPlayers [] (Deck.Full, Deck.Empty)
+
+    /// <summary>
     /// Simulates a full game using the given source of randomness and returns
     /// its timeline lazily: one instant per event, with a RoundEnded instant
     /// closing out every round. The last instant of the timeline is the
-    /// RoundEnded in which a player first reaches 200 points. Seed values, when
-    /// provided, apply to the first round only. A seeded random makes the
-    /// timeline reproducible, but note that the timeline is lazy: enumerating
-    /// it advances the random, so enumerate it once (or cache it) when
-    /// reproducibility matters.
+    /// RoundEnded in which a player first reaches 200 points. A seeded random
+    /// makes the timeline reproducible, but note that the timeline is lazy:
+    /// enumerating it advances the random, so enumerate it once (or cache it)
+    /// when reproducibility matters.
     /// </summary>
-    let public SimulateWith
-        (random: System.Random)
-        (players: list<string * Strategy>)
-        (seedHands: Map<string, Hand> option)
-        (seedScores: Map<string, uint> option)
-        (seedDeck: Deck option)
-        (seedDiscards: Deck option)
-        : Timeline =
-        SimulateWithDecider random (Strategy.DecideWith random) players seedHands seedScores seedDeck seedDiscards
+    let public SimulateWith (random: System.Random) (players: list<string * Strategy>) : Timeline =
+        SimulateWithDecider random (Strategy.DecideWith random) players
 
     /// <summary>
     /// Simulates a full game without threading a source of randomness.
     /// </summary>
     [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Timeline.SimulateWith instead")>]
-    let public Simulate
-        (players: list<string * Strategy>)
-        (seedHands: Map<string, Hand> option)
-        (seedScores: Map<string, uint> option)
-        (seedDeck: Deck option)
-        (seedDiscards: Deck option)
-        : Timeline =
-        SimulateWith System.Random.Shared players seedHands seedScores seedDeck seedDiscards
+    let public Simulate (players: list<string * Strategy>) : Timeline =
+        SimulateWith System.Random.Shared players
