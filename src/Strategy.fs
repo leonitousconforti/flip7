@@ -21,7 +21,7 @@ type public Strategy =
     | HitWhileBehindLeader of uint
     | StandsAfterTurn of uint
     | MaximizesExpectedValue
-    | Prompt
+    | Custom of string
 
     override self.ToString() : string =
         let writeFloat (value: float) =
@@ -43,7 +43,7 @@ type public Strategy =
         | HitWhileBehindLeader margin -> $"HitWhileBehindLeader {margin}"
         | StandsAfterTurn turns -> $"StandsAfterTurn {turns}"
         | MaximizesExpectedValue -> "MaximizesExpectedValue"
-        | Prompt -> "Prompt"
+        | Custom name -> $"Custom {name}"
 
     static member public Parse(string: string) : Strategy =
         let readFloat (value: string) =
@@ -68,7 +68,7 @@ type public Strategy =
         | [| "HitWhileBehindLeader"; margin |] -> HitWhileBehindLeader(readUint margin)
         | [| "StandsAfterTurn"; turns |] -> StandsAfterTurn(readUint turns)
         | [| "MaximizesExpectedValue" |] -> MaximizesExpectedValue
-        | [| "Prompt" |] -> Prompt
+        | [| "Custom"; name |] -> Custom name
         | _ -> raise (System.ArgumentException $"Invalid strategy string: {string}")
 
     static member TryParse(string: string) : Strategy option =
@@ -195,10 +195,10 @@ module public Strategy =
                     Hit
                 else
                     Stand
-            | Prompt ->
+            | Custom name ->
                 raise (
                     System.InvalidOperationException
-                        $"{strategy} is decided externally via Timeline.SimulateWithDecider, not by DecideWith"
+                        $"Custom ${name} strategy is decided via `Timeline.SimulateWithDecider`, not by DecideWith"
                 )
             |> async.Return
 

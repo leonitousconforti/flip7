@@ -41,7 +41,7 @@ let ``ToString and Parse round-trip every strategy`` () =
         HitWhileBehindLeader 10u
         StandsAfterTurn 12u
         MaximizesExpectedValue
-        Prompt
+        Custom "TerminalPrompt"
     ]
     |> List.iter (fun strategy -> Assert.Equal(strategy, Strategy.Parse(string strategy)))
 
@@ -54,7 +54,8 @@ let ``Externally decided strategies cannot be evaluated by DecideWith`` () =
     }
 
     Assert.Throws<System.InvalidOperationException>(fun () ->
-        Strategy.DecideWith (System.Random 1) Prompt 1u 2u player [] [] decks |> ignore
+        Strategy.DecideWith (System.Random 1) (Custom "TerminalPrompt") 1u 2u player [] [] decks
+        |> ignore
     )
     |> ignore
 

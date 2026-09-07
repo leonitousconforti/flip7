@@ -74,7 +74,10 @@ let ``SimulateWithDecider routes prompt players through the injected decider`` (
             | strategy -> Strategy.DecideWith (System.Random 1) strategy round turn player others finished decks
 
     let timeline =
-        Timeline.SimulateWithDecider (System.Random 5) decide [ "You", Prompt; "Bot", HitUntilScore 25u ]
+        Timeline.SimulateWithDecider (System.Random 5) decide [
+            "You", Custom "TerminalPrompt"
+            "Bot", HitUntilScore 25u
+        ]
         |> AsyncSeq.toListAsync
         |> Async.RunSynchronously
 
@@ -89,7 +92,7 @@ let ``SimulateWithDecider routes prompt players through the injected decider`` (
 [<Fact>]
 let ``ContinueWith resumes a round mid-flight and banks finished hands`` () =
     let active = [
-        Player.Make("A", Prompt, 10u, [ ValueCard Card.Five ])
+        Player.Make("A", Custom "TerminalPrompt", 10u, [ ValueCard Card.Five ])
         Player.Make("B", HitUntilScore 25u, 20u, [ ValueCard Card.Seven ])
     ]
 
