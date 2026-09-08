@@ -6,6 +6,7 @@ module public Persistence =
     open System.Diagnostics
     open System.IO
     open System.Threading
+    open System.Threading.Tasks
 
     open FSharp.Control
 
@@ -46,7 +47,7 @@ module public Persistence =
         return instant
     }
 
-    let public ReadInstantAsync (directory: string) : Async<Result<Instant, FormatException>> = async {
+    let public ReadInstantAsync (directory: string) : Async<Result<Instant, exn>> = async {
         let toDirectory = fun file -> Path.Join(directory, file)
         let read = fun file -> File.ReadAllLinesAsync(toDirectory file) |> Async.AwaitTask
 
@@ -85,7 +86,7 @@ module public Persistence =
                     Deck = deck |> Deck.Deserialize
                     Discards = discards |> Deck.Deserialize
                 }
-        with :? FormatException as exn ->
+        with exn ->
             return Error exn
     }
 
@@ -133,23 +134,24 @@ module public Persistence =
     }
 
     type private TimelineStoreMessage =
-        | Read of index: int * reply: AsyncReplyChannel<Result<Instant, FormatException>>
+        | Read of index: int * reply: AsyncReplyChannel<Result<Instant, exn>>
         | Snapshot of reply: AsyncReplyChannel<int * bool * int list>
 
     /// <summary>
     /// A view of a timeline directory as it fills: instants are published
-    /// atomically (staged then renamed by the writer), so once {directory}/{index}
-    /// exists its contents are complete and the store can tail the directory for
-    /// growth. Built on a MailboxProcessor: a single agent owns all of the
-    /// mutable state - the frontier, the round ends, and the LRU cache - and
-    /// every operation arrives as a message, so nothing is locked because
-    /// nothing is shared. Ingestion is folded into the same message loop: the
-    /// agent serves messages until the pacer says an ingest step is due, so
-    /// viewer requests and tailing interleave on one logical thread. Only
-    /// lightweight metadata is held in memory plus a small cache of recently
-    /// viewed instants: memory stays flat no matter how long the timeline
-    /// grows, and there is no channel to the producer at all - the disk is the
-    /// only source. Dispose stops the agent.
+    /// atomically (staged then renamed by the writer), so once
+    /// {directory}/{index} exists its contents are complete and the store can
+    /// tail the directory for growth. Built on a MailboxProcessor: a single
+    /// agent owns all of the mutable state - the frontier, the round ends, and
+    /// the LRU cache - and every operation arrives as a message, so nothing is
+    /// locked because nothing is shared. Ingestion is folded into the same
+    /// message loop, but the frontier read runs as its own task that the loop
+    /// polls: a slow instant at the frontier never camps on the mailbox, so
+    /// viewer reads take precedence over background tailing. Only lightweight
+    /// metadata is held in memory plus a small cache of recently viewed
+    /// instants: memory stays flat no matter how long the timeline grows, and
+    /// there is no channel to the producer at all - the disk is the only
+    /// source. Dispose stops the agent.
     /// </summary>
     type public TimelineStore(directory: string, ?ingestDelayMilliseconds: int64, ?cacheCapacity: int) =
         let ingestDelayMilliseconds = defaultArg ingestDelayMilliseconds 100L
@@ -166,25 +168,38 @@ module public Persistence =
                     let cache = Dictionary<int, LinkedListNode<int * Instant>>(cacheCapacity)
                     let pacer = Stopwatch.StartNew()
 
+                    // The frontier read runs as its own task so a slow instant
+                    // never camps on the mailbox: scrubbing reads are served
+                    // the moment they arrive, and the loop folds the frontier
+                    // in when its read lands. The viewer can never request the
+                    // frontier itself (a cursor stays below Count), so nothing
+                    // ever waits on this task but the loop.
+                    let mutable frontier: Task<Result<Instant, exn>> option = None
+
                     let mutable count = 0
                     let mutable isComplete = false
                     let mutable roundEnds: int list = []
 
-                    let lookup (index: int) : Async<Result<Instant, FormatException>> = async {
+                    let read (index: int) : Async<Result<Instant, exn>> =
+                        ReadInstantAsync(Path.Join(directory, string index))
+
+                    let remember (index: int) (instant: Instant) : unit =
+                        cache[index] <- recency.AddFirst((index, instant))
+                        if cache.Count > cacheCapacity then
+                            cache.Remove(fst recency.Last.Value) |> ignore
+                            recency.RemoveLast()
+
+                    let lookup (index: int) : Async<Result<Instant, exn>> = async {
                         match cache.TryGetValue index with
                         | true, node ->
                             recency.Remove node
                             recency.AddFirst node
                             return node.Value |> snd |> Ok
                         | _ ->
-                            let! maybeInstant = ReadInstantAsync(Path.Join(directory, string index))
+                            let! maybeInstant = read index
                             match maybeInstant with
                             | Error _ -> ()
-                            | Ok instant ->
-                                cache[index] <- recency.AddFirst((index, instant))
-                                if cache.Count > cacheCapacity then
-                                    cache.Remove(fst recency.Last.Value) |> ignore
-                                    recency.RemoveLast()
+                            | Ok instant -> remember index instant
 
                             return maybeInstant
                     }
@@ -196,29 +211,36 @@ module public Persistence =
                         match! inbox.TryReceive timeout with
                         | Some(Snapshot channel) -> channel.Reply(count, isComplete, roundEnds)
                         | Some(Read(index, channel)) ->
-                            try
-                                let! instant = lookup index
-                                channel.Reply instant
-                            with exn ->
-                                channel.Reply(Error(FormatException($"could not read instant {index}", exn)))
+                            let! instant = lookup index
+                            channel.Reply instant
                         | None -> ()
 
-                        if
-                            pacer.ElapsedMilliseconds >= ingestDelayMilliseconds
-                            && Directory.Exists(Path.Join(directory, string count))
-                            && not isComplete
-                        then
+                        match frontier with
+                        | Some frontierTask when frontierTask.IsCompleted ->
+                            frontier <- None
+
                             try
-                                match! lookup count with
+                                match frontierTask.Result with
                                 | Error _ -> count <- count + 1
                                 | Ok instant ->
+                                    remember count instant
                                     if instant.Event.IsRoundEnded then
                                         roundEnds <- roundEnds @ [ count ]
                                         if instant.Players |> List.exists (fun player -> player.FirmScore >= 200u) then
                                             isComplete <- true
+
                                     count <- count + 1
                             with _ ->
                                 ()
+                        | _ -> ()
+
+                        if pacer.ElapsedMilliseconds >= ingestDelayMilliseconds then
+                            if
+                                frontier.IsNone
+                                && not isComplete
+                                && Directory.Exists(Path.Join(directory, string count))
+                            then
+                                frontier <- Some(Async.StartAsTask(read count, cancellationToken = cts.Token))
 
                             pacer.Restart()
                 }),
@@ -240,7 +262,8 @@ module public Persistence =
             return roundEnds
         }
 
-        member _.Read(index: int) : Async<Result<Instant, FormatException>> =
+        member _.Snapshot: Async<int * bool * int list> = agent.PostAndAsyncReply Snapshot
+        member _.Read(index: int) : Async<Result<Instant, exn>> =
             agent.PostAndAsyncReply(fun channel -> Read(index, channel))
 
         interface IDisposable with
