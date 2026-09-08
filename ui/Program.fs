@@ -48,22 +48,10 @@ let main args =
         finally
             Console.CursorVisible <- true
 
-    // Run an interactive game with specified player names
-    | "--interactive" :: names ->
-        try
-            Console.Clear()
-            Console.CursorVisible <- false
-            Interactive.Run names
-            Console.Clear()
-            0
-        finally
-            Console.CursorVisible <- true
-
     // Usage
     | _ ->
         printfn "Usage:"
         printfn "  flip7.exe --replay <directory>"
         printfn "  flip7.exe --simulate <player1,strategy1> <player2,strategy2> ..."
-        printfn "  flip7.exe --interactive <player1> <player2> ..."
         printfn "  flip7.exe --play <player1> [player2] ..."
         1

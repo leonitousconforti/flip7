@@ -7,17 +7,16 @@ open FSharp.Control
 open Flip7
 
 let public Run (playerNamesAndStrategies: string list) : unit =
-    let parse =
-        fun (nameAndStrategy: string) ->
-            let parts = nameAndStrategy.Split ","
-            let name = parts[0]
-            let strategy =
-                if parts.Length > 1 then
-                    Strategy.Parse parts[1]
-                else
-                    Strategy.Random
+    let parse (nameAndStrategy: string) =
+        let parts = nameAndStrategy.Split ","
+        let name = parts[0]
+        let strategy =
+            if parts.Length > 1 then
+                Strategy.Parse parts[1]
+            else
+                Strategy.Random
 
-            name, strategy
+        name, strategy
 
     let now = DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss"
     let directory = IO.Path.Join("timelines", now)

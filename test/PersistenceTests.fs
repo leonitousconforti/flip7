@@ -33,7 +33,7 @@ let ``WriteInstant and ReadInstant round-trip`` () =
         |> Async.RunSynchronously
         |> ignore
 
-        Assert.Equal(instant, Persistence.ReadInstantAsync directory |> Async.RunSynchronously)
+        Assert.Equal(Ok instant, Persistence.ReadInstantAsync directory |> Async.RunSynchronously)
     )
 
 [<Fact>]

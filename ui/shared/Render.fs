@@ -36,3 +36,24 @@ let public handRows (padTo: int) (preamble: string) (hand: Hand) : string * stri
             topRow + "┌───┐", midRow + $"│{c}│", botRow + "└───┘"
         )
         (String.replicate padTo " ", preamble.PadRight padTo, String.replicate padTo " ")
+
+/// Style for an Event
+let public CaptionStyle (event: Event) : string list =
+    match event with
+    | Busted _ -> [ Ansi.BrightRed ]
+    | Flip7Achieved _ -> [ Ansi.BrightMagenta ]
+    | RoundEnded _ -> [ Ansi.BrightYellow ]
+    | Froze _ -> [ Ansi.BrightCyan ]
+    | _ -> []
+
+/// Renders a progress bar for the timeline, with round boundaries and the
+/// current cursor position marked.
+let public ProgressBar (barWidth: int) (store: Persistence.TimelineStore) (cursor: int) : string =
+    let cellOf index = index * barWidth / store.Count
+    let cells = Array.create barWidth "─"
+
+    for index in store.RoundEnds do
+        cells[cellOf index] <- "┊"
+
+    cells[cellOf cursor] <- styled [ Ansi.BrightGreen ] "●"
+    "├" + String.concat "" cells + "┤"

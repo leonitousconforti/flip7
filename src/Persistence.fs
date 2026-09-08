@@ -5,6 +5,7 @@ module public Persistence =
     open System.Collections.Generic
     open System.Diagnostics
     open System.IO
+    open System.Threading
 
     open FSharp.Control
 
@@ -131,65 +132,118 @@ module public Persistence =
             yield maybeInstant |> Result.defaultWith (fun exn -> raise exn)
     }
 
+    type private TimelineStoreMessage =
+        | Read of index: int * reply: AsyncReplyChannel<Result<Instant, FormatException>>
+        | Snapshot of reply: AsyncReplyChannel<int * bool * int list>
+
     /// <summary>
     /// A view of a timeline directory as it fills: instants are published
     /// atomically (staged then renamed by the writer), so once {directory}/{index}
     /// exists its contents are complete and the store can tail the directory for
-    /// growth. Only lightweight metadata is held in memory plus a small cache of
-    /// recently viewed instants: memory stays flat no matter how long the timeline
+    /// growth. Built on a MailboxProcessor: a single agent owns all of the
+    /// mutable state - the frontier, the round ends, and the LRU cache - and
+    /// every operation arrives as a message, so nothing is locked because
+    /// nothing is shared. Ingestion is folded into the same message loop: the
+    /// agent serves messages until the pacer says an ingest step is due, so
+    /// viewer requests and tailing interleave on one logical thread. Only
+    /// lightweight metadata is held in memory plus a small cache of recently
+    /// viewed instants: memory stays flat no matter how long the timeline
     /// grows, and there is no channel to the producer at all - the disk is the
-    /// only source.
+    /// only source. Dispose stops the agent.
     /// </summary>
     type public TimelineStore(directory: string, ?ingestDelayMilliseconds: int64, ?cacheCapacity: int) =
         let ingestDelayMilliseconds = defaultArg ingestDelayMilliseconds 100L
         let cacheCapacity = defaultArg cacheCapacity 64
 
-        let ingestPacer = Stopwatch.StartNew()
-        let roundEnds = ResizeArray<int>(16)
-        let cache = Dictionary<int, LinkedListNode<int * Instant>>(cacheCapacity)
-        let recency = LinkedList<int * Instant>()
+        let cts = new CancellationTokenSource()
 
-        let mutable count: int = 0
-        let mutable isComplete: bool = false
+        let agent =
+            MailboxProcessor.Start(
+                (fun (inbox: MailboxProcessor<TimelineStoreMessage>) -> async {
+                    // Confined to the agent: only the loop below ever touches
+                    // any of this, so no lock guards it
+                    let recency = LinkedList<int * Instant>()
+                    let cache = Dictionary<int, LinkedListNode<int * Instant>>(cacheCapacity)
+                    let pacer = Stopwatch.StartNew()
 
-        member _.Count = count
-        member _.RoundEnds = roundEnds
+                    let mutable count = 0
+                    let mutable isComplete = false
+                    let mutable roundEnds: int list = []
 
-        member _self.Read(index: int) : Async<Result<Instant, FormatException>> = async {
-            match cache.TryGetValue index with
-            | true, node ->
-                recency.Remove node
-                recency.AddFirst node
-                return node.Value |> snd |> Ok
-            | _, _ ->
-                let directory' = Path.Join(directory, string index)
-                let! maybeInstant = ReadInstantAsync directory'
+                    let lookup (index: int) : Async<Result<Instant, FormatException>> = async {
+                        match cache.TryGetValue index with
+                        | true, node ->
+                            recency.Remove node
+                            recency.AddFirst node
+                            return node.Value |> snd |> Ok
+                        | _ ->
+                            let! maybeInstant = ReadInstantAsync(Path.Join(directory, string index))
+                            match maybeInstant with
+                            | Error _ -> ()
+                            | Ok instant ->
+                                cache[index] <- recency.AddFirst((index, instant))
+                                if cache.Count > cacheCapacity then
+                                    cache.Remove(fst recency.Last.Value) |> ignore
+                                    recency.RemoveLast()
 
-                match maybeInstant with
-                | Error _ -> ()
-                | Ok instant ->
-                    cache[index] <- recency.AddFirst((index, instant))
-                    if cache.Count > cacheCapacity then
-                        cache.Remove(fst recency.Last.Value) |> ignore
-                        recency.RemoveLast()
+                            return maybeInstant
+                    }
 
-                return maybeInstant
+                    while true do
+                        let due = ingestDelayMilliseconds - pacer.ElapsedMilliseconds
+                        let timeout = due |> int |> max 0
+
+                        match! inbox.TryReceive timeout with
+                        | Some(Snapshot channel) -> channel.Reply(count, isComplete, roundEnds)
+                        | Some(Read(index, channel)) ->
+                            try
+                                let! instant = lookup index
+                                channel.Reply instant
+                            with exn ->
+                                channel.Reply(Error(FormatException($"could not read instant {index}", exn)))
+                        | None -> ()
+
+                        if
+                            pacer.ElapsedMilliseconds >= ingestDelayMilliseconds
+                            && Directory.Exists(Path.Join(directory, string count))
+                            && not isComplete
+                        then
+                            try
+                                match! lookup count with
+                                | Error _ -> count <- count + 1
+                                | Ok instant ->
+                                    if instant.Event.IsRoundEnded then
+                                        roundEnds <- roundEnds @ [ count ]
+                                        if instant.Players |> List.exists (fun player -> player.FirmScore >= 200u) then
+                                            isComplete <- true
+                                    count <- count + 1
+                            with _ ->
+                                ()
+
+                            pacer.Restart()
+                }),
+                cts.Token
+            )
+
+        member _.Count = async {
+            let! count, _, _ = agent.PostAndAsyncReply Snapshot
+            return count
         }
 
-        member self.Ingest() : Async<unit> = async {
-            if
-                ingestPacer.ElapsedMilliseconds >= ingestDelayMilliseconds
-                && Directory.Exists(Path.Join(directory, string count))
-                && not isComplete
-            then
-                match! self.Read count with
-                | Error _ -> ()
-                | Ok instant ->
-                    if instant.Event.IsRoundEnded then
-                        roundEnds.Add count
-                        if instant.Players |> List.exists (fun player -> player.FirmScore >= 200u) then
-                            isComplete <- true
-
-                count <- count + 1
-                ingestPacer.Restart()
+        member _.IsComplete = async {
+            let! _, isComplete, _ = agent.PostAndAsyncReply Snapshot
+            return isComplete
         }
+
+        member _.RoundEnds = async {
+            let! _, _, roundEnds = agent.PostAndAsyncReply Snapshot
+            return roundEnds
+        }
+
+        member _.Read(index: int) : Async<Result<Instant, FormatException>> =
+            agent.PostAndAsyncReply(fun channel -> Read(index, channel))
+
+        interface IDisposable with
+            member _.Dispose() =
+                cts.Cancel()
+                cts.Dispose()
