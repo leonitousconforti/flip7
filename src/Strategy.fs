@@ -69,12 +69,12 @@ type public Strategy =
         | [| "StandsAfterTurn"; turns |] -> StandsAfterTurn(readUint turns)
         | [| "MaximizesExpectedValue" |] -> MaximizesExpectedValue
         | [| "Custom"; name |] -> Custom name
-        | _ -> raise (System.ArgumentException $"Invalid strategy string: {string}")
+        | _ -> raise (System.FormatException $"Invalid strategy string: {string}")
 
     static member TryParse(string: string) : Strategy option =
         try
             string |> Strategy.Parse |> Some
-        with :? System.ArgumentException ->
+        with :? System.FormatException ->
             None
 
 module public Strategy =

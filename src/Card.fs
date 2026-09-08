@@ -75,12 +75,12 @@ type public Card =
         | "10" -> ValueCard Card.Ten
         | "11" -> ValueCard Card.Eleven
         | "12" -> ValueCard Card.Twelve
-        | _ -> raise (System.ArgumentException $"Invalid card string: {string}")
+        | _ -> raise (System.FormatException $"Invalid card string: {string}")
 
     static member TryParse(string: string) : Card option =
         try
             string |> Card.Parse |> Some
-        with :? System.ArgumentException ->
+        with :? System.FormatException ->
             None
 
     member public self.Value: ScoreBuckets =

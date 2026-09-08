@@ -1,8 +1,10 @@
 namespace Flip7
 
 module public Persistence =
-    open System.IO
     open System
+    open System.Collections.Generic
+    open System.Diagnostics
+    open System.IO
 
     open FSharp.Control
 
@@ -24,9 +26,9 @@ module public Persistence =
             |> List.indexed
             |> List.map (fun (index, player) ->
                 write $"player{index}.txt" [|
-                    $"{player.Name}"
-                    $"{player.Strategy}"
-                    $"{player.FirmScore}"
+                    string player.Name
+                    string player.Strategy
+                    string player.FirmScore
                     String.Empty
                     yield! Hand.Serialize player.Hand
                 |]
@@ -43,7 +45,7 @@ module public Persistence =
         return instant
     }
 
-    let public ReadInstantAsync (directory: string) : Async<Instant> = async {
+    let public ReadInstantAsync (directory: string) : Async<Result<Instant, FormatException>> = async {
         let toDirectory = fun file -> Path.Join(directory, file)
         let read = fun file -> File.ReadAllLinesAsync(toDirectory file) |> Async.AwaitTask
 
@@ -55,31 +57,35 @@ module public Persistence =
         let! readDiscardsTask = read "discards.txt" |> Async.StartChild
         let! readEventTask = read "event.txt" |> Async.StartChild
 
-        let! readPlayerTasks =
-            playerFiles
-            |> Array.map (fun file -> async {
-                let! lines = File.ReadAllLinesAsync file |> Async.AwaitTask
-                return {
-                    Name = lines[0]
-                    Strategy = lines[1] |> Strategy.Parse
-                    FirmScore = lines[2] |> uint
-                    Hand = lines |> Seq.skip 4 |> Hand.Deserialize
+        try
+            let! readPlayerTasks =
+                playerFiles
+                |> Array.map (fun file -> async {
+                    let! lines = File.ReadAllLinesAsync file |> Async.AwaitTask
+                    return {
+                        Name = lines[0]
+                        Strategy = lines[1] |> Strategy.Parse
+                        FirmScore = lines[2] |> uint
+                        Hand = lines |> Seq.skip 4 |> Hand.Deserialize
+                    }
+                })
+                |> Async.Parallel
+                |> Async.StartChild
+
+            let! deck = readDeckTask
+            let! discards = readDiscardsTask
+            let! event = readEventTask
+            let! players = readPlayerTasks
+
+            return
+                Ok {
+                    Event = event |> Event.Deserialize
+                    Players = players |> List.ofArray
+                    Deck = deck |> Deck.Deserialize
+                    Discards = discards |> Deck.Deserialize
                 }
-            })
-            |> Async.Parallel
-            |> Async.StartChild
-
-        let! deck = readDeckTask
-        let! discards = readDiscardsTask
-        let! event = readEventTask
-        let! players = readPlayerTasks
-
-        return {
-            Event = event |> Event.Deserialize
-            Players = players |> List.ofSeq
-            Deck = deck |> Deck.Deserialize
-            Discards = discards |> Deck.Deserialize
-        }
+        with :? FormatException as exn ->
+            return Error exn
     }
 
     let public WriteTimelineLazyFrom (directory: string) (startIndex: int) (timeline: Timeline) : Timeline = asyncSeq {
@@ -121,6 +127,69 @@ module public Persistence =
             |> Array.sortBy fst
 
         for _, instantDirectory in instantDirectories do
-            let! instant = ReadInstantAsync instantDirectory
-            yield instant
+            let! maybeInstant = ReadInstantAsync instantDirectory
+            yield maybeInstant |> Result.defaultWith (fun exn -> raise exn)
     }
+
+    /// <summary>
+    /// A view of a timeline directory as it fills: instants are published
+    /// atomically (staged then renamed by the writer), so once {directory}/{index}
+    /// exists its contents are complete and the store can tail the directory for
+    /// growth. Only lightweight metadata is held in memory plus a small cache of
+    /// recently viewed instants: memory stays flat no matter how long the timeline
+    /// grows, and there is no channel to the producer at all - the disk is the
+    /// only source.
+    /// </summary>
+    type public TimelineStore(directory: string, ?ingestDelayMilliseconds: int64, ?cacheCapacity: int) =
+        let ingestDelayMilliseconds = defaultArg ingestDelayMilliseconds 100L
+        let cacheCapacity = defaultArg cacheCapacity 64
+
+        let ingestPacer = Stopwatch.StartNew()
+        let roundEnds = ResizeArray<int>(16)
+        let cache = Dictionary<int, LinkedListNode<int * Instant>>(cacheCapacity)
+        let recency = LinkedList<int * Instant>()
+
+        let mutable count: int = 0
+        let mutable isComplete: bool = false
+
+        member _.Count = count
+        member _.RoundEnds = roundEnds
+
+        member _self.Read(index: int) : Async<Result<Instant, FormatException>> = async {
+            match cache.TryGetValue index with
+            | true, node ->
+                recency.Remove node
+                recency.AddFirst node
+                return node.Value |> snd |> Ok
+            | _, _ ->
+                let directory' = Path.Join(directory, string index)
+                let! maybeInstant = ReadInstantAsync directory'
+
+                match maybeInstant with
+                | Error _ -> ()
+                | Ok instant ->
+                    cache[index] <- recency.AddFirst((index, instant))
+                    if cache.Count > cacheCapacity then
+                        cache.Remove(fst recency.Last.Value) |> ignore
+                        recency.RemoveLast()
+
+                return maybeInstant
+        }
+
+        member self.Ingest() : Async<unit> = async {
+            if
+                ingestPacer.ElapsedMilliseconds >= ingestDelayMilliseconds
+                && Directory.Exists(Path.Join(directory, string count))
+                && not isComplete
+            then
+                match! self.Read count with
+                | Error _ -> ()
+                | Ok instant ->
+                    if instant.Event.IsRoundEnded then
+                        roundEnds.Add count
+                        if instant.Players |> List.exists (fun player -> player.FirmScore >= 200u) then
+                            isComplete <- true
+
+                count <- count + 1
+                ingestPacer.Restart()
+        }
