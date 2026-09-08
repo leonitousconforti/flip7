@@ -48,18 +48,18 @@ module public Persistence =
     }
 
     let public ReadInstantAsync (directory: string) : Async<Result<Instant, exn>> = async {
-        let toDirectory = fun file -> Path.Join(directory, file)
-        let read = fun file -> File.ReadAllLinesAsync(toDirectory file) |> Async.AwaitTask
-
-        let playerFiles =
-            Directory.GetFiles(directory, "player*.txt")
-            |> Array.sortBy (fun file -> int (Path.GetFileNameWithoutExtension file).[6..])
-
-        let! readDeckTask = read "deck.txt" |> Async.StartChild
-        let! readDiscardsTask = read "discards.txt" |> Async.StartChild
-        let! readEventTask = read "event.txt" |> Async.StartChild
-
         try
+            let toDirectory = fun file -> Path.Join(directory, file)
+            let read = fun file -> File.ReadAllLinesAsync(toDirectory file) |> Async.AwaitTask
+
+            let playerFiles =
+                Directory.GetFiles(directory, "player*.txt")
+                |> Array.sortBy (fun file -> int (Path.GetFileNameWithoutExtension file).[6..])
+
+            let! readDeckTask = read "deck.txt" |> Async.StartChild
+            let! readDiscardsTask = read "discards.txt" |> Async.StartChild
+            let! readEventTask = read "event.txt" |> Async.StartChild
+
             let! readPlayerTasks =
                 playerFiles
                 |> Array.map (fun file -> async {
@@ -216,22 +216,19 @@ module public Persistence =
                         | None -> ()
 
                         match frontier with
-                        | Some frontierTask when frontierTask.IsCompleted ->
+                        | Some frontierTask when frontierTask.IsCompletedSuccessfully ->
                             frontier <- None
 
-                            try
-                                match frontierTask.Result with
-                                | Error _ -> count <- count + 1
-                                | Ok instant ->
-                                    remember count instant
-                                    if instant.Event.IsRoundEnded then
-                                        roundEnds <- roundEnds @ [ count ]
-                                        if instant.Players |> List.exists (fun player -> player.FirmScore >= 200u) then
-                                            isComplete <- true
+                            match frontierTask.Result with
+                            | Error _ -> count <- count + 1
+                            | Ok instant ->
+                                remember count instant
+                                if instant.Event.IsRoundEnded then
+                                    roundEnds <- roundEnds @ [ count ]
+                                    if instant.Players |> List.exists (fun player -> player.FirmScore >= 200u) then
+                                        isComplete <- true
 
-                                    count <- count + 1
-                            with _ ->
-                                ()
+                                count <- count + 1
                         | _ -> ()
 
                         if pacer.ElapsedMilliseconds >= ingestDelayMilliseconds then
