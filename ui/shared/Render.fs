@@ -47,12 +47,13 @@ let public CaptionStyle (event: Event) : string list =
     | _ -> []
 
 /// Renders a progress bar for the timeline, with round boundaries and the
-/// current cursor position marked.
-let public ProgressBar (barWidth: int) (store: Persistence.TimelineStore) (cursor: int) : string =
-    let cellOf index = index * barWidth / store.Count
+/// current cursor position marked. Takes plain values rather than the store,
+/// so a single Snapshot per frame flows down through the whole render.
+let public ProgressBar (barWidth: int) (count: int) (roundEnds: int list) (cursor: int) : string =
+    let cellOf index = index * barWidth / count
     let cells = Array.create barWidth "─"
 
-    for index in store.RoundEnds do
+    for index in roundEnds do
         cells[cellOf index] <- "┊"
 
     cells[cellOf cursor] <- styled [ Ansi.BrightGreen ] "●"
