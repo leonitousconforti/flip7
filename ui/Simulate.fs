@@ -6,7 +6,12 @@ open FSharp.Control
 
 open Flip7
 
-let public Run (players: (string * Strategy) list) (seed: int option) (pace: int option) : Async<unit> = async {
+let public Run
+    (players: (string * Strategy) list)
+    (seed: int option)
+    (pace: int option)
+    (cacheCapacity: int option)
+    : Async<unit> = async {
     let now = DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss"
     let directory = IO.Path.Join("timelines", now)
     let replayName = $"simulated game {now}"
@@ -32,7 +37,7 @@ let public Run (players: (string * Strategy) list) (seed: int option) (pace: int
         |> AsyncSeq.iter ignore
         |> Async.StartChild
 
-    do! Replay.Run replayName directory pace
+    do! Replay.Run replayName directory pace cacheCapacity
     cancellation.Cancel()
     do! producer
 }
