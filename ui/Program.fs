@@ -17,15 +17,15 @@ type public ReplayArgs =
 
 [<RequireQualifiedAccess>]
 type public SimulateArgs =
-    | [<MainCommand; Mandatory>] Players of players: string list
+    | [<Mandatory>] Player of player: string
     | [<Unique>] Seed of seed: int
     | [<Unique>] Pace of milliseconds: int
 
     interface IArgParserTemplate with
         member this.Usage =
             match this with
-            | SimulateArgs.Players _ ->
-                "one to five players, each a name optionally with a strategy: \"Alice,HitUntilScore 25\""
+            | SimulateArgs.Player _ ->
+                "a player: a name, optionally with a strategy after a comma: \"Alice,HitUntilScore 25\"; repeat for each of up to five players"
             | SimulateArgs.Seed _ -> "seed for the game's randomness, so the run is reproducible"
             | SimulateArgs.Pace _ -> "milliseconds between ingested instants; lower fast-forwards the game"
 
@@ -53,6 +53,19 @@ type public Arguments =
             | Replay _ -> "replay a previously recorded game"
             | Simulate _ -> "simulate a full game and scrub through it as it unfolds"
             | Play _ -> "play interactively; AIs fill the seats the humans leave open"
+
+let parseSimulatePlayers (simulate: ParseResults<SimulateArgs>) =
+    simulate.GetResults <@ SimulateArgs.Player @>
+    |> List.map (fun player ->
+        let parts = player.Split ','
+        if parts.Length = 1 then
+            parts[0], Flip7.Strategy.Random
+        else
+
+        match Flip7.Strategy.TryParse parts[1] with
+        | Some strategy -> parts[0], strategy
+        | None -> simulate.Raise $"invalid strategy for {parts[0]}: {parts[1]}"
+    )
 
 // Every mode shares the same console lifecycle: cleared and cursor hidden on
 // the way in, cleared and cursor restored on the way out, even on a crash
@@ -84,7 +97,7 @@ let main args =
         let pace = replay.TryGetResult <@ ReplayArgs.Pace @>
         withConsole (fun () -> Replay.Run directory directory pace |> Async.RunSynchronously)
     | Some(Simulate simulate) ->
-        let players = simulate.GetResult <@ SimulateArgs.Players @>
+        let players = parseSimulatePlayers simulate
         let seed = simulate.TryGetResult <@ SimulateArgs.Seed @>
         let pace = simulate.TryGetResult <@ SimulateArgs.Pace @>
         withConsole (fun () -> Simulate.Run players seed pace)

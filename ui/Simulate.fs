@@ -6,23 +6,10 @@ open FSharp.Control
 
 open Flip7
 
-let public Run (playerNamesAndStrategies: string list) : unit =
-    let parse (nameAndStrategy: string) =
-        let parts = nameAndStrategy.Split ","
-        let name = parts[0]
-        let strategy =
-            if parts.Length > 1 then
-                Strategy.Parse parts[1]
-            else
-                Strategy.Random
-
-        name, strategy
-
+let public Run (players: (string * Strategy) list) (seed: int option) (pace: int option) : unit =
     let now = DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss"
     let directory = IO.Path.Join("timelines", now)
     let replayName = $"simulated game {now}"
-
-    let players = playerNamesAndStrategies |> List.map parse
 
     if players.Length <= 0 then
         raise (ArgumentException "Please provide at least one player name as a command-line argument.")
@@ -31,14 +18,19 @@ let public Run (playerNamesAndStrategies: string list) : unit =
     if players |> List.map fst |> List.distinct |> List.length <> players.Length then
         raise (ArgumentException "Player names must be unique.")
 
+    let random =
+        match seed with
+        | Some value -> Random(value)
+        | None -> Random()
+
     use cancellation = new Threading.CancellationTokenSource()
     let producer =
-        Timeline.SimulateWith (Random()) players
+        Timeline.SimulateWith random players
         |> Persistence.WriteTimelineLazy directory
         |> AsyncSeq.takeWhile (fun _ -> not cancellation.IsCancellationRequested)
         |> AsyncSeq.iter ignore
         |> Async.StartAsTask
 
-    Replay.Run replayName directory
+    Replay.Run replayName directory pace |> Async.RunSynchronously
     cancellation.Cancel()
     producer.Wait()
