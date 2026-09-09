@@ -119,7 +119,7 @@ let public playerRows (instant: Instant) : string list =
         playerRow probabilityToBust highlighted dimmed annotation player
     )
 
-let private Frame (status: string) (caption: string) (content: string list) (bottom: string) (footer: string) : unit =
+let public Frame (status: string) (caption: string) (content: string list) (bottom: string) (footer: string) : unit =
     let rule = String.replicate width "─"
 
     System.Console.SetCursorPosition(0, 0)

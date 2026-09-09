@@ -209,12 +209,14 @@ let public Render (editor: Model) : unit =
         | _ -> "cdf"
         |> centered (cdf |> Map.keys |> Seq.length)
 
-    printfn "%s" (String.replicate 80 "─")
-    printfn "%s" (ec + pdf3[0] + gap + cdf3[0])
-    printfn "%s" (ev + pdf3[1] + gap + cdf3[1])
-    printfn "%s" (var + pdf3[2] + gap + cdf3[2])
-    printfn "%s" (std + pdfTitle + gap + cdfTitle)
-    printfn "%s" (String.replicate 80 "─")
+    let caption = std + pdfTitle + gap + cdfTitle
+    let status =
+        [
+            ec + pdf3[0] + gap + cdf3[0]
+            ev + pdf3[1] + gap + cdf3[1]
+            var + pdf3[2] + gap + cdf3[2]
+        ]
+        |> String.concat "\n"
 
     let renderPlayer (isFinished: bool) (player: Strategy.StrategyPlayer) =
         let probabilityToBust =
@@ -227,25 +229,28 @@ let public Render (editor: Model) : unit =
             (isFinished || Hand.IsBust player.Hand)
             (if isFinished then " (done)" else "")
             player
-        |> printfn "%s"
 
-    for player in editor.Active do
-        renderPlayer false player
+    let content = [
+        for player in editor.Active do
+            yield renderPlayer false player
+        for player in editor.Finished do
+            yield renderPlayer true player
+    ]
 
-    for player in editor.Finished do
-        renderPlayer true player
+    let bottom = ""
+    let footer =
+        match
+            editor.Active
+            |> List.filter (fun player -> Hand.IsBust player.Hand)
+            |> List.map (fun player -> player.Name)
+        with
+        | busted when not (List.isEmpty busted) ->
+            $"""{busted |> String.concat ", "} cannot stay busted while still in the round"""
+            |> centered 80
+            |> styled [ Ansi.BrightRed ]
+        | _ ->
+            "[↕↔] cursor   [+/-] deck   [cards] deal   [backspace] undo   [?] help   [enter] resume"
+            |> centered 80
+            |> styled [ Ansi.Dim; Ansi.Cyan ]
 
-    match
-        editor.Active
-        |> List.filter (fun player -> Hand.IsBust player.Hand)
-        |> List.map (fun player -> player.Name)
-    with
-    | busted when not (List.isEmpty busted) ->
-        $"""{busted |> String.concat ", "} cannot stay busted while still in the round"""
-        |> centered 80
-        |> styled [ Ansi.BrightRed ]
-    | _ ->
-        "[↕↔] cursor   [+/-] deck   [cards] deal   [backspace] undo   [?] help   [enter] resume"
-        |> centered 80
-        |> styled [ Ansi.Dim; Ansi.Cyan ]
-    |> printf "%s"
+    Render.Frame status caption content bottom footer
