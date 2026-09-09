@@ -65,7 +65,7 @@ let private statusLine (left: string) (right: string) : string =
     let middle = String.replicate (max 0 (width - leftWidth - rightWidth)) " "
     left + middle + right
 
-let private playerRow
+let public playerRow
     (probabilityToBust: float)
     (highlighted: bool)
     (dimmed: bool)
@@ -213,3 +213,11 @@ let public RenderLoading
         |> styled [ Ansi.Dim; Ansi.Cyan ]
 
     Frame status caption content bottom footer
+
+let public RenderPlay (round: int) (instant: Instant) (footer: string) : unit =
+    Frame
+        (statusLine "play: first to 200pts wins" $"round {round}")
+        (string instant.Event |> centered width |> styled (captionStyle instant.Event))
+        (playerRows instant)
+        ""
+        footer
