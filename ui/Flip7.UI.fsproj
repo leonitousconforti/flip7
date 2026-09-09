@@ -12,6 +12,7 @@
     <Compile Include="shared/Mvu.fs" />
 
     <Compile Include="Replay.fs" />
+    <Compile Include="Editor.fs" />
     <Compile Include="Play.fs" />
     <Compile Include="Simulate.fs" />
 
