@@ -135,7 +135,7 @@ module public Persistence =
 
     type private TimelineStoreMessage =
         | Read of index: int * reply: AsyncReplyChannel<Result<Instant, exn>>
-        | Snapshot of reply: AsyncReplyChannel<int * bool * int list>
+        | Snapshot of reply: AsyncReplyChannel<int * bool * int array>
 
     /// <summary>
     /// A view of a timeline directory as it fills: instants are published
@@ -178,7 +178,7 @@ module public Persistence =
 
                     let mutable count = 0
                     let mutable isComplete = false
-                    let mutable roundEnds: int list = []
+                    let mutable roundEnds: int array = ResizeArray(16).ToArray()
 
                     let read (index: int) : Async<Result<Instant, exn>> =
                         ReadInstantAsync(Path.Join(directory, string index))
@@ -224,7 +224,7 @@ module public Persistence =
                             | Ok instant ->
                                 remember count instant
                                 if instant.Event.IsRoundEnded then
-                                    roundEnds <- roundEnds @ [ count ]
+                                    roundEnds <- Array.append roundEnds [| count |]
                                     if instant.Players |> List.exists (fun player -> player.FirmScore >= 200u) then
                                         isComplete <- true
 
@@ -259,7 +259,7 @@ module public Persistence =
             return roundEnds
         }
 
-        member _.Snapshot: Async<int * bool * int list> = agent.PostAndAsyncReply Snapshot
+        member _.Snapshot: Async<int * bool * int array> = agent.PostAndAsyncReply Snapshot
         member _.Read(index: int) : Async<Result<Instant, exn>> =
             agent.PostAndAsyncReply(fun channel -> Read(index, channel))
 
@@ -267,3 +267,23 @@ module public Persistence =
             member _.Dispose() =
                 cts.Cancel()
                 cts.Dispose()
+
+        // The round number (starting at 1) of the instant at the cursor, given the
+        // ascending indices of the RoundEnded instants seen so far. A RoundEnded
+        // instant belongs to the round it closes.
+        static member inline public RoundOf (roundEnds: int array) (cursor: int) : int =
+            1 + (roundEnds |> Array.filter (fun index -> index < cursor) |> Array.length)
+
+        // The index of the nearest RoundEnded instant strictly after the cursor, or
+        // the newest known index when that round has not ended yet
+        static member inline public NextRoundEnded (roundEnds: int array) (newest: int) (cursor: int) : int =
+            roundEnds
+            |> Array.tryFind (fun index -> index > cursor)
+            |> Option.defaultValue newest
+
+        // The index of the nearest RoundEnded instant strictly before the cursor, or
+        // the start of the timeline when there is none
+        static member inline public PrevRoundEnded (roundEnds: int array) (cursor: int) : int =
+            roundEnds
+            |> Array.tryFindBack (fun index -> index < cursor)
+            |> Option.defaultValue 0
