@@ -26,6 +26,10 @@ type public Program<'model, 'msg, 'effect, 'key when 'msg: equality and 'key: eq
     Effects: 'model -> 'model -> 'effect list
     /// Starts one effect, posting whatever it produces back as a message
     Execute: ('msg -> unit) -> 'effect -> unit
+    /// Connects external message sources: called once with dispatch before
+    /// the first message, so a background process born outside the loop can
+    /// post into it for the program's whole life
+    Subscribe: ('msg -> unit) -> unit
     /// What the screen is a function of: rendered only when this changes
     ViewKey: 'model -> 'key
     View: 'model -> unit
@@ -46,6 +50,7 @@ let public run (program: Program<'model, 'msg, 'effect, 'key>) : Async<unit> = a
 
     MailboxProcessor.Start(fun inbox ->
         let execute = program.Execute inbox.Post
+        program.Subscribe inbox.Post
 
         let rec loop (model: 'model) (viewed: 'key option) = async {
             let! msg = inbox.Receive()

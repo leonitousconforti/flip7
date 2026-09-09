@@ -153,6 +153,7 @@ let public Run (source: string) (directory: string) (pace: int option) (cacheCap
             Update = update
             Effects = effects
             Execute = execute
+            Subscribe = ignore
             ViewKey = viewKey
             View = view source
             Quit = fun model -> model.Quit
