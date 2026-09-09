@@ -65,6 +65,40 @@ let private statusLine (left: string) (right: string) : string =
     let middle = String.replicate (max 0 (width - leftWidth - rightWidth)) " "
     left + middle + right
 
+let private playerRow
+    (probabilityToBust: float)
+    (highlighted: bool)
+    (dimmed: bool)
+    (annotation: string)
+    (player: Strategy.StrategyPlayer)
+    : string =
+    let isBusted = Hand.IsBust player.Hand
+    let tentativeScore = if isBusted then 0u else Hand.Score player.Hand
+
+    let preamble =
+        sprintf
+            "%s%s %s (%dpts + %dpts?, %.2f%%): "
+            player.Name
+            annotation
+            (bustEmoji probabilityToBust)
+            player.FirmScore
+            tentativeScore
+            probabilityToBust
+
+    ((String.replicate 40 " ", preamble.PadRight 40, String.replicate 40 " "), player.Hand)
+    ||> List.fold (fun (topRow, midRow, botRow) card ->
+        let c = (cardLabel card).PadRight(2).PadLeft(3)
+        topRow + "┌───┐", midRow + $"│{c}│", botRow + "└───┘"
+    )
+    |> fun (top, mid, bot) ->
+        let styles = if highlighted then [ Ansi.Inverse ] else []
+        styled styles top, styled styles mid, styled styles bot
+    |> fun (top, mid, bot) ->
+        let styles = if dimmed then [ Ansi.Dim; Ansi.Italic ] else []
+        styled styles top, styled styles mid, styled styles bot
+    |> fun (top, mid, bot) -> [ padded top; padded mid; padded bot ]
+    |> String.concat "\n"
+
 let private playerRows (instant: Instant) : string list =
     let actor = instant.Event.Actor()
 
@@ -78,35 +112,14 @@ let private playerRows (instant: Instant) : string list =
             Simulation.probabilityToBust instant.Deck instant.Discards player.Hand onlyPlayerNotBusted
             * 100.0
 
-        let isActor = actor = Some player.Name
-        let isBusted = Hand.IsBust player.Hand
-        let tentativeScore = if isBusted then 0u else Hand.Score player.Hand
-
-        let preamble =
-            sprintf
-                "%s %s (%dpts + %dpts?, %.2f%%): "
-                player.Name
-                (bustEmoji probabilityToBust)
-                player.FirmScore
-                tentativeScore
-                probabilityToBust
-
-        ((String.replicate 40 " ", preamble.PadRight 40, String.replicate 40 " "), player.Hand)
-        ||> List.fold (fun (topRow, midRow, botRow) card ->
-            let c = (cardLabel card).PadRight(2).PadLeft(3)
-            topRow + "┌───┐", midRow + $"│{c}│", botRow + "└───┘"
-        )
-        |> fun (top, mid, bot) ->
-            let styles = if isActor then [ Ansi.Inverse ] else []
-            styled styles top, styled styles mid, styled styles bot
-        |> fun (top, mid, bot) ->
-            let styles = if isBusted then [ Ansi.Dim; Ansi.Italic ] else []
-            styled styles top, styled styles mid, styled styles bot
-        |> fun (top, mid, bot) -> [ padded top; padded mid; padded bot ]
-        |> String.concat "\n"
+        let annotation = ""
+        let highlighted = actor = Some player.Name
+        let dimmed = Hand.IsBust player.Hand
+        let player = player.ToStrategyPlayer()
+        playerRow probabilityToBust highlighted dimmed annotation player
     )
 
-let public Frame (status: string) (caption: string) (players: string list) (bottom: string) (footer: string) : unit =
+let private Frame (status: string) (caption: string) (content: string list) (bottom: string) (footer: string) : unit =
     let rule = String.replicate width "─"
 
     System.Console.SetCursorPosition(0, 0)
@@ -115,10 +128,10 @@ let public Frame (status: string) (caption: string) (players: string list) (bott
     printfn "%s" (padded caption)
     printfn "%s" (padded rule)
 
-    for rows in players do
+    for rows in content do
         printfn "%s" rows
 
-    for _ in 1 .. (playerSlots - List.length players) * 3 do
+    for _ in 1 .. (playerSlots - List.length content) * 3 do
         printfn "%s" (padded "")
 
     printfn "%s" (padded rule)
@@ -135,8 +148,11 @@ let public RenderTable
     let knownRounds = Persistence.TimelineStore.RoundOf roundEnds (count - 1)
     let growing = if isComplete then "" else "+"
 
-    let status =
-        statusLine $"replay: {source}" $"round {round}/{knownRounds}{growing}   instant {cursor + 1}/{count}{growing}"
+    let statusRight = $"replay: {source}"
+    let statusLeftRound = $"round {round}/{knownRounds}{growing}"
+    let statusLeftCursor = $"instant {cursor + 1}/{count}{growing}"
+    let status = statusLine statusRight $"{statusLeftRound}   {statusLeftCursor}"
+
     let caption =
         if isComplete && cursor = count - 1 then
             let winner = instant.Players |> List.maxBy (fun player -> player.FirmScore)
@@ -147,14 +163,14 @@ let public RenderTable
         else
             string instant.Event |> centered width |> styled (captionStyle instant.Event)
 
-    let players = playerRows instant
+    let content = playerRows instant
     let bottom = progressBar count roundEnds cursor
     let footer =
         "[↔] scrub   [↕] jump rounds   [home/end] start/end   [q/esc] quit"
         |> centered width
         |> styled [ Ansi.Dim; Ansi.Cyan ]
 
-    Frame status caption players bottom footer
+    Frame status caption content bottom footer
 
 let public RenderError
     (source: string)
@@ -168,14 +184,14 @@ let public RenderError
         |> centered width
         |> styled [ Ansi.BrightRed ]
 
-    let players = []
+    let content = []
     let bottom = progressBar count roundEnds cursor
     let footer =
         "[↔] scrub   [↕] jump rounds   [home/end] start/end   [q/esc] quit"
         |> centered width
         |> styled [ Ansi.Dim; Ansi.Cyan ]
 
-    Frame status caption players bottom footer
+    Frame status caption content bottom footer
 
 let public RenderLoading
     (source: string)
@@ -189,11 +205,11 @@ let public RenderLoading
         |> centered width
         |> styled [ Ansi.Dim; Ansi.Cyan ]
 
-    let players = []
+    let content = []
     let bottom = progressBar count roundEnds cursor
     let footer =
         "[↔] scrub   [↕] jump rounds   [home/end] start/end   [q/esc] quit"
         |> centered width
         |> styled [ Ansi.Dim; Ansi.Cyan ]
 
-    Frame status caption players bottom footer
+    Frame status caption content bottom footer
