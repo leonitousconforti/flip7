@@ -10,6 +10,11 @@ namespace Flip7
 /// <item>Multiplier: multiplies the sum of the other points.</item>
 /// </list>
 /// </summary>
+/// <remarks>
+/// Comparison orders buckets by their Total while equality remains structural,
+/// so two different bucket mixes can compare as equal without being equal: do
+/// not use ScoreBuckets as a key in ordered collections.
+/// </remarks>
 [<CustomEquality>]
 [<CustomComparison>]
 type public ScoreBuckets = {
@@ -20,9 +25,10 @@ type public ScoreBuckets = {
 } with
 
     /// <summary>
-    /// Calculates the total score from the buckets by adding all the value
-    /// points, modifier points, and bonus points together before multiplying by
-    /// the multiplier.
+    /// Calculates the total score from the buckets: the value points are
+    /// multiplied by the multiplier, then the modifier points and bonus points
+    /// are added on top - the multiplier doubles only the value cards, as in
+    /// the official scoring.
     /// </summary>
     static member public Total(scoreBuckets: ScoreBuckets) : uint =
         scoreBuckets.ValuePoints * scoreBuckets.Multiplier
@@ -63,7 +69,7 @@ type public ScoreBuckets = {
         ModifierPoints = a.ModifierPoints - b.ModifierPoints
         ValuePoints = a.ValuePoints - b.ValuePoints
         BonusPoints = a.BonusPoints - b.BonusPoints
-        Multiplier = a.Multiplier / b.Multiplier
+        Multiplier = max 1u (a.Multiplier / b.Multiplier)
     }
 
     override self.GetHashCode() : int =

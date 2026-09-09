@@ -96,6 +96,11 @@ module public Deck =
             | _ -> raise (System.FormatException $"Invalid line format: {line}")
         )
         |> Map.ofSeq
+        |> fun deck ->
+            if Map.count deck <> Map.count Full then
+                raise (System.FormatException "Invalid deck - expected a count for every card")
+            else
+                deck
 
     /// <summary>
     /// Tries to parse a deck from an array of lines, where each line is in

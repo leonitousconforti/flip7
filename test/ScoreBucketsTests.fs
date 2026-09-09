@@ -68,6 +68,12 @@ let ``Subtraction subtracts points and divides multipliers`` () =
     Assert.Equal(2u, result.Multiplier)
 
 [<Fact>]
+let ``Subtraction never produces a zero multiplier`` () =
+    let a = { ScoreBuckets.Zero with Multiplier = 1u }
+    let b = { ScoreBuckets.Zero with Multiplier = 2u }
+    Assert.Equal(1u, (a - b).Multiplier)
+
+[<Fact>]
 let ``Equal score buckets are equal`` () =
     let a = {
         ModifierPoints = 2u

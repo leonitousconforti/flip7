@@ -74,9 +74,11 @@ module Simulation =
     let public Issues (deck: Deck) (discards: Deck) (hands: Hand seq) : string seq =
         let handsIssues: string seq =
             hands
-            |> Seq.map (fun hand -> hand |> List.filter (fun card -> card = ActionCard Card.SecondChance))
-            |> Seq.where (List.length >> (<) 1)
             |> Seq.indexed
+            |> Seq.map (fun (index, hand) ->
+                index, hand |> List.filter (fun card -> card = ActionCard Card.SecondChance)
+            )
+            |> Seq.where (snd >> List.length >> (<) 1)
             |> Seq.map (fun (index, secondChances) ->
                 $"Player {index} has {List.length secondChances} second chances in their hand, maximum is 1"
             )
@@ -98,8 +100,6 @@ module Simulation =
             let actual = deckCount + discardsCount + handCount
 
             seq {
-                yield! handsIssues
-
                 if deckCount > expected then
                     yield $"Deck {cannot}, found {deckCount} of {card}"
                 if discardsCount > expected then
@@ -110,3 +110,4 @@ module Simulation =
                     yield $"Card count mismatch for {card}: expected {expected}, found {actual}"
             }
         )
+        |> Seq.append handsIssues

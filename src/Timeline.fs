@@ -111,9 +111,9 @@ module public Event =
         | "RoundEnded" :: scores ->
             scores
             |> List.map (fun line ->
-                match line.Split ": " with
-                | [| name; score |] -> name, uint score
-                | _ -> raise (System.FormatException $"Invalid score line format: {line}")
+                match line.LastIndexOf(": ", System.StringComparison.Ordinal) with
+                | -1 -> raise (System.FormatException $"Invalid score line format: {line}")
+                | index -> line.Substring(0, index), uint (line.Substring(index + 2))
             )
             |> Map.ofList
             |> RoundEnded

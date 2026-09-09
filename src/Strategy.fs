@@ -52,24 +52,26 @@ type public Strategy =
         let readUint (value: string) =
             System.UInt32.Parse(value, System.Globalization.CultureInfo.InvariantCulture)
 
-        match string.Split ' ' with
-        | [| "AlwaysHits" |] -> AlwaysHits
-        | [| "AlwaysStands" |] -> AlwaysStands
-        | [| "RandomWithProbability"; probability |] -> RandomWithProbability(readFloat probability)
-        | [| "HitUntilScore"; threshold |] -> HitUntilScore(readUint threshold)
-        | [| "HitUntilNumCards"; threshold |] -> HitUntilNumCards(readUint threshold)
-        | [| "HitUntilBustProbability"; threshold |] -> HitUntilBustProbability(readFloat threshold)
-        | [| "HitUntilNaiveBustProbability"; threshold |] -> HitUntilNaiveBustProbability(readFloat threshold)
-        | [| "SoftHitUntilScore"; threshold; temp |] -> SoftHitUntilScore(readUint threshold, readFloat temp)
-        | [| "HitUntilTotal"; target |] -> HitUntilTotal(readUint target)
-        | [| "HitUntilUniqueValues"; threshold |] -> HitUntilUniqueValues(readUint threshold)
-        | [| "ChasesFlip7"; score; uniques |] -> ChasesFlip7(readUint score, readUint uniques)
-        | [| "EmboldenedBySecondChance"; threshold |] -> EmboldenedBySecondChance(readUint threshold)
-        | [| "HitWhileBehindLeader"; margin |] -> HitWhileBehindLeader(readUint margin)
-        | [| "StandsAfterTurn"; turns |] -> StandsAfterTurn(readUint turns)
-        | [| "MaximizesExpectedValue" |] -> MaximizesExpectedValue
-        | [| "Custom"; name |] -> Custom name
-        | _ -> raise (System.FormatException $"Invalid strategy string: {string}")
+        if string.StartsWith("Custom ", System.StringComparison.Ordinal) then
+            Custom(string.Substring("Custom ".Length))
+        else
+            match string.Split ' ' with
+            | [| "AlwaysHits" |] -> AlwaysHits
+            | [| "AlwaysStands" |] -> AlwaysStands
+            | [| "RandomWithProbability"; probability |] -> RandomWithProbability(readFloat probability)
+            | [| "HitUntilScore"; threshold |] -> HitUntilScore(readUint threshold)
+            | [| "HitUntilNumCards"; threshold |] -> HitUntilNumCards(readUint threshold)
+            | [| "HitUntilBustProbability"; threshold |] -> HitUntilBustProbability(readFloat threshold)
+            | [| "HitUntilNaiveBustProbability"; threshold |] -> HitUntilNaiveBustProbability(readFloat threshold)
+            | [| "SoftHitUntilScore"; threshold; temp |] -> SoftHitUntilScore(readUint threshold, readFloat temp)
+            | [| "HitUntilTotal"; target |] -> HitUntilTotal(readUint target)
+            | [| "HitUntilUniqueValues"; threshold |] -> HitUntilUniqueValues(readUint threshold)
+            | [| "ChasesFlip7"; score; uniques |] -> ChasesFlip7(readUint score, readUint uniques)
+            | [| "EmboldenedBySecondChance"; threshold |] -> EmboldenedBySecondChance(readUint threshold)
+            | [| "HitWhileBehindLeader"; margin |] -> HitWhileBehindLeader(readUint margin)
+            | [| "StandsAfterTurn"; turns |] -> StandsAfterTurn(readUint turns)
+            | [| "MaximizesExpectedValue" |] -> MaximizesExpectedValue
+            | _ -> raise (System.FormatException $"Invalid strategy string: {string}")
 
     static member TryParse(string: string) : Strategy option =
         try
@@ -198,7 +200,7 @@ module public Strategy =
             | Custom name ->
                 raise (
                     System.InvalidOperationException
-                        $"Custom ${name} strategy is decided via `Timeline.SimulateWithDecider`, not by DecideWith"
+                        $"Custom {name} strategy is decided via `Timeline.SimulateWithDecider`, not by DecideWith"
                 )
             |> async.Return
 
