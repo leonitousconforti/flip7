@@ -4,30 +4,6 @@ open System
 
 open Flip7
 
-// Maps a key to the cursor position it moves to, or None to quit. Pure, so
-// the navigation rules can be exercised on their own.
-let private Move (roundEnds: int list) (newest: int) (cursor: int) (key: ConsoleKey) : int option =
-    match key with
-    | ConsoleKey.Q
-    | ConsoleKey.Escape -> None
-    | ConsoleKey.LeftArrow -> Some(max 0 (cursor - 1))
-    | ConsoleKey.RightArrow -> Some(min newest (cursor + 1))
-    | ConsoleKey.UpArrow
-    | ConsoleKey.PageUp -> Some(Persistence.TimelineStore.NextRoundEnded roundEnds newest cursor)
-    | ConsoleKey.DownArrow
-    | ConsoleKey.PageDown -> Some(Persistence.TimelineStore.PrevRoundEnded roundEnds cursor)
-    | ConsoleKey.End -> Some newest
-    | ConsoleKey.Home -> Some 0
-    | _ -> Some cursor
-
-// The viewer is model-view-update: every occurrence - a key, a snapshot
-// round trip landing, a frame read landing, a heartbeat - arrives as a
-// message, update folds it into the model, and the screen is a function of
-// the model. Effects are not returned by update; they are derived from how
-// the model changed (see effects below), so a request and the bookkeeping
-// that tracks it are one fact that cannot drift apart. The runtime at the
-// bottom owns all of the impurity.
-
 type private Model = {
     Cursor: int
     Snapshot: int * bool * int list
@@ -43,9 +19,18 @@ type private Model = {
     // heartbeat, so a stalled store leaves the UI live on the last-known
     // values instead of locked up.
     Refreshing: bool
-    Spin: int
     Quit: bool
-}
+} with
+    // Nothing in flight and nothing on screen; the first heartbeat requests the
+    // first snapshot through the same path as every later one
+    static member Init: Model = {
+        Cursor = 0
+        Snapshot = 0, false, []
+        Frame = None
+        Reading = None
+        Refreshing = false
+        Quit = false
+    }
 
 type private Msg =
     | Pressed of ConsoleKey
@@ -57,48 +42,47 @@ type private Effect =
     | RefreshSnapshot
     | ReadFrame of index: int
 
-// Nothing in flight and nothing on screen; the first heartbeat requests the
-// first snapshot through the same path as every later one
-let private init: Model = {
-    Cursor = 0
-    Snapshot = 0, false, []
-    Frame = None
-    Reading = None
-    Refreshing = false
-    Spin = 0
-    Quit = false
-}
+let private moveCursor (roundEnds: int list) (newest: int) (cursor: int) (key: ConsoleKey) : int option =
+    match key with
+    | ConsoleKey.Q -> None
+    | ConsoleKey.Escape -> None
+    | ConsoleKey.LeftArrow -> Some(max 0 (cursor - 1))
+    | ConsoleKey.RightArrow -> Some(min newest (cursor + 1))
+    | ConsoleKey.UpArrow -> Some(Persistence.TimelineStore.NextRoundEnded roundEnds newest cursor)
+    | ConsoleKey.PageUp -> Some(Persistence.TimelineStore.NextRoundEnded roundEnds newest cursor)
+    | ConsoleKey.DownArrow -> Some(Persistence.TimelineStore.PrevRoundEnded roundEnds cursor)
+    | ConsoleKey.PageDown -> Some(Persistence.TimelineStore.PrevRoundEnded roundEnds cursor)
+    | ConsoleKey.End -> Some newest
+    | ConsoleKey.Home -> Some 0
+    | _ -> Some cursor
 
 let private update (msg: Msg) (model: Model) : Model =
     let count, _, roundEnds = model.Snapshot
 
     match msg with
     | Pressed key ->
-        match Move roundEnds (count - 1) model.Cursor key with
+        match moveCursor roundEnds (count - 1) model.Cursor key with
         | None -> { model with Quit = true }
         | Some cursor ->
-            // An empty timeline clamps every move back to the start
             let cursor = max 0 cursor
-
             if cursor = model.Cursor then
                 model
             else
-                match model.Reading with
-                | None -> {
-                    model with
-                        Cursor = cursor
-                        Frame = None
-                        Reading = Some cursor
-                  }
-                | Some _ -> { model with Cursor = cursor; Frame = None }
+
+            match model.Reading with
+            | None -> {
+                model with
+                    Cursor = cursor
+                    Frame = None
+                    Reading = Some cursor
+              }
+            | Some _ -> { model with Cursor = cursor; Frame = None }
 
     | Refreshed((count', isComplete', _) as snapshot) ->
         let model' = { model with Snapshot = snapshot; Refreshing = false }
-
         if count' = 0 && isComplete' then
             { model' with Quit = true }
         elif count' > 0 && model.Frame.IsNone && model.Reading.IsNone then
-            // The first instants arrived: fetch the cursor's frame
             { model' with Reading = Some model.Cursor }
         else
             model'
@@ -107,23 +91,10 @@ let private update (msg: Msg) (model: Model) : Model =
         if index = model.Cursor then
             { model with Reading = None; Frame = Some result }
         else
-            // A read for a frame the cursor has since left: its result is
-            // already in the store's cache, so fetch the frame for wherever
-            // the cursor is now
             { model with Reading = Some model.Cursor }
 
-    | Tick ->
-        let spin =
-            if count > 0 && model.Frame.IsNone then
-                model.Spin + 1
-            else
-                model.Spin
+    | Tick -> { model with Refreshing = true }
 
-        { model with Spin = spin; Refreshing = true }
-
-// The one place where in-flight bookkeeping becomes work: a read starts
-// exactly when Reading changes to a new index, and a refresh starts exactly
-// when Refreshing turns on
 let private effects (before: Model) (after: Model) : Effect list = [
     if after.Reading <> before.Reading then
         match after.Reading with
@@ -134,10 +105,13 @@ let private effects (before: Model) (after: Model) : Effect list = [
         RefreshSnapshot
 ]
 
-// What the screen is a function of: the runtime renders only when this
-// changes, so bookkeeping like Refreshing never causes a redraw
+let private spin () : int =
+    int (Environment.TickCount64 / int64 Mvu.pollMilliseconds)
+
 let private viewKey (model: Model) =
-    model.Cursor, model.Snapshot, model.Frame, model.Spin
+    let count, _, _ = model.Snapshot
+    let loading = count > 0 && model.Frame.IsNone
+    model.Cursor, model.Snapshot, model.Frame, (if loading then spin () else 0)
 
 let private view (source: string) (model: Model) : unit =
     let count, _, _ = model.Snapshot
@@ -146,11 +120,17 @@ let private view (source: string) (model: Model) : unit =
         match model.Frame with
         | Some(Ok instant) -> RenderTable source model.Snapshot model.Cursor instant
         | Some(Error error) -> RenderError source model.Snapshot model.Cursor error
-        | None -> RenderLoading source model.Snapshot model.Cursor model.Spin
+        | None -> RenderLoading source model.Snapshot model.Cursor (spin ())
 
-let public Run (source: string) (directory: string) (pace: int option) : Async<unit> = async {
+let public Run (source: string) (directory: string) (pace: int option) (cacheCapacity: int option) : Async<unit> = async {
+    let ingestDelayMilliseconds = pace |> Option.map int64
+
     use store =
-        new Persistence.TimelineStore(directory, ?ingestDelayMilliseconds = (pace |> Option.map int64))
+        new Persistence.TimelineStore(
+            directory,
+            ?ingestDelayMilliseconds = ingestDelayMilliseconds,
+            ?cacheCapacity = cacheCapacity
+        )
 
     let execute (dispatch: Msg -> unit) (effect: Effect) : unit =
         match effect with
@@ -169,7 +149,7 @@ let public Run (source: string) (directory: string) (pace: int option) : Async<u
 
     do!
         Mvu.run {
-            Init = init
+            Init = Model.Init
             Update = update
             Effects = effects
             Execute = execute
