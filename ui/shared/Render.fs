@@ -58,7 +58,7 @@ let private captionStyle (event: Event) : string list =
 /// Renders a progress bar for the timeline, with round boundaries and the
 /// current cursor position marked. Takes plain values rather than the store,
 /// so a single Snapshot per frame flows down through the whole render.
-let private progressBar (count: int) (roundEnds: int array) (cursor: int) : string =
+let private progressBar (count: int) (roundEnds: int list) (cursor: int) : string =
     let cellOf index = index * barWidth / count
     let cells = Array.create barWidth "─"
 
@@ -70,7 +70,7 @@ let private progressBar (count: int) (roundEnds: int array) (cursor: int) : stri
 
 let public RenderTable
     (source: string)
-    ((count, isComplete, roundEnds): int * bool * int array)
+    ((count, isComplete, roundEnds): int * bool * int list)
     (cursor: int)
     (instant: Instant)
     : unit =
@@ -155,7 +155,7 @@ let public RenderTable
 
 let public RenderError
     (source: string)
-    ((count, _isComplete, roundEnds): int * bool * int array)
+    ((count, _isComplete, roundEnds): int * bool * int list)
     (cursor: int)
     (error: exn)
     : unit =
@@ -193,7 +193,7 @@ let public RenderError
 
 let public RenderLoading
     (source: string)
-    ((count, _isComplete, roundEnds): int * bool * int array)
+    ((count, _isComplete, roundEnds): int * bool * int list)
     (cursor: int)
     (spin: int)
     : unit =
