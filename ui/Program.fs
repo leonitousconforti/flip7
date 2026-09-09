@@ -100,7 +100,7 @@ let main args =
         let players = parseSimulatePlayers simulate
         let seed = simulate.TryGetResult <@ SimulateArgs.Seed @>
         let pace = simulate.TryGetResult <@ SimulateArgs.Pace @>
-        withConsole (fun () -> Simulate.Run players seed pace)
+        withConsole (fun () -> Simulate.Run players seed pace |> Async.RunSynchronously)
     | Some(Play play) ->
         let names = play.GetResult <@ PlayArgs.Names @>
         let seed = play.TryGetResult <@ PlayArgs.Seed @>

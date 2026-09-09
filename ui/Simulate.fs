@@ -6,7 +6,7 @@ open FSharp.Control
 
 open Flip7
 
-let public Run (players: (string * Strategy) list) (seed: int option) (pace: int option) : unit =
+let public Run (players: (string * Strategy) list) (seed: int option) (pace: int option) : Async<unit> = async {
     let now = DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss"
     let directory = IO.Path.Join("timelines", now)
     let replayName = $"simulated game {now}"
@@ -24,13 +24,15 @@ let public Run (players: (string * Strategy) list) (seed: int option) (pace: int
         | None -> Random()
 
     use cancellation = new Threading.CancellationTokenSource()
-    let producer =
+
+    let! producer =
         Timeline.SimulateWith random players
         |> Persistence.WriteTimelineLazy directory
         |> AsyncSeq.takeWhile (fun _ -> not cancellation.IsCancellationRequested)
         |> AsyncSeq.iter ignore
-        |> Async.StartAsTask
+        |> Async.StartChild
 
-    Replay.Run replayName directory pace |> Async.RunSynchronously
+    do! Replay.Run replayName directory pace
     cancellation.Cancel()
-    producer.Wait()
+    do! producer
+}
