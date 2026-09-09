@@ -9,10 +9,10 @@
     <Compile Include="shared/Ansi.fs" />
     <Compile Include="shared/Sparkline.fs" />
     <Compile Include="shared/Render.fs" />
+    <Compile Include="shared/Editor.fs" />
     <Compile Include="shared/Mvu.fs" />
 
     <Compile Include="Replay.fs" />
-    <Compile Include="Editor.fs" />
     <Compile Include="Play.fs" />
     <Compile Include="Simulate.fs" />
 

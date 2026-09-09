@@ -1,21 +1,11 @@
-/// The mid-game table editor: with the engine suspended at a prompt, the
-/// deck, the discards, and every hand can be amended before the game forks
-/// and plays on. Folding keys into the model is pure, so every editing rule
-/// can be exercised on its own.
 module public Editor
 
 open System
 
 open Flip7
 
-let private width = 80
-
-type public Cursor =
-    | OnCard of Card
-    | OnPlayer of string
-
 type public Model = {
-    Cursor: Cursor
+    Cursor: Choice<Card, string>
     Help: bool
     Active: Strategy.StrategyPlayer list
     Finished: Strategy.StrategyPlayer list
@@ -29,7 +19,7 @@ let public Make
     (deck: Deck)
     (discards: Deck)
     : Model = {
-    Cursor = OnCard(ValueCard Card.Zero)
+    Cursor = Choice1Of2(ValueCard Card.Zero)
     Help = false
     Active = active
     Finished = finished
@@ -38,13 +28,6 @@ let public Make
 }
 
 let private EveryCard: Card list = Deck.Empty |> Map.toList |> List.map fst
-
-// An active player cannot be left busted, because the game's invariant is
-// that busted players are finished
-let public BustedActives (editor: Model) : string list =
-    editor.Active
-    |> List.filter (fun player -> Hand.IsBust player.Hand)
-    |> List.map (fun player -> player.Name)
 
 let private updateHand (name: string) (edit: Hand -> Hand) (editor: Model) : Model =
     let update =
@@ -61,8 +44,6 @@ let private updateHand (name: string) (edit: Hand -> Hand) (editor: Model) : Mod
             Finished = update editor.Finished
     }
 
-// Dealing takes the card from the deck, and undoing returns it, so every
-// edit preserves the accounting of all 94 cards by construction
 let private deal (card: Card) (name: string) (editor: Model) : Model =
     if Map.find card editor.Deck > 0u then
         { editor with Deck = Deck.Decrement editor.Deck card }
@@ -81,58 +62,53 @@ let private unDeal (name: string) (editor: Model) : Model =
         { editor with Deck = Deck.Increment editor.Deck card }
         |> updateHand name (fun _ -> rest)
 
-// Folds one key into the editor, or None to apply the edits; pure
 let public Key (key: ConsoleKeyInfo) (editor: Model) : Model option =
-    let names =
-        editor.Active @ editor.Finished |> List.map (fun player -> player.Name)
+    let names = editor.Active @ editor.Finished |> List.map (fun player -> player.Name)
 
     if editor.Help then
-        // Any key returns from the help page
         Some { editor with Help = false }
     else
 
     match key.Modifiers, key.Key, editor.Cursor with
-    | ConsoleModifiers.None, ConsoleKey.Enter, _
+    | ConsoleModifiers.None, ConsoleKey.Enter, _ -> None
     | ConsoleModifiers.None, ConsoleKey.Escape, _ -> None
-
-    // The help page
     | _, _, _ when key.KeyChar = '?' || key.Key = ConsoleKey.H -> Some { editor with Help = true }
 
     // Dealing cards from the deck into the highlighted hand
-    | ConsoleModifiers.None, ConsoleKey.D0, OnPlayer name -> Some(deal (ValueCard Card.Zero) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D1, OnPlayer name -> Some(deal (ModifierCard Card.Double) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D1, OnPlayer name -> Some(deal (ValueCard Card.One) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D2, OnPlayer name -> Some(deal (ModifierCard Card.Plus2) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D2, OnPlayer name -> Some(deal (ValueCard Card.Two) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D3, OnPlayer name -> Some(deal (ValueCard Card.Three) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D4, OnPlayer name -> Some(deal (ModifierCard Card.Plus4) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D4, OnPlayer name -> Some(deal (ValueCard Card.Four) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D5, OnPlayer name -> Some(deal (ValueCard Card.Five) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D6, OnPlayer name -> Some(deal (ModifierCard Card.Plus6) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D6, OnPlayer name -> Some(deal (ValueCard Card.Six) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D7, OnPlayer name -> Some(deal (ValueCard Card.Seven) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D8, OnPlayer name -> Some(deal (ModifierCard Card.Plus8) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D8, OnPlayer name -> Some(deal (ValueCard Card.Eight) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D9, OnPlayer name -> Some(deal (ValueCard Card.Nine) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.X, OnPlayer name -> Some(deal (ModifierCard Card.Plus10) name editor)
-    | ConsoleModifiers.None, ConsoleKey.X, OnPlayer name -> Some(deal (ValueCard Card.Ten) name editor)
-    | ConsoleModifiers.None, ConsoleKey.E, OnPlayer name -> Some(deal (ValueCard Card.Eleven) name editor)
-    | ConsoleModifiers.None, ConsoleKey.T, OnPlayer name -> Some(deal (ValueCard Card.Twelve) name editor)
-    | ConsoleModifiers.None, ConsoleKey.S, OnPlayer name -> Some(deal (ActionCard Card.SecondChance) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D, OnPlayer name -> Some(deal (ActionCard Card.Deal3) name editor)
-    | ConsoleModifiers.None, ConsoleKey.F, OnPlayer name -> Some(deal (ActionCard Card.Freeze) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D0, Choice2Of2 name -> Some(deal (ValueCard Card.Zero) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D1, Choice2Of2 name -> Some(deal (ModifierCard Card.Double) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D1, Choice2Of2 name -> Some(deal (ValueCard Card.One) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D2, Choice2Of2 name -> Some(deal (ModifierCard Card.Plus2) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D2, Choice2Of2 name -> Some(deal (ValueCard Card.Two) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D3, Choice2Of2 name -> Some(deal (ValueCard Card.Three) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D4, Choice2Of2 name -> Some(deal (ModifierCard Card.Plus4) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D4, Choice2Of2 name -> Some(deal (ValueCard Card.Four) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D5, Choice2Of2 name -> Some(deal (ValueCard Card.Five) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D6, Choice2Of2 name -> Some(deal (ModifierCard Card.Plus6) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D6, Choice2Of2 name -> Some(deal (ValueCard Card.Six) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D7, Choice2Of2 name -> Some(deal (ValueCard Card.Seven) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D8, Choice2Of2 name -> Some(deal (ModifierCard Card.Plus8) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D8, Choice2Of2 name -> Some(deal (ValueCard Card.Eight) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D9, Choice2Of2 name -> Some(deal (ValueCard Card.Nine) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.X, Choice2Of2 name -> Some(deal (ModifierCard Card.Plus10) name editor)
+    | ConsoleModifiers.None, ConsoleKey.X, Choice2Of2 name -> Some(deal (ValueCard Card.Ten) name editor)
+    | ConsoleModifiers.None, ConsoleKey.E, Choice2Of2 name -> Some(deal (ValueCard Card.Eleven) name editor)
+    | ConsoleModifiers.None, ConsoleKey.T, Choice2Of2 name -> Some(deal (ValueCard Card.Twelve) name editor)
+    | ConsoleModifiers.None, ConsoleKey.S, Choice2Of2 name -> Some(deal (ActionCard Card.SecondChance) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D, Choice2Of2 name -> Some(deal (ActionCard Card.Deal3) name editor)
+    | ConsoleModifiers.None, ConsoleKey.F, Choice2Of2 name -> Some(deal (ActionCard Card.Freeze) name editor)
 
     // Returning the most recent card of the highlighted hand
-    | ConsoleModifiers.None, ConsoleKey.Backspace, OnPlayer name -> Some(unDeal name editor)
+    | ConsoleModifiers.None, ConsoleKey.Backspace, Choice2Of2 name -> Some(unDeal name editor)
 
     // Moving copies of the highlighted card between discards and deck
-    | ConsoleModifiers.None, ConsoleKey.Add, OnCard card when Map.find card editor.Discards > 0u ->
+    | ConsoleModifiers.None, ConsoleKey.Add, Choice1Of2 card when Map.find card editor.Discards > 0u ->
         Some {
             editor with
                 Deck = Deck.Increment editor.Deck card
                 Discards = Deck.Decrement editor.Discards card
         }
-    | ConsoleModifiers.None, ConsoleKey.Subtract, OnCard card when Map.find card editor.Deck > 0u ->
+    | ConsoleModifiers.None, ConsoleKey.Subtract, Choice1Of2 card when Map.find card editor.Deck > 0u ->
         Some {
             editor with
                 Deck = Deck.Decrement editor.Deck card
@@ -140,30 +116,32 @@ let public Key (key: ConsoleKeyInfo) (editor: Model) : Model option =
         }
 
     // Rotating the cursor through the distributions and the players
-    | ConsoleModifiers.None, ConsoleKey.UpArrow, OnCard _ -> Some { editor with Cursor = OnPlayer(List.last names) }
-    | ConsoleModifiers.None, ConsoleKey.DownArrow, OnCard _ -> Some { editor with Cursor = OnPlayer(List.head names) }
-    | ConsoleModifiers.None, ConsoleKey.UpArrow, OnPlayer name when name = List.head names ->
-        Some { editor with Cursor = OnCard(ValueCard Card.Zero) }
-    | ConsoleModifiers.None, ConsoleKey.DownArrow, OnPlayer name when name = List.last names ->
-        Some { editor with Cursor = OnCard(ValueCard Card.Zero) }
-    | ConsoleModifiers.None, ConsoleKey.UpArrow, OnPlayer name ->
+    | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice1Of2 _ ->
+        Some { editor with Cursor = Choice2Of2(List.last names) }
+    | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice1Of2 _ ->
+        Some { editor with Cursor = Choice2Of2(List.head names) }
+    | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice2Of2 name when name = List.head names ->
+        Some { editor with Cursor = Choice1Of2(ValueCard Card.Zero) }
+    | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice2Of2 name when name = List.last names ->
+        Some { editor with Cursor = Choice1Of2(ValueCard Card.Zero) }
+    | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice2Of2 name ->
         let index = names |> List.findIndex ((=) name)
-        Some { editor with Cursor = OnPlayer names[index - 1] }
-    | ConsoleModifiers.None, ConsoleKey.DownArrow, OnPlayer name ->
+        Some { editor with Cursor = Choice2Of2 names[index - 1] }
+    | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice2Of2 name ->
         let index = names |> List.findIndex ((=) name)
-        Some { editor with Cursor = OnPlayer names[index + 1] }
-    | ConsoleModifiers.None, ConsoleKey.LeftArrow, OnCard card ->
+        Some { editor with Cursor = Choice2Of2 names[index + 1] }
+    | ConsoleModifiers.None, ConsoleKey.LeftArrow, Choice1Of2 card ->
         let index = EveryCard |> List.findIndex ((=) card)
         let index' = (index - 1 + EveryCard.Length) % EveryCard.Length
-        Some { editor with Cursor = OnCard EveryCard[index'] }
-    | ConsoleModifiers.None, ConsoleKey.RightArrow, OnCard card ->
+        Some { editor with Cursor = Choice1Of2 EveryCard[index'] }
+    | ConsoleModifiers.None, ConsoleKey.RightArrow, Choice1Of2 card ->
         let index = EveryCard |> List.findIndex ((=) card)
         let index' = (index + 1) % EveryCard.Length
-        Some { editor with Cursor = OnCard EveryCard[index'] }
+        Some { editor with Cursor = Choice1Of2 EveryCard[index'] }
     | _ -> Some editor
 
 let public RenderHelp () : unit =
-    let rule = String.replicate width "─"
+    let rule = String.replicate 80 "─"
 
     let entry (keysText: string) (description: string) =
         sprintf "   %s%s" (keysText.PadRight 18) description
@@ -175,7 +153,7 @@ let public RenderHelp () : unit =
 
     [
         rule
-        "edit help" |> centered width
+        "edit help" |> centered 80
         rule
         styled [ Ansi.Bright ] " cursor"
         entry "↑/↓" "rotate between the distributions and each player"
@@ -195,9 +173,7 @@ let public RenderHelp () : unit =
         ""
         styled [ Ansi.Bright ] " program"
         entry "enter or esc" "apply the edits and return to the game"
-        "[any key] back to the editor"
-        |> centered width
-        |> styled [ Ansi.Dim; Ansi.Cyan ]
+        "[any key] back to the editor" |> centered 80 |> styled [ Ansi.Dim; Ansi.Cyan ]
     ]
     |> String.concat "\n"
     |> printf "%s"
@@ -207,8 +183,8 @@ let public Render (editor: Model) : unit =
 
     let cursorCard =
         match editor.Cursor with
-        | OnCard card -> Some card
-        | OnPlayer _ -> None
+        | Choice1Of2 card -> Some card
+        | Choice2Of2 _ -> None
 
     let pdf = editor.Deck |> Deck.pdf
     let cdf = editor.Deck |> Deck.cdf
@@ -223,22 +199,22 @@ let public Render (editor: Model) : unit =
 
     let pdfTitle =
         match editor.Cursor with
-        | OnCard card -> sprintf "p(%s)=%.2f%%" (string card) (Map.find card pdf * 100.0)
+        | Choice1Of2 card -> sprintf "p(%s)=%.2f%%" (string card) (Map.find card pdf * 100.0)
         | _ -> "pdf"
         |> centered (pdf |> Map.keys |> Seq.length)
 
     let cdfTitle =
         match editor.Cursor with
-        | OnCard card -> sprintf "P(%s)=%.2f%%" (string card) (Map.find card cdf * 100.0)
+        | Choice1Of2 card -> sprintf "P(%s)=%.2f%%" (string card) (Map.find card cdf * 100.0)
         | _ -> "cdf"
         |> centered (cdf |> Map.keys |> Seq.length)
 
-    printfn "%s" (String.replicate width "─")
+    printfn "%s" (String.replicate 80 "─")
     printfn "%s" (ec + pdf3[0] + gap + cdf3[0])
     printfn "%s" (ev + pdf3[1] + gap + cdf3[1])
     printfn "%s" (var + pdf3[2] + gap + cdf3[2])
     printfn "%s" (std + pdfTitle + gap + cdfTitle)
-    printfn "%s" (String.replicate width "─")
+    printfn "%s" (String.replicate 80 "─")
 
     let renderPlayer (isFinished: bool) (player: Strategy.StrategyPlayer) =
         let probabilityToBust =
@@ -247,7 +223,7 @@ let public Render (editor: Model) : unit =
 
         playerRow
             probabilityToBust
-            (editor.Cursor = OnPlayer player.Name)
+            (editor.Cursor = Choice2Of2 player.Name)
             (isFinished || Hand.IsBust player.Hand)
             (if isFinished then " (done)" else "")
             player
@@ -259,13 +235,17 @@ let public Render (editor: Model) : unit =
     for player in editor.Finished do
         renderPlayer true player
 
-    match BustedActives editor with
+    match
+        editor.Active
+        |> List.filter (fun player -> Hand.IsBust player.Hand)
+        |> List.map (fun player -> player.Name)
+    with
     | busted when not (List.isEmpty busted) ->
         $"""{busted |> String.concat ", "} cannot stay busted while still in the round"""
-        |> centered width
+        |> centered 80
         |> styled [ Ansi.BrightRed ]
     | _ ->
         "[↕↔] cursor   [+/-] deck   [cards] deal   [backspace] undo   [?] help   [enter] resume"
-        |> centered width
+        |> centered 80
         |> styled [ Ansi.Dim; Ansi.Cyan ]
     |> printf "%s"

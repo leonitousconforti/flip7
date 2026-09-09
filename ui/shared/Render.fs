@@ -99,7 +99,7 @@ let public playerRow
     |> fun (top, mid, bot) -> [ padded top; padded mid; padded bot ]
     |> String.concat "\n"
 
-let private playerRows (instant: Instant) : string list =
+let public playerRows (instant: Instant) : string list =
     let actor = instant.Event.Actor()
 
     instant.Players
@@ -215,9 +215,9 @@ let public RenderLoading
     Frame status caption content bottom footer
 
 let public RenderPlay (round: int) (instant: Instant) (footer: string) : unit =
-    Frame
-        (statusLine "play: first to 200pts wins" $"round {round}")
-        (string instant.Event |> centered width |> styled (captionStyle instant.Event))
-        (playerRows instant)
-        ""
-        footer
+    let status = statusLine "play: first to 200pts wins" $"round {round}"
+    let captionStyle = captionStyle instant.Event
+    let caption = string instant.Event |> centered width |> styled captionStyle
+    let content = playerRows instant
+    let bottom = "\n\n\n"
+    Frame status caption content bottom footer
