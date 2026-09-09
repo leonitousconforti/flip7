@@ -9,8 +9,8 @@
     <Compile Include="shared/Ansi.fs" />
     <Compile Include="shared/Sparkline.fs" />
     <Compile Include="shared/Render.fs" />
+    <Compile Include="shared/Mvu.fs" />
 
-    <Compile Include="Interactive.fs" />
     <Compile Include="Replay.fs" />
     <Compile Include="Play.fs" />
     <Compile Include="Simulate.fs" />
@@ -20,6 +20,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\src\Flip7.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Argu" Version="6.2.5" />
   </ItemGroup>
 
 </Project>

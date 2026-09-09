@@ -164,7 +164,7 @@ let public RenderTable
             string instant.Event |> centered width |> styled (captionStyle instant.Event)
 
     let content = playerRows instant
-    let bottom = progressBar count roundEnds cursor
+    let bottom = $"\n{progressBar count roundEnds cursor}\n"
     let footer =
         "[↔] scrub   [↕] jump rounds   [home/end] start/end   [q/esc] quit"
         |> centered width
@@ -185,7 +185,7 @@ let public RenderError
         |> styled [ Ansi.BrightRed ]
 
     let content = []
-    let bottom = progressBar count roundEnds cursor
+    let bottom = $"\n{progressBar count roundEnds cursor}\n"
     let footer =
         "[↔] scrub   [↕] jump rounds   [home/end] start/end   [q/esc] quit"
         |> centered width
@@ -206,7 +206,7 @@ let public RenderLoading
         |> styled [ Ansi.Dim; Ansi.Cyan ]
 
     let content = []
-    let bottom = progressBar count roundEnds cursor
+    let bottom = $"\n{progressBar count roundEnds cursor}\n"
     let footer =
         "[↔] scrub   [↕] jump rounds   [home/end] start/end   [q/esc] quit"
         |> centered width
