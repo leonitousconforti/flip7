@@ -28,14 +28,39 @@ type private Prompt = {
     Discards: Deck
 }
 
+// An action card the human has to give to someone. There is no round or turn
+// here: a targeting decider is not told them, which is also why the editor
+// cannot be opened mid-aim - it needs both to splice a timeline
+type private Aim = {
+    At: int
+    Ask: Strategy.Ask
+    Chooser: Player
+    Candidates: Player list
+    Deck: Deck
+    Discards: Deck
+}
+
 type private Decision =
     | Answered of Strategy.HitOrStand
+    | Aimed of Player
     | Forked of Editor.Splice
     | Quitting
 
 type private Model = {
     // The open ask, held here from the decider's dispatch until answered
     Prompt: Prompt option
+    // The open target ask, held the same way. Only ever one of the two: the
+    // engine suspends at whichever it asked
+    Aim: Aim option
+    // Which candidate the picker sits on, kept by name so that it reads the
+    // same way the editor's cursor does
+    Choice: string option
+    // Who was asked, against the instant their ask arrived at. Keyed by
+    // instant rather than holding only the latest: the engine races on once an
+    // answer is sent and can raise the next ask while the screen is still on
+    // the frame the last one arrived at, so which player a frame is waiting on
+    // is a property of that frame, not of whichever ask happens to be open now
+    AskedAt: Map<int, string>
     // The editing overlay; only ever opened while a prompt is being asked
     Editor: Editor.Model option
     // The newest instant shown; the screen is always a view of its frame
@@ -56,6 +81,7 @@ type private Model = {
 type private Msg =
     | Pressed of ConsoleKeyInfo
     | Prompted of Prompt
+    | Aiming of Aim
     | Refreshed of (int * bool * int list)
     | Loaded of index: int * result: Result<Instant, exn>
     | Quitted
@@ -68,6 +94,9 @@ type private Effect =
 
 let private init: Model = {
     Prompt = None
+    Aim = None
+    Choice = None
+    AskedAt = Map.empty
     Editor = None
     Cursor = 0
     Snapshot = 0, false, []
@@ -90,6 +119,45 @@ let private showing (model: Model) : int option =
 let private asking (model: Model) : Prompt option =
     model.Prompt
     |> Option.filter (fun prompt -> showing model = Some(prompt.At - 1))
+
+// ...and so is a target ask
+let private aiming (model: Model) : Aim option =
+    model.Aim |> Option.filter (fun aim -> showing model = Some(aim.At - 1))
+
+// The candidates in the order they sit on screen, which the store already
+// emits seated, so the picker moves the way the eye does. Falls back to the
+// engine's rotation order if the frame does not cover every candidate
+let private inSeatedOrder (model: Model) (aim: Aim) : Player list =
+    let seated =
+        match model.Frame with
+        | Some(Ok instant) ->
+            instant.Players
+            |> List.choose (fun seat -> aim.Candidates |> List.tryFind (fun c -> c.Name = seat.Name))
+        | _ -> []
+
+    if List.length seated = List.length aim.Candidates then
+        seated
+    else
+        aim.Candidates
+
+// Who the picker is on: the remembered candidate while they are still one,
+// otherwise the first on screen
+let private chosen (model: Model) (aim: Aim) : Player =
+    let order = inSeatedOrder model aim
+
+    model.Choice
+    |> Option.bind (fun name -> order |> List.tryFind (fun candidate -> candidate.Name = name))
+    |> Option.defaultValue (List.head order)
+
+// Who the frame on screen is waiting on, if anyone. Answered from the moment
+// the ask lands until the screen moves past that frame, which outlasts the ask
+// itself: answering resumes the engine, but the instant that follows still
+// takes a pace interval to be written, ingested and read. Tying this to the
+// open ask instead drops the annotation and pops the previous actor's
+// highlight back on for that whole gap, one repaint after the answer.
+let private parked (model: Model) : string option =
+    showing model
+    |> Option.bind (fun shown -> Map.tryFind (shown + 1) model.AskedAt)
 
 // The game is over once the final instant of a complete timeline has been
 // shown
@@ -153,13 +221,26 @@ let private update (msg: Msg) (model: Model) : Model =
     // A new question has no answer yet. The reset is load-bearing: two
     // prompts in a row answered identically must still each produce a
     // Resolved change for the effects diff to send
-    | Prompted prompt -> { model with Prompt = Some prompt; Resolved = None }
+    | Prompted prompt -> {
+        model with
+            Prompt = Some prompt
+            AskedAt = Map.add prompt.At prompt.Player.Name model.AskedAt
+            Resolved = None
+      }
+
+    | Aiming aim -> {
+        model with
+            Aim = Some aim
+            Choice = None
+            AskedAt = Map.add aim.At aim.Chooser.Name model.AskedAt
+            Resolved = None
+      }
 
     | Quitted -> { model with Quit = true }
 
     | Pressed key ->
-        match model.Editor, asking model with
-        | Some editor, Some _ ->
+        match model.Editor, asking model, aiming model with
+        | Some editor, Some _, _ ->
             match Editor.Key key editor with
             | Editor.Editing editor' -> { model with Editor = Some editor' }
             | Editor.Cancelled -> { model with Editor = None }
@@ -170,7 +251,36 @@ let private update (msg: Msg) (model: Model) : Model =
                     Resolved = Some(Forked splice)
               }
 
-        | _, Some prompt ->
+        | _, _, Some aim ->
+            let order = inSeatedOrder model aim
+            let current = chosen model aim
+
+            let move (step: int) =
+                let index = order |> List.findIndex (fun candidate -> candidate.Name = current.Name)
+                let index' = (index + step + List.length order) % List.length order
+                { model with Choice = Some (List.item index' order).Name }
+
+            match key.Key with
+            | ConsoleKey.UpArrow
+            | ConsoleKey.LeftArrow -> move -1
+            | ConsoleKey.DownArrow
+            | ConsoleKey.RightArrow -> move 1
+            | ConsoleKey.Enter -> {
+                model with
+                    Aim = None
+                    Choice = None
+                    Resolved = Some(Aimed current)
+              }
+            | ConsoleKey.Q
+            | ConsoleKey.Escape -> {
+                model with
+                    Aim = None
+                    Choice = None
+                    Resolved = Some Quitting
+              }
+            | _ -> model
+
+        | _, Some prompt, _ ->
             match key.Key with
             | ConsoleKey.H -> {
                 model with
@@ -187,7 +297,7 @@ let private update (msg: Msg) (model: Model) : Model =
             | ConsoleKey.E -> { model with Editor = Some(editorFor model prompt) }
             | _ -> model
 
-        | _ when gameOver model -> { model with Quit = true }
+        | _, _, _ when gameOver model -> { model with Quit = true }
         | _ -> model
 
 let private effects (before: Model) (after: Model) : Effect list = [
@@ -208,7 +318,14 @@ let private effects (before: Model) (after: Model) : Effect list = [
 let private viewKey (model: Model) =
     let _, _, roundEnds = model.Snapshot
 
-    model.Editor, asking model, gameOver model, model.Frame, Persistence.TimelineStore.RoundOf roundEnds model.Cursor
+    model.Editor,
+    asking model,
+    aiming model,
+    parked model,
+    model.Choice,
+    gameOver model,
+    model.Frame,
+    Persistence.TimelineStore.RoundOf roundEnds model.Cursor
 
 let private promptFooter (prompt: Prompt) : string =
     let bust =
@@ -219,6 +336,26 @@ let private promptFooter (prompt: Prompt) : string =
         Simulation.expectedValueOfHit prompt.Deck prompt.Discards prompt.Player.Hand
 
     $"{prompt.Player.Name}: %d{Hand.Score prompt.Player.Hand}pts in hand, %.0f{bust}%% bust, EV %+.1f{ev}   [h]it   [s]tand   [e]dit   [q]uit"
+    |> centered width
+    |> styled [ Ansi.Bright ]
+
+let private aimFooter (aim: Aim) (choice: Player) : string =
+    let card =
+        match aim.Ask with
+        | Strategy.Ask.WhoToFreeze -> "Freeze"
+        | Strategy.Ask.WhoReceivesDeal3 -> "Deal3"
+        | Strategy.Ask.WhoReceivesSecondChance -> "SecondChance"
+
+    let verb =
+        if choice.Name = aim.Chooser.Name then
+            "keep it yourself"
+        else
+            $"give it to {choice.Name}"
+
+    // Every row already carries its own points and bust odds, and the footer
+    // has to stay inside the 80 columns or it wraps and leaves a torn line
+    // behind on the next frame
+    $"{aim.Chooser.Name} flipped {card}: {verb}?   [↕] pick   [enter] give   [q]uit"
     |> centered width
     |> styled [ Ansi.Bright ]
 
@@ -233,19 +370,22 @@ let private view (directory: string) (model: Model) : unit =
         | Some(Ok instant) ->
             let _, _, roundEnds = model.Snapshot
             let round = Persistence.TimelineStore.RoundOf roundEnds model.Cursor
+            let prompting = parked model
+            let aimedAt = aiming model |> Option.map (fun aim -> (chosen model aim).Name)
 
             let footer =
-                match asking model with
-                | Some prompt -> promptFooter prompt
-                | None when gameOver model ->
+                match asking model, aiming model with
+                | Some prompt, _ -> promptFooter prompt
+                | _, Some aim -> aimFooter aim (chosen model aim)
+                | _ when gameOver model ->
                     let winner = instant.Players |> List.maxBy (fun player -> player.FirmScore)
 
                     $"game over: {winner.Name} wins with {winner.FirmScore}pts!   [any key]"
                     |> centered width
                     |> styled [ Ansi.BrightGreen ]
-                | None -> "[q at your turn] quit" |> centered width |> styled [ Ansi.Dim; Ansi.Cyan ]
+                | _ -> "[q at your turn] quit" |> centered width |> styled [ Ansi.Dim; Ansi.Cyan ]
 
-            RenderPlay round instant footer
+            RenderPlay round instant prompting aimedAt footer
 
 let public Run (humanNames: string list) (seed: int option) (pace: int option) : Async<unit> = async {
     if humanNames.Length < 1 || humanNames.Length > 5 then
@@ -270,24 +410,27 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
 
     let paceMs = defaultArg pace paceMilliseconds
     let pool = [
-        HitUntilScore 22u
-        HitUntilScore 26u
-        HitUntilNumCards 5u
-        HitUntilBustProbability 0.35
-        HitUntilNaiveBustProbability 0.4
-        SoftHitUntilScore(24u, 3.0)
-        ChasesFlip7(20u, 5u)
-        EmboldenedBySecondChance 22u
-        HitWhileBehindLeader 12u
-        MaximizesExpectedValue
+        Strategy.HitUntilScore 22u
+        Strategy.HitUntilScore 26u
+        Strategy.HitUntilNumCards 5u
+        Strategy.HitUntilBustProbability 0.35
+        Strategy.HitUntilNaiveBustProbability 0.4
+        Strategy.SoftHitUntilScore(24u, 3.0)
+        Strategy.ChasesFlip7(20u, 5u)
+        Strategy.EmboldenedBySecondChance 22u
+        Strategy.HitWhileBehindLeader 12u
+        Strategy.MaximizesExpectedValue
     ]
 
     let naive =
         pool |> List.sortBy (fun _ -> random.Next()) |> List.take botNames.Length
 
+    // Bots aim their action cards at random; the humans are asked
     let players =
-        (humanNames |> List.map (fun name -> name, Custom terminalPrompt))
-        @ List.zip botNames naive
+        (humanNames
+         |> List.map (fun name -> name, Strategy.Custom terminalPrompt, Targeting.ChoosesExternally terminalPrompt))
+        @ (List.zip botNames naive
+           |> List.map (fun (name, strategy) -> name, strategy, Targeting.ChoosesRandomly))
         |> List.sortBy (fun _ -> random.Next())
 
     let now = DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss"
@@ -310,31 +453,60 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
     // the engine inline
     let replies = Channel.CreateUnbounded<Decision>()
 
-    let decider (dispatch: Msg -> unit) : Strategy.Decider =
-        fun strategy round turn player others finished decks ->
-            match strategy with
-            | Custom name when name = terminalPrompt -> async {
-                let deck, discards = decks
+    let decider (dispatch: Msg -> unit) : Strategy.Decider = {
+        Target =
+            fun targeting ask chooser candidates finished decks ->
+                match targeting with
+                | Targeting.ChoosesExternally name when name = terminalPrompt -> async {
+                    let deck, discards = decks
 
-                dispatch (
-                    Prompted {
-                        Round = round
-                        Turn = turn
-                        At = written
-                        Player = player
-                        Others = others
-                        Finished = finished
-                        Deck = deck
-                        Discards = discards
-                    }
-                )
+                    dispatch (
+                        Aiming {
+                            At = written
+                            Ask = ask
+                            Chooser = chooser
+                            Candidates = candidates
+                            Deck = deck
+                            Discards = discards
+                        }
+                    )
 
-                match! replies.Reader.ReadAsync().AsTask() |> Async.AwaitTask with
-                | Answered decision -> return decision
-                | Forked splice -> return raise (Editor.EditException splice)
-                | Quitting -> return raise (QuitException())
-              }
-            | strategy -> Strategy.DecideWith random strategy round turn player others finished decks
+                    match! replies.Reader.ReadAsync().AsTask() |> Async.AwaitTask with
+                    | Aimed player -> return player
+                    | Quitting -> return raise (QuitException())
+                    // The engine is suspended at this one ask, and the picker
+                    // is the only thing the keyboard can answer it with
+                    | decision -> return raise (InvalidOperationException $"answered a target ask with {decision}")
+                  }
+                | targeting -> Strategy.DecideTargetWith random targeting ask chooser candidates finished decks
+        HitOrStand =
+            fun strategy round turn player others finished decks ->
+                match strategy with
+                | Strategy.Custom name when name = terminalPrompt -> async {
+                    let deck, discards = decks
+
+                    dispatch (
+                        Prompted {
+                            Round = round
+                            Turn = turn
+                            At = written
+                            Player = player
+                            Others = others
+                            Finished = finished
+                            Deck = deck
+                            Discards = discards
+                        }
+                    )
+
+                    match! replies.Reader.ReadAsync().AsTask() |> Async.AwaitTask with
+                    | Answered decision -> return decision
+                    | Forked splice -> return raise (Editor.EditException splice)
+                    | Quitting -> return raise (QuitException())
+                    | decision ->
+                        return raise (InvalidOperationException $"answered a hit-or-stand ask with {decision}")
+                  }
+                | strategy -> Strategy.DecideHitOrStandWith random strategy round turn player others finished decks
+    }
 
     // The driver: drains the engine to disk until the game ends on its own. A
     // quit or an edit unwinds the paused engine with an exception, which async
