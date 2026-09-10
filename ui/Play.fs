@@ -105,7 +105,14 @@ let private editorFor (model: Model) (prompt: Prompt) : Editor.Model =
         | Some(Ok instant) -> Some(instant.Players |> List.map (fun player -> player.Name))
         | _ -> None
 
-    Editor.Make seating (prompt.Player :: prompt.Others) prompt.Finished prompt.Deck prompt.Discards
+    Editor.Make
+        prompt.Round
+        prompt.Turn
+        seating
+        (prompt.Player :: prompt.Others)
+        prompt.Finished
+        prompt.Deck
+        prompt.Discards
 
 let private update (msg: Msg) (model: Model) : Model =
     match msg with
@@ -152,26 +159,16 @@ let private update (msg: Msg) (model: Model) : Model =
 
     | Pressed key ->
         match model.Editor, asking model with
-        | Some editor, Some prompt ->
+        | Some editor, Some _ ->
             match Editor.Key key editor with
-            | Some editor' -> { model with Editor = Some editor' }
-            | None when editor.Active |> List.exists (fun player -> Hand.IsBust player.Hand) ->
-                // Applying is refused while an active player is busted; the
-                // editor's footer already says so
-                model
-            | None ->
-                let initial = editorFor model prompt
-
-                if { editor with Cursor = initial.Cursor; Help = initial.Help } = initial then
-                    // Nothing changed: back to the table and keep asking
-                    { model with Editor = None }
-                else
-                    {
-                        model with
-                            Editor = None
-                            Prompt = None
-                            Resolved = Some(Forked(Editor.SpliceOf prompt.Round prompt.Turn editor))
-                    }
+            | Editor.Editing editor' -> { model with Editor = Some editor' }
+            | Editor.Cancelled -> { model with Editor = None }
+            | Editor.Committed splice -> {
+                model with
+                    Editor = None
+                    Prompt = None
+                    Resolved = Some(Forked splice)
+              }
 
         | _, Some prompt ->
             match key.Key with
