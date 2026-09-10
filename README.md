@@ -41,11 +41,12 @@ game-over caption at the end](media/replay.gif)
 
 Run `dotnet run --project ui -- simulate --player Alice --player Bob --player
 Chloe --player Dave --player Eve` to play a full game to 200 points (each player
-is given a strategy, optionally written as `--player "Alice,HitUntilScore 25"`)
-and scrub through it as it unfolds. The left and right arrows step instant by
-instant, up and down jump between rounds, Home and End snap to the ends, and the
-final instant names the winner. Simulated games are written under `timelines/`,
-so `dotnet run --project ui -- replay <directory>` reopens one later.
+is given a strategy and a targeting policy, optionally written as `--player
+"Alice,HitUntilScore 25,PlaysSpitefully"`) and scrub through it as it unfolds.
+The left and right arrows step instant by instant, up and down jump between
+rounds, Home and End snap to the ends, and the final instant names the winner.
+Simulated games are written under `timelines/`, so `dotnet run --project ui --
+replay <directory>` reopens one later.
 
 ## Rules
 
@@ -166,7 +167,9 @@ round immediately for everyone). The cards flipped resolve as follows:
   player did not bust, each set-aside card is then given to an active player
   (themselves included, and forced on themselves if they are the only active
   player left) and resolved. If the player busted, the set-aside cards are
-  discarded unresolved.
+  discarded unresolved - including when they bust part-way through, on a
+  set-aside Deal3 they gave back to themselves. Being frozen is not busting, so
+  a frozen player still gives out the rest of what they set aside.
 
 A Deal3 received during the initial deal is resolved immediately: the recipient
 either flips the three cards themselves or gives the card to another player, who
