@@ -6,6 +6,7 @@ open FSharp.Control
 /// What happened at a single moment of a game.
 /// </summary>
 type public Event =
+    | TableSeated
     | Drew of Name: string * Card: Card
     | Stood of Name: string
     | Busted of Name: string * Card: Card
@@ -19,6 +20,7 @@ type public Event =
 
     override self.ToString() : string =
         match self with
+        | TableSeated -> "the table is seated"
         | Drew(name, card) -> $"{name} drew {card}"
         | Stood name -> $"{name} stood"
         | Busted(name, card) -> $"{name} drew {card} and busted"
@@ -50,6 +52,7 @@ type public Event =
         | Froze(_, target) -> Some target
         | SecondChancePassed(_, target) -> Some target
         | Dealt3(_, target, _) -> Some target
+        | TableSeated -> None
         | Edited _ -> None
         | RoundEnded _ -> None
 
@@ -79,6 +82,7 @@ module public Event =
     /// </summary>
     let public Serialize (event: Event) : string array =
         match event with
+        | TableSeated -> [| "TableSeated" |]
         | Drew(name, card) -> [| "Drew"; name; string card |]
         | Stood name -> [| "Stood"; name |]
         | Busted(name, card) -> [| "Busted"; name; string card |]
@@ -99,6 +103,7 @@ module public Event =
     /// </summary>
     let public Deserialize (lines: string seq) : Event =
         match lines |> Seq.toList with
+        | [ "TableSeated" ] -> TableSeated
         | [ "Drew"; name; card ] -> Drew(name, Card.Parse card)
         | [ "Stood"; name ] -> Stood name
         | [ "Busted"; name; card ] -> Busted(name, Card.Parse card)
@@ -539,7 +544,16 @@ module public Timeline =
         let startingPlayers =
             players |> List.map (fun (name, strategy) -> Player.Make(name, strategy))
 
-        ContinueWith random decide 1u Map.empty startingPlayers [] (Deck.Full, Deck.Empty)
+        asyncSeq {
+            yield {
+                Event = TableSeated
+                Players = startingPlayers
+                Deck = Deck.Full
+                Discards = Deck.Empty
+            }
+
+            yield! ContinueWith random decide 1u Map.empty startingPlayers [] (Deck.Full, Deck.Empty)
+        }
 
     /// <summary>
     /// Simulates a full game using the given source of randomness and returns

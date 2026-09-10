@@ -6,6 +6,7 @@ open Flip7
 [<Fact>]
 let ``Serialize and Deserialize round-trip every event`` () =
     [
+        TableSeated
         Drew("Alice", ValueCard Card.Seven)
         Stood "Alice"
         Busted("Alice", ValueCard Card.Twelve)

@@ -70,6 +70,7 @@ let private genDeck: Gen<Deck> = gen {
 
 let private genEvent: Gen<Event> =
     Gen.oneof [
+        Gen.constant TableSeated
         Gen.map2 (fun name card -> Drew(name, card)) genName genCard
         Gen.map Stood genName
         Gen.map2 (fun name card -> Busted(name, card)) genName genCard
