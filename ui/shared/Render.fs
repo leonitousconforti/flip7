@@ -70,7 +70,7 @@ let public playerRow
     (highlighted: bool)
     (dimmed: bool)
     (annotation: string)
-    (player: Strategy.StrategyPlayer)
+    (player: Player)
     : string =
     let isBusted = Hand.IsBust player.Hand
     let tentativeScore = if isBusted then 0u else Hand.Score player.Hand
@@ -115,7 +115,6 @@ let public playerRows (instant: Instant) : string list =
         let annotation = ""
         let highlighted = actor = Some player.Name
         let dimmed = Hand.IsBust player.Hand
-        let player = player.ToStrategyPlayer()
         playerRow probabilityToBust highlighted dimmed annotation player
     )
 

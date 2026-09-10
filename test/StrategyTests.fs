@@ -3,14 +3,18 @@ module StrategyTests
 open Xunit
 open Flip7
 
-let private player: Strategy.StrategyPlayer = {
+// DecideWith takes the strategy to evaluate as an argument, so the player's
+// own declared strategy is inert in these tests
+let private player: Player = {
     Name = "Alice"
+    Strategy = Strategy.Random
     FirmScore = 0u
     Hand = [ ValueCard Card.Seven; ValueCard Card.Eight ]
 }
 
-let private other: Strategy.StrategyPlayer = {
+let private other: Player = {
     Name = "Bob"
+    Strategy = Strategy.Random
     FirmScore = 0u
     Hand = [ ValueCard Card.One ]
 }
@@ -47,8 +51,9 @@ let ``ToString and Parse round-trip every strategy`` () =
 
 [<Fact>]
 let ``Externally decided strategies cannot be evaluated by DecideWith`` () =
-    let player: Strategy.StrategyPlayer = {
+    let player: Player = {
         Name = "You"
+        Strategy = Custom "TerminalPrompt"
         FirmScore = 0u
         Hand = [ ValueCard Card.Seven ]
     }

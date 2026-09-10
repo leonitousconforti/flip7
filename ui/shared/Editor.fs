@@ -2,23 +2,20 @@ module public Editor
 
 open System
 
+open FSharp.Control
+
 open Flip7
 
 type public Model = {
     Cursor: Choice<Card, string>
     Help: bool
-    Active: Strategy.StrategyPlayer list
-    Finished: Strategy.StrategyPlayer list
+    Active: Player list
+    Finished: Player list
     Deck: Deck
     Discards: Deck
 }
 
-let public Make
-    (active: Strategy.StrategyPlayer list)
-    (finished: Strategy.StrategyPlayer list)
-    (deck: Deck)
-    (discards: Deck)
-    : Model = {
+let public Make (active: Player list) (finished: Player list) (deck: Deck) (discards: Deck) : Model = {
     Cursor = Choice1Of2(ValueCard Card.Zero)
     Help = false
     Active = active
@@ -27,11 +24,24 @@ let public Make
     Discards = discards
 }
 
+type public Splice = {
+    Round: uint
+    Turn: uint
+    Active: Player list
+    Finished: Player list
+    Deck: Deck
+    Discards: Deck
+}
+
+type public EditException(splice: Splice) =
+    inherit Exception()
+    member _.Splice = splice
+
 let private EveryCard: Card list = Deck.Empty |> Map.toList |> List.map fst
 
 let private updateHand (name: string) (edit: Hand -> Hand) (editor: Model) : Model =
     let update =
-        List.map (fun (player: Strategy.StrategyPlayer) ->
+        List.map (fun (player: Player) ->
             if player.Name = name then
                 { player with Hand = edit player.Hand }
             else
@@ -140,6 +150,40 @@ let public Key (key: ConsoleKeyInfo) (editor: Model) : Model option =
         Some { editor with Cursor = Choice1Of2 EveryCard[index'] }
     | _ -> Some editor
 
+let public SpliceOf (round: uint) (turn: uint) (edited: Model) : Splice = {
+    Round = round
+    Turn = turn
+    Active = edited.Active
+    Finished = edited.Finished
+    Deck = edited.Deck
+    Discards = edited.Discards
+}
+
+let public Fork (random: Random) (decide: Strategy.Decider) (splice: Splice) : Timeline =
+    let turnsTaken =
+        splice.Active
+        |> List.map (fun player -> player.Name, splice.Turn - 1u)
+        |> Map.ofList
+
+    asyncSeq {
+        yield {
+            Event = Edited (List.head splice.Active).Name
+            Players = splice.Active @ splice.Finished
+            Deck = splice.Deck
+            Discards = splice.Discards
+        }
+
+        yield!
+            Timeline.ContinueWith
+                random
+                decide
+                splice.Round
+                turnsTaken
+                splice.Active
+                splice.Finished
+                (splice.Deck, splice.Discards)
+    }
+
 let public RenderHelp () : unit =
     let rule = String.replicate 80 "─"
 
@@ -218,7 +262,7 @@ let public Render (editor: Model) : unit =
         ]
         |> String.concat "\n"
 
-    let renderPlayer (isFinished: bool) (player: Strategy.StrategyPlayer) =
+    let renderPlayer (isFinished: bool) (player: Player) =
         let probabilityToBust =
             Simulation.probabilityToBust editor.Deck editor.Discards player.Hand false
             * 100.0

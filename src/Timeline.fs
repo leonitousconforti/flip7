@@ -406,14 +406,7 @@ module public Timeline =
                     if turn = 1u then
                         async.Return Strategy.Hit
                     else
-                        decide
-                            current.Strategy
-                            round
-                            turn
-                            (current.ToStrategyPlayer())
-                            (others |> List.map (fun p -> p.ToStrategyPlayer()))
-                            (finished |> List.map (fun p -> p.ToStrategyPlayer()))
-                            decks
+                        decide current.Strategy round turn current others finished decks
 
                 match hitOrStand with
                 | Strategy.Stand ->

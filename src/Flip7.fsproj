@@ -20,8 +20,8 @@
     <Compile Include="Hand.fs" />
     <Compile Include="Deck.fs" />
     <Compile Include="Simulation.fs" />
-    <Compile Include="Strategy.fs" />
     <Compile Include="Player.fs" />
+    <Compile Include="Strategy.fs" />
     <Compile Include="Timeline.fs" />
     <Compile Include="Persistence.fs" />
   </ItemGroup>
