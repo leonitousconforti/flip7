@@ -1,5 +1,6 @@
 namespace Flip7
 
+[<RequireQualifiedAccess>]
 module public Card =
     /// <summary>
     /// Doesn't contribute points but can affect the hand in other ways, e.g.

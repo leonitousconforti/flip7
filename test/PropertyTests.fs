@@ -38,25 +38,28 @@ let private genProbability: Gen<float> =
 // decider and raises there, so it stays out of engine draws
 let private genEngineStrategy: Gen<Strategy> =
     Gen.oneof [
-        Gen.constant AlwaysHits
-        Gen.constant AlwaysStands
-        Gen.map RandomWithProbability genProbability
-        Gen.map HitUntilScore genUint
-        Gen.map HitUntilNumCards genUint
-        Gen.map HitUntilBustProbability genProbability
-        Gen.map HitUntilNaiveBustProbability genProbability
-        Gen.map2 (fun threshold temperature -> SoftHitUntilScore(threshold, temperature)) genUint genProbability
-        Gen.map HitUntilTotal genUint
-        Gen.map HitUntilUniqueValues genUint
-        Gen.map2 (fun score uniques -> ChasesFlip7(score, uniques)) genUint genUint
-        Gen.map EmboldenedBySecondChance genUint
-        Gen.map HitWhileBehindLeader genUint
-        Gen.map StandsAfterTurn genUint
-        Gen.constant MaximizesExpectedValue
+        Gen.constant Strategy.AlwaysHits
+        Gen.constant Strategy.AlwaysStands
+        Gen.map Strategy.RandomWithProbability genProbability
+        Gen.map Strategy.HitUntilScore genUint
+        Gen.map Strategy.HitUntilNumCards genUint
+        Gen.map Strategy.HitUntilBustProbability genProbability
+        Gen.map Strategy.HitUntilNaiveBustProbability genProbability
+        Gen.map2
+            (fun threshold temperature -> Strategy.SoftHitUntilScore(threshold, temperature))
+            genUint
+            genProbability
+        Gen.map Strategy.HitUntilTotal genUint
+        Gen.map Strategy.HitUntilUniqueValues genUint
+        Gen.map2 (fun score uniques -> Strategy.ChasesFlip7(score, uniques)) genUint genUint
+        Gen.map Strategy.EmboldenedBySecondChance genUint
+        Gen.map Strategy.HitWhileBehindLeader genUint
+        Gen.map Strategy.StandsAfterTurn genUint
+        Gen.constant Strategy.MaximizesExpectedValue
     ]
 
 let private genStrategy: Gen<Strategy> =
-    Gen.frequency [ 15, genEngineStrategy; 1, Gen.map Custom genName ]
+    Gen.frequency [ 15, genEngineStrategy; 1, Gen.map Strategy.Custom genName ]
 
 let private genDeck: Gen<Deck> = gen {
     let cards = Deck.Full |> Map.toList
@@ -90,13 +93,16 @@ let private genEvent: Gen<Event> =
 // draws
 let private genEngineTargeting: Gen<Targeting> =
     Gen.oneof [
-        Gen.constant ChoosesRandomly
-        Gen.constant PlaysSpitefully
-        Gen.map2 (fun banksAbove deal3sBelow -> PlaysGreedily(banksAbove, deal3sBelow)) genProbability genProbability
+        Gen.constant Targeting.ChoosesRandomly
+        Gen.constant Targeting.PlaysSpitefully
+        Gen.map2
+            (fun banksAbove deal3sBelow -> Targeting.PlaysGreedily(banksAbove, deal3sBelow))
+            genProbability
+            genProbability
     ]
 
 let private genTargeting: Gen<Targeting> =
-    Gen.frequency [ 3, genEngineTargeting; 1, Gen.map ChoosesExternally genName ]
+    Gen.frequency [ 3, genEngineTargeting; 1, Gen.map Targeting.ChoosesExternally genName ]
 
 // One to five uniquely named players on any engine strategies and policies
 let private genLineup: Gen<(string * Strategy * Targeting) list> = gen {
@@ -347,8 +353,8 @@ let ``the same seed always produces the same timeline`` () =
             (fun seed ->
                 let simulate () =
                     Timeline.SimulateWith (Random seed) [
-                        "Alice", Strategy.Random, ChoosesRandomly
-                        "Bob", HitUntilScore 25u, ChoosesRandomly
+                        "Alice", Strategy.Random, Targeting.ChoosesRandomly
+                        "Bob", Strategy.HitUntilScore 25u, Targeting.ChoosesRandomly
                     ]
                     |> AsyncSeq.toListAsync
                     |> Async.RunSynchronously

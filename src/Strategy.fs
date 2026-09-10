@@ -43,14 +43,15 @@ module public Strategy =
     /// a decision can be awaited (a key press, a network message) without
     /// holding a thread. DecideWith is the canonical Decider; injecting a
     /// different one into Timeline.SimulateWithDecider lets Custom strategies
-    /// and ChoosesExternally targeting be decided by a human at the terminal.
+    /// and Targeting.ChoosesExternally targeting be decided by a human at the
+    /// terminal.
     /// </summary>
     type public Decider = { HitOrStand: HitOrStandDecider; Target: TargetDecider }
 
     /// <summary>
     /// A strategy that randomly hits or stands with a 50% probability.
     /// </summary>
-    let public Random: Strategy = RandomWithProbability 0.5
+    let public Random: Strategy = Strategy.RandomWithProbability 0.5
 
     /// <summary>
     /// What a player is showing: banked points plus whatever their hand is
@@ -73,69 +74,69 @@ module public Strategy =
     let public DecideHitOrStandWith (random: System.Random) : HitOrStandDecider =
         fun strategy round turn player otherPlayers finishedPlayers decks ->
             match strategy with
-            | AlwaysHits -> Hit
-            | AlwaysStands -> Stand
-            | RandomWithProbability probability -> if random.NextDouble() < probability then Hit else Stand
-            | HitUntilScore threshold -> if Hand.Score player.Hand < threshold then Hit else Stand
-            | HitUntilNumCards threshold ->
+            | Strategy.AlwaysHits -> Hit
+            | Strategy.AlwaysStands -> Stand
+            | Strategy.RandomWithProbability probability -> if random.NextDouble() < probability then Hit else Stand
+            | Strategy.HitUntilScore threshold -> if Hand.Score player.Hand < threshold then Hit else Stand
+            | Strategy.HitUntilNumCards threshold ->
                 if uint (List.length player.Hand) < threshold then
                     Hit
                 else
                     Stand
-            | HitUntilBustProbability threshold ->
+            | Strategy.HitUntilBustProbability threshold ->
                 let deck, discards = decks
                 let onlyPlayer = List.isEmpty otherPlayers
                 if Simulation.probabilityToBust deck discards player.Hand onlyPlayer < threshold then
                     Hit
                 else
                     Stand
-            | HitUntilNaiveBustProbability threshold ->
+            | Strategy.HitUntilNaiveBustProbability threshold ->
                 let unseen = player.Hand |> List.fold Deck.Decrement Deck.Full
                 let onlyPlayer = List.isEmpty otherPlayers
                 if Simulation.probabilityToBust unseen Deck.Empty player.Hand onlyPlayer < threshold then
                     Hit
                 else
                     Stand
-            | SoftHitUntilScore(threshold, temperature) ->
+            | Strategy.SoftHitUntilScore(threshold, temperature) ->
                 let distance = float (Hand.Score player.Hand) - float threshold
                 let probability = 1.0 / (1.0 + exp (distance / temperature))
                 if random.NextDouble() < probability then Hit else Stand
-            | HitUntilTotal target ->
+            | Strategy.HitUntilTotal target ->
                 if player.FirmScore + Hand.Score player.Hand < target then
                     Hit
                 else
                     Stand
-            | HitUntilUniqueValues threshold ->
+            | Strategy.HitUntilUniqueValues threshold ->
                 if uint (Hand.UniqueValueCards player.Hand) < threshold then
                     Hit
                 else
                     Stand
-            | ChasesFlip7(score, uniques) ->
+            | Strategy.ChasesFlip7(score, uniques) ->
                 if uint (Hand.UniqueValueCards player.Hand) >= uniques then
                     Hit
                 elif Hand.Score player.Hand < score then
                     Hit
                 else
                     Stand
-            | EmboldenedBySecondChance threshold ->
+            | Strategy.EmboldenedBySecondChance threshold ->
                 if player.Hand |> List.contains (ActionCard Card.SecondChance) then
                     Hit
                 elif Hand.Score player.Hand < threshold then
                     Hit
                 else
                     Stand
-            | HitWhileBehindLeader margin ->
+            | Strategy.HitWhileBehindLeader margin ->
                 let total = player.FirmScore + Hand.Score player.Hand
                 let leader = otherPlayers @ finishedPlayers |> List.map Showing |> List.fold max 0u
                 if total < leader + margin then Hit else Stand
-            | StandsAfterTurn turns -> if turn <= turns then Hit else Stand
-            | MaximizesExpectedValue ->
+            | Strategy.StandsAfterTurn turns -> if turn <= turns then Hit else Stand
+            | Strategy.MaximizesExpectedValue ->
                 let deck, discards = decks
                 if Simulation.expectedValueOfHit deck discards player.Hand > 0.0 then
                     Hit
                 else
                     Stand
-            | Custom name ->
+            | Strategy.Custom name ->
                 raise (
                     System.InvalidOperationException
                         $"Custom {name} strategy is decided via `Timeline.SimulateWithDecider`, not by DecideHitOrStandWith"
@@ -179,19 +180,19 @@ module public Strategy =
             let helpsLeast () = candidates |> List.minBy Showing
 
             match targeting with
-            | ChoosesRandomly -> candidates |> List.randomChoiceWith random
-            | PlaysSpitefully ->
+            | Targeting.ChoosesRandomly -> candidates |> List.randomChoiceWith random
+            | Targeting.PlaysSpitefully ->
                 match ask with
                 | WhoReceivesSecondChance -> helpsLeast ()
                 | WhoToFreeze -> hurts ()
                 | WhoReceivesDeal3 -> hurts ()
-            | PlaysGreedily(banksAbove, deal3sBelow) ->
+            | Targeting.PlaysGreedily(banksAbove, deal3sBelow) ->
                 match ask, self with
                 | WhoReceivesSecondChance, _ -> helpsLeast ()
                 | WhoToFreeze, Some self when bustProbability self >= banksAbove -> self
                 | WhoReceivesDeal3, Some self when bustProbability self <= deal3sBelow -> self
                 | _ -> hurts ()
-            | ChoosesExternally name ->
+            | Targeting.ChoosesExternally name ->
                 raise (
                     System.InvalidOperationException
                         $"ChoosesExternally {name} targeting is decided via `Timeline.SimulateWithDecider`, not by DecideTargetWith"

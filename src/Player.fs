@@ -5,6 +5,7 @@ namespace Flip7
 /// represented as data rather than functions so that they can be serialized and
 /// deserialized; use Strategy.DecideWith to evaluate one.
 /// </summary>
+[<RequireQualifiedAccess>]
 type public Strategy =
     | AlwaysHits
     | AlwaysStands
@@ -88,6 +89,7 @@ type public Strategy =
 /// Custom because Strategy.Custom is matched unqualified in several places and
 /// a second case of the same name in this namespace would rebind those matches.
 /// </summary>
+[<RequireQualifiedAccess>]
 type public Targeting =
     | ChoosesRandomly
     | PlaysSpitefully
@@ -138,7 +140,7 @@ type public Player = {
         =
         let firmScore = defaultArg firmScore 0u
         let hand = defaultArg hand []
-        let targeting = defaultArg targeting ChoosesRandomly
+        let targeting = defaultArg targeting Targeting.ChoosesRandomly
 
         {
             Name = name

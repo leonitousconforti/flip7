@@ -8,10 +8,10 @@ open Flip7
 let ``the same seed produces the exact same timeline`` () =
     let simulate seed =
         Timeline.SimulateWith (System.Random(seed: int)) [
-            "Alice", Strategy.Random, ChoosesRandomly
-            "Bob", HitUntilScore 25u, ChoosesRandomly
-            "Carol", AlwaysHits, ChoosesRandomly
-            "Dave", HitUntilNumCards 4u, ChoosesRandomly
+            "Alice", Strategy.Random, Targeting.ChoosesRandomly
+            "Bob", Strategy.HitUntilScore 25u, Targeting.ChoosesRandomly
+            "Carol", Strategy.AlwaysHits, Targeting.ChoosesRandomly
+            "Dave", Strategy.HitUntilNumCards 4u, Targeting.ChoosesRandomly
         ]
         |> AsyncSeq.toListAsync
         |> Async.RunSynchronously
@@ -28,9 +28,9 @@ let ``the same seed produces the exact same timeline`` () =
 let ``simulated games uphold the invariants`` (seed: int) =
     let timeline =
         Timeline.SimulateWith (System.Random seed) [
-            "Alice", Strategy.Random, ChoosesRandomly
-            "Bob", HitUntilScore 25u, ChoosesRandomly
-            "Carol", HitUntilNumCards 4u, ChoosesRandomly
+            "Alice", Strategy.Random, Targeting.ChoosesRandomly
+            "Bob", Strategy.HitUntilScore 25u, Targeting.ChoosesRandomly
+            "Carol", Strategy.HitUntilNumCards 4u, Targeting.ChoosesRandomly
         ]
         |> AsyncSeq.toListAsync
         |> Async.RunSynchronously
@@ -69,10 +69,10 @@ let ``simulated games uphold the invariants`` (seed: int) =
 let ``a seeded game produces exactly the events it always has`` (seed: int) (count: int) (digest: string) =
     let events =
         Timeline.SimulateWith (System.Random seed) [
-            "Alice", Strategy.Random, ChoosesRandomly
-            "Bob", HitUntilScore 25u, ChoosesRandomly
-            "Carol", AlwaysHits, ChoosesRandomly
-            "Dave", HitUntilNumCards 4u, ChoosesRandomly
+            "Alice", Strategy.Random, Targeting.ChoosesRandomly
+            "Bob", Strategy.HitUntilScore 25u, Targeting.ChoosesRandomly
+            "Carol", Strategy.AlwaysHits, Targeting.ChoosesRandomly
+            "Dave", Strategy.HitUntilNumCards 4u, Targeting.ChoosesRandomly
         ]
         |> AsyncSeq.toListAsync
         |> Async.RunSynchronously
@@ -99,8 +99,8 @@ let ``a seeded game produces exactly the events it always has`` (seed: int) (cou
 let ``a busted flipper never gives out a set-aside card`` (seed: int) =
     let timeline =
         Timeline.SimulateWith (System.Random seed) [
-            "A", AlwaysHits, ChoosesRandomly
-            "B", AlwaysHits, ChoosesRandomly
+            "A", Strategy.AlwaysHits, Targeting.ChoosesRandomly
+            "B", Strategy.AlwaysHits, Targeting.ChoosesRandomly
         ]
         |> AsyncSeq.toListAsync
         |> Async.RunSynchronously
@@ -127,8 +127,8 @@ let ``seating the same name twice is refused`` () =
     // lineup was written, not wherever the timeline was first pulled
     Assert.Throws<System.ArgumentException>(fun () ->
         Timeline.SimulateWith (System.Random 1) [
-            "Alice", AlwaysHits, ChoosesRandomly
-            "Alice", AlwaysStands, ChoosesRandomly
+            "Alice", Strategy.AlwaysHits, Targeting.ChoosesRandomly
+            "Alice", Strategy.AlwaysStands, Targeting.ChoosesRandomly
         ]
         |> ignore
     )
@@ -136,8 +136,8 @@ let ``seating the same name twice is refused`` () =
 
 [<Fact>]
 let ``continuing from a state with a repeated name is refused`` () =
-    let active = [ Player.Make("A", AlwaysHits) ]
-    let finished = [ Player.Make("A", AlwaysStands) ]
+    let active = [ Player.Make("A", Strategy.AlwaysHits) ]
+    let finished = [ Player.Make("A", Strategy.AlwaysStands) ]
 
     Assert.Throws<System.ArgumentException>(fun () ->
         Timeline.ContinueWith
@@ -160,7 +160,7 @@ let ``SimulateWithDecider routes prompt players through the injected decider`` (
         HitOrStand =
             fun strategy round turn player others finished decks ->
                 match strategy with
-                | Custom name ->
+                | Strategy.Custom name ->
                     decisions <- decisions + 1
 
                     async.Return(
@@ -176,8 +176,8 @@ let ``SimulateWithDecider routes prompt players through the injected decider`` (
 
     let timeline =
         Timeline.SimulateWithDecider (System.Random 5) decide [
-            "You", Custom "TerminalPrompt", ChoosesRandomly
-            "Bot", HitUntilScore 25u, ChoosesRandomly
+            "You", Strategy.Custom "TerminalPrompt", Targeting.ChoosesRandomly
+            "Bot", Strategy.HitUntilScore 25u, Targeting.ChoosesRandomly
         ]
         |> AsyncSeq.toListAsync
         |> Async.RunSynchronously
@@ -193,12 +193,12 @@ let ``SimulateWithDecider routes prompt players through the injected decider`` (
 [<Fact>]
 let ``ContinueWith resumes a round mid-flight and banks finished hands`` () =
     let active = [
-        Player.Make("A", Custom "TerminalPrompt", 10u, [ ValueCard Card.Five ])
-        Player.Make("B", HitUntilScore 25u, 20u, [ ValueCard Card.Seven ])
+        Player.Make("A", Strategy.Custom "TerminalPrompt", 10u, [ ValueCard Card.Five ])
+        Player.Make("B", Strategy.HitUntilScore 25u, 20u, [ ValueCard Card.Seven ])
     ]
 
     let finished = [
-        Player.Make("C", AlwaysStands, 30u, [ ValueCard Card.Nine; ValueCard Card.Two ])
+        Player.Make("C", Strategy.AlwaysStands, 30u, [ ValueCard Card.Nine; ValueCard Card.Two ])
     ]
 
     let deck =
