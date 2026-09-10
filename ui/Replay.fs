@@ -129,7 +129,8 @@ let public Run (source: string) (directory: string) (pace: int option) (cacheCap
         new Persistence.TimelineStore(
             directory,
             ?ingestDelayMilliseconds = ingestDelayMilliseconds,
-            ?cacheCapacity = cacheCapacity
+            ?cacheCapacity = cacheCapacity,
+            emitPlayersInSeatedOrder = true
         )
 
     let execute (dispatch: Msg -> unit) (effect: Effect) : unit =
