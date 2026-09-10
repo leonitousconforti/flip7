@@ -15,7 +15,7 @@ let public pollMilliseconds = 30
 /// screen is a function of the model, rendered only on the heartbeat, so a
 /// burst of keys coalesces into one redraw and work that lands within a beat
 /// never flashes an intermediate state.
-type public Program<'model, 'msg, 'effect, 'key when 'msg: equality and 'key: equality> = {
+type public Program<'model, 'msg, 'effect, 'key, 'sub when 'msg: equality and 'key: equality> = {
     /// The starting model, with nothing in flight: the first heartbeat lands
     /// immediately, so startup work flows through the same declared-in-the-
     /// model path as everything later
@@ -28,8 +28,10 @@ type public Program<'model, 'msg, 'effect, 'key when 'msg: equality and 'key: eq
     Execute: ('msg -> unit) -> 'effect -> unit
     /// Connects external message sources: called once with dispatch before
     /// the first message, so a background process born outside the loop can
-    /// post into it for the program's whole life
-    Subscribe: ('msg -> unit) -> unit
+    /// post into it for the program's whole life. Whatever it returns - a
+    /// handle to that process, or unit when there is none - is what run
+    /// returns once the program finishes
+    Subscribe: ('msg -> unit) -> 'sub
     /// What the screen is a function of: rendered only when this changes
     ViewKey: 'model -> 'key
     View: 'model -> unit
@@ -41,16 +43,17 @@ type public Program<'model, 'msg, 'effect, 'key when 'msg: equality and 'key: eq
     Tick: 'msg
 }
 
-/// Runs a program to completion: a mailbox serializes every message into
-/// Update, the message sources are a background key pump thread (which dies
-/// with the process) and a ticker that posts before sleeping so the first
-/// beat lands immediately.
-let public run (program: Program<'model, 'msg, 'effect, 'key>) : Async<unit> = async {
+/// Runs a program to completion, returning the subscription's handle: a
+/// mailbox serializes every message into Update, the message sources are a
+/// background key pump thread (which dies with the process) and a ticker
+/// that posts before sleeping so the first beat lands immediately.
+let public run (program: Program<'model, 'msg, 'effect, 'key, 'sub>) : Async<'sub> = async {
     let finished = TaskCompletionSource()
+    let subscription = TaskCompletionSource<'sub>()
 
     MailboxProcessor.Start(fun inbox ->
         let execute = program.Execute inbox.Post
-        program.Subscribe inbox.Post
+        subscription.SetResult(program.Subscribe inbox.Post)
 
         let rec loop (model: 'model) (viewed: 'key option) = async {
             let! msg = inbox.Receive()
@@ -92,4 +95,7 @@ let public run (program: Program<'model, 'msg, 'effect, 'key>) : Async<unit> = a
     |> ignore
 
     do! finished.Task |> Async.AwaitTask
+
+    // Set before the first message was processed, so certainly set by now
+    return! subscription.Task |> Async.AwaitTask
 }
