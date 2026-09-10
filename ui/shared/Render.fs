@@ -120,8 +120,8 @@ let public playerRows (prompting: string option) (aiming: string option) (instan
 
         let aimed = aiming = Some player.Name
         let annotation =
-            if aimed then " (aim)"
-            elif prompting = Some player.Name then " (thinking...)"
+            if aimed then " (▸)"
+            elif prompting = Some player.Name then " (▸)"
             else ""
 
         let highlighted =
