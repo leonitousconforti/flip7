@@ -13,6 +13,12 @@ let private spinner = [| "⠋"; "⠙"; "⠹"; "⠸"; "⠼"; "⠴"; "⠦"; "⠧";
 let private padded (s: string) : string =
     s + String.replicate (max 0 (width - visualLength s)) " "
 
+/// Pads every physical line of a (possibly multi-line) string to the full
+/// width, so that overwriting in place erases the previous frame even on the
+/// blank lines a multi-line block would otherwise leave uncleared.
+let private paddedLines (s: string) : string =
+    s.Split('\n') |> Array.map padded |> String.concat "\n"
+
 /// How scared a player should be of busting.
 let private bustEmoji (probabilityToBust: float) : string =
     if probabilityToBust >= 50.0 then "😵"
@@ -123,19 +129,19 @@ let public Frame (status: string) (caption: string) (content: string list) (bott
 
     System.Console.SetCursorPosition(0, 0)
     printfn "%s" (padded rule)
-    printfn "%s" (padded status)
-    printfn "%s" (padded caption)
+    printfn "%s" (paddedLines status)
+    printfn "%s" (paddedLines caption)
     printfn "%s" (padded rule)
 
     for rows in content do
-        printfn "%s" rows
+        printfn "%s" (paddedLines rows)
 
     for _ in 1 .. (playerSlots - List.length content) * 3 do
         printfn "%s" (padded "")
 
     printfn "%s" (padded rule)
-    printfn "%s" (padded bottom)
-    printf "%s" (padded footer)
+    printfn "%s" (paddedLines bottom)
+    printf "%s" (paddedLines footer)
 
 let public RenderTable
     (source: string)
