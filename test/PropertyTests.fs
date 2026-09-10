@@ -85,11 +85,28 @@ let private genEvent: Gen<Event> =
         |> Gen.map (Map.ofList >> RoundEnded)
     ]
 
-// One to five uniquely named players on any engine strategies
-let private genLineup: Gen<(string * Strategy) list> = gen {
+// Every targeting policy DecideTargetWith can evaluate: ChoosesExternally is
+// decided by an injected decider and raises there, so it stays out of engine
+// draws
+let private genEngineTargeting: Gen<Targeting> =
+    Gen.oneof [
+        Gen.constant ChoosesRandomly
+        Gen.constant PlaysSpitefully
+        Gen.constant PlaysGreedily
+    ]
+
+let private genTargeting: Gen<Targeting> =
+    Gen.frequency [ 3, genEngineTargeting; 1, Gen.map ChoosesExternally genName ]
+
+// One to five uniquely named players on any engine strategies and policies
+let private genLineup: Gen<(string * Strategy * Targeting) list> = gen {
     let! count = Gen.choose (1, 5)
     let! strategies = Gen.listOfLength count genEngineStrategy
-    return List.zip (List.take count [ "Alice"; "Bob"; "Carol"; "Dave"; "Eve" ]) strategies
+    let! targetings = Gen.listOfLength count genEngineTargeting
+
+    return
+        List.take count [ "Alice"; "Bob"; "Carol"; "Dave"; "Eve" ]
+        |> List.mapi (fun i name -> name, List.item i strategies, List.item i targetings)
 }
 
 // Deals a hand card by card out of the given deck, keeping at most one
@@ -132,6 +149,7 @@ let private genSplice: Gen<uint * Map<string, uint> * Player list * Player list 
     let names = List.take count [ "Alice"; "Bob"; "Carol"; "Dave"; "Eve" ]
 
     let! strategies = Gen.listOfLength count genEngineStrategy
+    let! targetings = Gen.listOfLength count genEngineTargeting
     let! firmScores = Gen.listOfLength count (Gen.map uint (Gen.choose (0, 190)))
     let! handSizes = Gen.listOfLength count (Gen.choose (0, 6))
 
@@ -159,7 +177,13 @@ let private genSplice: Gen<uint * Map<string, uint> * Player list * Player list 
     let players =
         names
         |> List.mapi (fun i name ->
-            Player.Make(name, List.item i strategies, List.item i firmScores, List.item i hands)
+            Player.Make(
+                name,
+                List.item i strategies,
+                List.item i firmScores,
+                List.item i hands,
+                List.item i targetings
+            )
         )
 
     let active = List.take activeCount players
@@ -192,6 +216,11 @@ let private endsAtTwoHundred (timeline: Instant list) : bool =
 [<Fact>]
 let ``a card round-trips through its string form`` () =
     Prop.forAll (Arb.fromGen genCard) (fun card -> Card.Parse(string card) = card)
+    |> Check.QuickThrowOnFailure
+
+[<Fact>]
+let ``a targeting policy round-trips through its string form`` () =
+    Prop.forAll (Arb.fromGen genTargeting) (fun targeting -> Targeting.Parse(string targeting) = targeting)
     |> Check.QuickThrowOnFailure
 
 [<Fact>]
@@ -317,7 +346,10 @@ let ``the same seed always produces the same timeline`` () =
             (Arb.fromGen genSeed)
             (fun seed ->
                 let simulate () =
-                    Timeline.SimulateWith (Random seed) [ "Alice", Strategy.Random; "Bob", HitUntilScore 25u ]
+                    Timeline.SimulateWith (Random seed) [
+                        "Alice", Strategy.Random, ChoosesRandomly
+                        "Bob", HitUntilScore 25u, ChoosesRandomly
+                    ]
                     |> AsyncSeq.toListAsync
                     |> Async.RunSynchronously
 

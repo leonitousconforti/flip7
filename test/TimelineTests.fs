@@ -8,10 +8,10 @@ open Flip7
 let ``the same seed produces the exact same timeline`` () =
     let simulate seed =
         Timeline.SimulateWith (System.Random(seed: int)) [
-            "Alice", Strategy.Random
-            "Bob", HitUntilScore 25u
-            "Carol", AlwaysHits
-            "Dave", HitUntilNumCards 4u
+            "Alice", Strategy.Random, ChoosesRandomly
+            "Bob", HitUntilScore 25u, ChoosesRandomly
+            "Carol", AlwaysHits, ChoosesRandomly
+            "Dave", HitUntilNumCards 4u, ChoosesRandomly
         ]
         |> AsyncSeq.toListAsync
         |> Async.RunSynchronously
@@ -28,9 +28,9 @@ let ``the same seed produces the exact same timeline`` () =
 let ``simulated games uphold the invariants`` (seed: int) =
     let timeline =
         Timeline.SimulateWith (System.Random seed) [
-            "Alice", Strategy.Random
-            "Bob", HitUntilScore 25u
-            "Carol", HitUntilNumCards 4u
+            "Alice", Strategy.Random, ChoosesRandomly
+            "Bob", HitUntilScore 25u, ChoosesRandomly
+            "Carol", HitUntilNumCards 4u, ChoosesRandomly
         ]
         |> AsyncSeq.toListAsync
         |> Async.RunSynchronously
@@ -55,28 +55,96 @@ let ``simulated games uphold the invariants`` (seed: int) =
     |> List.pairwise
     |> List.iter (fun (before, after) -> before |> Map.iter (fun name score -> Assert.True(score <= after[name])))
 
+// A characterization test, not a specification: it pins the exact event stream
+// a seed produces so a refactor meant to preserve behavior can prove it did.
+// `the same seed produces the exact same timeline` cannot do that, because it
+// compares two runs of the same build. Regenerate these deliberately whenever
+// engine behavior changes on purpose - a draw consumes randomness proportional
+// to the cards left in the deck, so one extra roll anywhere reshuffles the
+// whole rest of the game and every digest below moves.
+[<Theory>]
+[<InlineData(42, 117, "D004A47D9B319D3E")>]
+[<InlineData(7, 146, "DA6EF3B239A1AAE1")>]
+[<InlineData(1234, 145, "32481F4D5223AA74")>]
+let ``a seeded game produces exactly the events it always has`` (seed: int) (count: int) (digest: string) =
+    let events =
+        Timeline.SimulateWith (System.Random seed) [
+            "Alice", Strategy.Random, ChoosesRandomly
+            "Bob", HitUntilScore 25u, ChoosesRandomly
+            "Carol", AlwaysHits, ChoosesRandomly
+            "Dave", HitUntilNumCards 4u, ChoosesRandomly
+        ]
+        |> AsyncSeq.toListAsync
+        |> Async.RunSynchronously
+        |> List.map (fun instant -> string instant.Event)
+
+    Assert.Equal(count, List.length events)
+
+    let actual =
+        events
+        |> String.concat "\n"
+        |> System.Text.Encoding.UTF8.GetBytes
+        |> System.Security.Cryptography.SHA256.HashData
+        |> System.Convert.ToHexString
+
+    Assert.Equal(digest, actual.Substring(0, 16))
+
+// Seeds 657 and 1657 each reach the case the rules single out: a deal3 flips
+// two set-aside cards, the first is given back to the flipper and busts them,
+// and the second must then be discarded unresolved rather than handed out by a
+// player whose round is over
+[<Theory>]
+[<InlineData 657>]
+[<InlineData 1657>]
+let ``a busted flipper never gives out a set-aside card`` (seed: int) =
+    let timeline =
+        Timeline.SimulateWith (System.Random seed) [
+            "A", AlwaysHits, ChoosesRandomly
+            "B", AlwaysHits, ChoosesRandomly
+        ]
+        |> AsyncSeq.toListAsync
+        |> Async.RunSynchronously
+
+    for before, instant in List.pairwise timeline do
+        let giver =
+            match instant.Event with
+            | Froze(source, _) -> Some source
+            | Dealt3(source, _, _) -> Some source
+            | _ -> None
+
+        match giver with
+        | None -> ()
+        | Some name ->
+            // Busting on the event being examined is legal: you may deal
+            // yourself a deal3 and bust on the flips
+            Assert.DoesNotContain(before.Players, (fun player -> player.Name = name && Hand.IsBust player.Hand))
+
 [<Fact>]
 let ``SimulateWithDecider routes prompt players through the injected decider`` () =
     let mutable decisions = 0
 
-    let decide: Strategy.Decider =
-        fun strategy round turn player others finished decks ->
-            match strategy with
-            | Custom name ->
-                decisions <- decisions + 1
+    let decide: Strategy.Decider = {
+        HitOrStand =
+            fun strategy round turn player others finished decks ->
+                match strategy with
+                | Custom name ->
+                    decisions <- decisions + 1
 
-                async.Return(
-                    if Hand.Score player.Hand < 18u then
-                        Strategy.Hit
-                    else
-                        Strategy.Stand
-                )
-            | strategy -> Strategy.DecideWith (System.Random 1) strategy round turn player others finished decks
+                    async.Return(
+                        if Hand.Score player.Hand < 18u then
+                            Strategy.Hit
+                        else
+                            Strategy.Stand
+                    )
+                | strategy ->
+                    Strategy.DecideHitOrStandWith (System.Random 1) strategy round turn player others finished decks
+        Target = Strategy.DecideTargetWith(System.Random 1)
+    }
 
     let timeline =
         Timeline.SimulateWithDecider (System.Random 5) decide [
-            "You", Custom "TerminalPrompt"
-            "Bot", HitUntilScore 25u
+            "You", Custom "TerminalPrompt", ChoosesRandomly
+            "Bot", HitUntilScore 25u, ChoosesRandomly
         ]
         |> AsyncSeq.toListAsync
         |> Async.RunSynchronously
@@ -107,7 +175,13 @@ let ``ContinueWith resumes a round mid-flight and banks finished hands`` () =
 
     // Everyone stands as soon as they are asked, so the seeded round closes
     // immediately; both actives already took their forced first hit
-    let decide: Strategy.Decider = fun _ _ _ _ _ _ _ -> async.Return Strategy.Stand
+    // Standing is only the hit-or-stand half: play continues past the seeded
+    // round, and a forced first hit there can still flip an action card that
+    // has to be aimed at someone
+    let decide: Strategy.Decider = {
+        HitOrStand = fun _ _ _ _ _ _ _ -> async.Return Strategy.Stand
+        Target = Strategy.DecideTargetWith(System.Random 3)
+    }
 
     let turnsTaken = Map.ofList [ "A", 1u; "B", 1u ]
 

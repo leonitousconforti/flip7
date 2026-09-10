@@ -3,11 +3,12 @@ module StrategyTests
 open Xunit
 open Flip7
 
-// DecideWith takes the strategy to evaluate as an argument, so the player's
-// own declared strategy is inert in these tests
+// The evaluators take the strategy or targeting policy to evaluate as an
+// argument, so the player's own declared policies are inert in these tests
 let private player: Player = {
     Name = "Alice"
     Strategy = Strategy.Random
+    Targeting = ChoosesRandomly
     FirmScore = 0u
     Hand = [ ValueCard Card.Seven; ValueCard Card.Eight ]
 }
@@ -15,6 +16,7 @@ let private player: Player = {
 let private other: Player = {
     Name = "Bob"
     Strategy = Strategy.Random
+    Targeting = ChoosesRandomly
     FirmScore = 0u
     Hand = [ ValueCard Card.One ]
 }
@@ -24,7 +26,7 @@ let private decks = Deck.Full, Deck.Empty
 // Tests are an edge of the program, so they inject the randomness and run
 // the asynchronous decider synchronously
 let private decide strategy round turn player others finished decks =
-    Strategy.DecideWith (System.Random 1) strategy round turn player others finished decks
+    Strategy.DecideHitOrStandWith (System.Random 1) strategy round turn player others finished decks
     |> Async.RunSynchronously
 
 [<Fact>]
@@ -50,16 +52,17 @@ let ``ToString and Parse round-trip every strategy`` () =
     |> List.iter (fun strategy -> Assert.Equal(strategy, Strategy.Parse(string strategy)))
 
 [<Fact>]
-let ``Externally decided strategies cannot be evaluated by DecideWith`` () =
+let ``Externally decided strategies cannot be evaluated by DecideHitOrStandWith`` () =
     let player: Player = {
         Name = "You"
         Strategy = Custom "TerminalPrompt"
+        Targeting = ChoosesRandomly
         FirmScore = 0u
         Hand = [ ValueCard Card.Seven ]
     }
 
     Assert.Throws<System.InvalidOperationException>(fun () ->
-        Strategy.DecideWith (System.Random 1) (Custom "TerminalPrompt") 1u 2u player [] [] decks
+        Strategy.DecideHitOrStandWith (System.Random 1) (Custom "TerminalPrompt") 1u 2u player [] [] decks
         |> ignore
     )
     |> ignore
@@ -86,7 +89,7 @@ let ``RandomWithProbability is reproducible with a seeded random`` () =
         List.init
             100
             (fun _ ->
-                Strategy.DecideWith (System.Random seed) Strategy.Random 0u 0u player [] [] decks
+                Strategy.DecideHitOrStandWith (System.Random seed) Strategy.Random 0u 0u player [] [] decks
                 |> Async.RunSynchronously
             )
 
@@ -213,3 +216,126 @@ let ``StandsAfterTurn hits up to and including the given turn`` () =
 let ``MaximizesExpectedValue hits on a fresh deck and stands when every card busts`` () =
     Assert.Equal(Strategy.Hit, decide MaximizesExpectedValue 0u 0u player [] [] decks)
     Assert.Equal(Strategy.Stand, decide MaximizesExpectedValue 0u 0u player [] [] (allSevens, Deck.Empty))
+
+// ---- targeting ----
+
+// The three candidates the engine would offer, distinct on every axis a policy
+// looks at: Bob is furthest ahead, Carol is closest to busting, Dave is
+// furthest behind
+let private leader: Player = {
+    Name = "Bob"
+    Strategy = Strategy.Random
+    Targeting = ChoosesRandomly
+    FirmScore = 60u
+    Hand = []
+}
+
+let private bustProne: Player = {
+    Name = "Carol"
+    Strategy = Strategy.Random
+    Targeting = ChoosesRandomly
+    FirmScore = 20u
+    Hand = [
+        ValueCard Card.One
+        ValueCard Card.Two
+        ValueCard Card.Three
+        ValueCard Card.Four
+        ValueCard Card.Five
+        ValueCard Card.Six
+    ]
+}
+
+let private laggard: Player = {
+    Name = "Dave"
+    Strategy = Strategy.Random
+    Targeting = ChoosesRandomly
+    FirmScore = 5u
+    Hand = []
+}
+
+let private opponents = [ leader; bustProne; laggard ]
+
+// Out of a full deck: 53% of a card busting this hand, so a greedy player banks
+let private risky = [
+    ValueCard Card.Eight
+    ValueCard Card.Nine
+    ValueCard Card.Ten
+    ValueCard Card.Eleven
+    ValueCard Card.Twelve
+]
+
+// ...against 1%, so a greedy player takes three more
+let private safe = [ ValueCard Card.One ]
+
+let private aim targeting ask chooser candidates =
+    Strategy.DecideTargetWith (System.Random 1) targeting ask chooser candidates [] decks
+    |> Async.RunSynchronously
+
+[<Fact>]
+let ``ToString and Parse round-trip every targeting policy`` () =
+    [
+        ChoosesRandomly
+        PlaysSpitefully
+        PlaysGreedily
+        ChoosesExternally "TerminalPrompt"
+    ]
+    |> List.iter (fun targeting -> Assert.Equal(targeting, Targeting.Parse(string targeting)))
+
+[<Fact>]
+let ``TryParse returns None for an unparseable targeting policy`` () =
+    Assert.Equal(None, Targeting.TryParse "Bogus")
+    Assert.Equal(None, Targeting.TryParse "ChoosesExternally")
+
+[<Fact>]
+let ``Externally decided targeting cannot be evaluated by DecideTargetWith`` () =
+    Assert.Throws<System.InvalidOperationException>(fun () ->
+        aim (ChoosesExternally "TerminalPrompt") Strategy.WhoToFreeze player opponents
+        |> ignore
+    )
+    |> ignore
+
+[<Fact>]
+let ``a spiteful player freezes whoever is furthest ahead`` () =
+    Assert.Equal("Bob", (aim PlaysSpitefully Strategy.WhoToFreeze player opponents).Name)
+
+[<Fact>]
+let ``a spiteful player deals three to whoever is closest to busting`` () =
+    Assert.Equal("Carol", (aim PlaysSpitefully Strategy.WhoReceivesDeal3 player opponents).Name)
+
+[<Fact>]
+let ``a spiteful player passes a second chance to whoever is furthest behind`` () =
+    Assert.Equal("Dave", (aim PlaysSpitefully Strategy.WhoReceivesSecondChance player opponents).Name)
+
+[<Fact>]
+let ``a greedy player freezes themselves rather than flip on a likely bust`` () =
+    let chooser = { player with Hand = risky }
+
+    Assert.Equal("Alice", (aim PlaysGreedily Strategy.WhoToFreeze chooser (chooser :: opponents)).Name)
+
+[<Fact>]
+let ``a greedy player deals three to themselves while their hand is safe`` () =
+    let chooser = { player with Hand = safe }
+
+    Assert.Equal("Alice", (aim PlaysGreedily Strategy.WhoReceivesDeal3 chooser (chooser :: opponents)).Name)
+
+[<Fact>]
+let ``a greedy player deals three away once their own hand is risky`` () =
+    let chooser = { player with Hand = risky }
+
+    Assert.Equal("Carol", (aim PlaysGreedily Strategy.WhoReceivesDeal3 chooser (chooser :: opponents)).Name)
+
+// A player frozen earlier in a deal3 still hands out the cards they set aside,
+// and can no longer keep one for themselves
+[<Fact>]
+let ``a chooser who is no longer a candidate still aims at someone legal`` () =
+    let chooser = { player with Hand = risky }
+
+    Assert.Equal("Bob", (aim PlaysGreedily Strategy.WhoToFreeze chooser opponents).Name)
+    Assert.Equal("Carol", (aim PlaysGreedily Strategy.WhoReceivesDeal3 chooser opponents).Name)
+
+[<Fact>]
+let ``choosing randomly always answers with one of the candidates`` () =
+    let names = opponents |> List.map (fun candidate -> candidate.Name)
+
+    for _ in 1..50 do
+        Assert.Contains((aim ChoosesRandomly Strategy.WhoToFreeze player opponents).Name, names)

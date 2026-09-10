@@ -12,9 +12,9 @@ module Simulation =
                 |> List.map (fun card -> Map.find card pdf)
                 |> List.sum
 
-        // Simple case: there are other players whom haven't stood or busted
-        // yet so we don't consider the case of needing to play action cards
-        // on ourselves
+        // Simple case: there are other players whom haven't stood or busted yet
+        // so we don't consider the case of needing to play action cards on
+        // ourselves
         if not onlyPlayer then
             probabilityOfDuplicateValueCard
         else

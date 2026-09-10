@@ -103,8 +103,8 @@ module public Deck =
                 deck
 
     /// <summary>
-    /// Tries to parse a deck from an array of lines, where each line is in
-    /// the format "Card: Count".
+    /// Tries to parse a deck from an array of lines, where each line is in the
+    /// format "Card: Count".
     /// </summary>
     let public TryDeserialize (lines: string seq) : Deck option =
         try

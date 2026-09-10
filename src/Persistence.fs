@@ -30,6 +30,7 @@ module public Persistence =
                 write $"player{index}.txt" [|
                     string player.Name
                     string player.Strategy
+                    string player.Targeting
                     string player.FirmScore
                     String.Empty
                     yield! Hand.Serialize player.Hand
@@ -67,8 +68,9 @@ module public Persistence =
                     return {
                         Name = lines[0]
                         Strategy = lines[1] |> Strategy.Parse
-                        FirmScore = lines[2] |> uint
-                        Hand = lines |> Seq.skip 4 |> Hand.Deserialize
+                        Targeting = lines[2] |> Targeting.Parse
+                        FirmScore = lines[3] |> uint
+                        Hand = lines |> Seq.skip 5 |> Hand.Deserialize
                     }
                 })
                 |> Async.Parallel
@@ -291,21 +293,21 @@ module public Persistence =
                 cts.Cancel()
                 cts.Dispose()
 
-        // The round number (starting at 1) of the instant at the cursor, given the
-        // ascending indices of the RoundEnded instants seen so far. A RoundEnded
-        // instant belongs to the round it closes.
+        // The round number (starting at 1) of the instant at the cursor, given
+        // the ascending indices of the RoundEnded instants seen so far. A
+        // RoundEnded instant belongs to the round it closes.
         static member inline public RoundOf (roundEnds: int list) (cursor: int) : int =
             1 + (roundEnds |> List.filter (fun index -> index < cursor) |> List.length)
 
-        // The index of the nearest RoundEnded instant strictly after the cursor, or
-        // the newest known index when that round has not ended yet
+        // The index of the nearest RoundEnded instant strictly after the
+        // cursor, or the newest known index when that round has not ended yet
         static member inline public NextRoundEnded (roundEnds: int list) (newest: int) (cursor: int) : int =
             roundEnds
             |> List.tryFind (fun index -> index > cursor)
             |> Option.defaultValue newest
 
-        // The index of the nearest RoundEnded instant strictly before the cursor, or
-        // the start of the timeline when there is none
+        // The index of the nearest RoundEnded instant strictly before the
+        // cursor, or the start of the timeline when there is none
         static member inline public PrevRoundEnded (roundEnds: int list) (cursor: int) : int =
             roundEnds
             |> List.tryFindBack (fun index -> index < cursor)

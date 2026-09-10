@@ -2,8 +2,8 @@ namespace Flip7
 
 /// <summary>
 /// A strategy decides whether a player hits or stands. Strategies are
-/// represented as data rather than functions so that they can be serialized
-/// and deserialized; use Strategy.DecideWith to evaluate one.
+/// represented as data rather than functions so that they can be serialized and
+/// deserialized; use Strategy.DecideWith to evaluate one.
 /// </summary>
 type public Strategy =
     | AlwaysHits
@@ -79,20 +79,64 @@ type public Strategy =
         with :? System.FormatException ->
             None
 
+/// <summary>
+/// A targeting policy decides who an action card is given to: who gets frozen,
+/// who is dealt three cards, and who is passed a second chance its holder
+/// cannot keep. Like a strategy it is data rather than a function so that it
+/// can be serialized and deserialized; use Strategy.DecideTargetWith to
+/// evaluate one. The escape hatch is called ChoosesExternally rather than
+/// Custom because Strategy.Custom is matched unqualified in several places and
+/// a second case of the same name in this namespace would rebind those matches.
+/// </summary>
+type public Targeting =
+    | ChoosesRandomly
+    | PlaysSpitefully
+    | PlaysGreedily
+    | ChoosesExternally of string
+
+    override self.ToString() : string =
+        match self with
+        | ChoosesRandomly -> "ChoosesRandomly"
+        | PlaysSpitefully -> "PlaysSpitefully"
+        | PlaysGreedily -> "PlaysGreedily"
+        | ChoosesExternally name -> $"ChoosesExternally {name}"
+
+    static member public Parse(string: string) : Targeting =
+        if string.StartsWith("ChoosesExternally ", System.StringComparison.Ordinal) then
+            ChoosesExternally(string.Substring("ChoosesExternally ".Length))
+        else
+            match string with
+            | "ChoosesRandomly" -> ChoosesRandomly
+            | "PlaysSpitefully" -> PlaysSpitefully
+            | "PlaysGreedily" -> PlaysGreedily
+            | _ -> raise (System.FormatException $"Invalid targeting string: {string}")
+
+    static member TryParse(string: string) : Targeting option =
+        try
+            string |> Targeting.Parse |> Some
+        with :? System.FormatException ->
+            None
+
 type public Player = {
     Name: string
     Strategy: Strategy
+    Targeting: Targeting
     FirmScore: uint
     Hand: Hand
 } with
 
-    static member Make(name: string, strategy: Strategy, ?firmScore: uint, ?hand: Hand) : Player =
+    static member Make
+        (name: string, strategy: Strategy, ?firmScore: uint, ?hand: Hand, ?targeting: Targeting)
+        : Player
+        =
         let firmScore = defaultArg firmScore 0u
         let hand = defaultArg hand []
+        let targeting = defaultArg targeting ChoosesRandomly
 
         {
             Name = name
             Strategy = strategy
+            Targeting = targeting
             FirmScore = firmScore
             Hand = hand
         }

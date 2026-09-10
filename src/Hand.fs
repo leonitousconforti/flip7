@@ -7,8 +7,8 @@ type public Hand = Card list
 
 module public Hand =
     /// <summary>
-    /// The number of distinct value cards in a hand; modifier and action
-    /// cards do not count.
+    /// The number of distinct value cards in a hand; modifier and action cards
+    /// do not count.
     /// </summary>
     let public UniqueValueCards: Hand -> int =
         List.filter (fun card -> card.IsValueCard) >> List.distinct >> List.length

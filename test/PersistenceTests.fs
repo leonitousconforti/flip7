@@ -22,8 +22,8 @@ let ``WriteInstant and ReadInstant round-trip`` () =
             Event = Drew("Alice", ValueCard Card.Seven)
             Players = [
                 Player.Make("Alice", HitUntilScore 45u, 100u, [ ValueCard Card.Seven; ModifierCard Card.Double ])
-                Player.Make("Bob", RandomWithProbability 0.25, 55u, [])
-                Player.Make("Carol", AlwaysStands, 0u, [ ActionCard Card.SecondChance ])
+                Player.Make("Bob", RandomWithProbability 0.25, 55u, [], PlaysSpitefully)
+                Player.Make("Carol", AlwaysStands, 0u, [ ActionCard Card.SecondChance ], ChoosesExternally "Sage")
             ]
             Deck = Deck.Full |> Map.add (ValueCard Card.Seven) 3u
             Discards = Deck.Empty |> Map.add (ValueCard Card.Twelve) 2u
@@ -40,7 +40,10 @@ let ``WriteInstant and ReadInstant round-trip`` () =
 let ``a written timeline reads back identically`` () =
     inTempDirectory (fun directory ->
         let original =
-            Timeline.SimulateWith (System.Random 42) [ "Alice", Strategy.Random; "Bob", HitUntilScore 25u ]
+            Timeline.SimulateWith (System.Random 42) [
+                "Alice", Strategy.Random, ChoosesRandomly
+                "Bob", HitUntilScore 25u, ChoosesRandomly
+            ]
             |> AsyncSeq.toListAsync
             |> Async.RunSynchronously
 
@@ -60,7 +63,10 @@ let ``a written timeline reads back identically`` () =
 let ``a continuation appends to a persisted timeline`` () =
     inTempDirectory (fun directory ->
         let first =
-            Timeline.SimulateWith (System.Random 7) [ "Alice", Strategy.Random; "Bob", HitUntilScore 25u ]
+            Timeline.SimulateWith (System.Random 7) [
+                "Alice", Strategy.Random, ChoosesRandomly
+                "Bob", HitUntilScore 25u, ChoosesRandomly
+            ]
             |> AsyncSeq.toListAsync
             |> Async.RunSynchronously
 
