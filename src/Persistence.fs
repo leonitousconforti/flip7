@@ -142,20 +142,26 @@ module public Persistence =
     /// atomically (staged then renamed by the writer), so once
     /// {directory}/{index} exists its contents are complete and the store can
     /// tail the directory for growth. Built on a MailboxProcessor: a single
-    /// agent owns all of the mutable state - the frontier, the round ends, and
-    /// the LRU cache - and every operation arrives as a message, so nothing is
-    /// locked because nothing is shared. Ingestion is folded into the same
-    /// message loop, but the frontier read runs as its own task that the loop
-    /// polls: a slow instant at the frontier never camps on the mailbox, so
-    /// viewer reads take precedence over background tailing. Only lightweight
-    /// metadata is held in memory plus a small cache of recently viewed
-    /// instants: memory stays flat no matter how long the timeline grows, and
-    /// there is no channel to the producer at all - the disk is the only
-    /// source. Dispose stops the agent.
+    /// agent owns all of the mutable state - the frontier, the seating, the
+    /// round ends, and the LRU cache - and every operation arrives as a
+    /// message, so nothing is locked because nothing is shared. Ingestion is
+    /// folded into the same message loop, but the frontier read runs as its own
+    /// task that the loop polls: a slow instant at the frontier never camps on
+    /// the mailbox, so viewer reads take precedence over background tailing.
+    /// Only lightweight metadata is held in memory plus a small cache of
+    /// recently viewed instants: memory stays flat no matter how long the
+    /// timeline grows, and there is no channel to the producer at all - the
+    /// disk is the only source. With emitPlayersInSeatedOrder (off by default),
+    /// every emitted instant lists its players in the seating order stored by
+    /// the TableSeated instant that opens the timeline, rather than the stored
+    /// rotation order. Dispose stops the agent.
     /// </summary>
-    type public TimelineStore(directory: string, ?ingestDelayMilliseconds: int64, ?cacheCapacity: int) =
+    type public TimelineStore
+        (directory: string, ?ingestDelayMilliseconds: int64, ?cacheCapacity: int, ?emitPlayersInSeatedOrder: bool)
+        =
         let ingestDelayMilliseconds = defaultArg ingestDelayMilliseconds 100L
         let cacheCapacity = defaultArg cacheCapacity 64
+        let emitPlayersInSeatedOrder = defaultArg emitPlayersInSeatedOrder false
 
         let cts = new CancellationTokenSource()
 
@@ -179,6 +185,19 @@ module public Persistence =
                     let mutable count = 0
                     let mutable isComplete = false
                     let mutable roundEnds: int list = []
+                    let mutable seating: string list option = None
+
+                    let seatPlayers (instant: Instant) : Instant =
+                        match seating with
+                        | None -> instant
+                        | Some seating -> {
+                            instant with
+                                Players =
+                                    seating
+                                    |> List.choose (fun name ->
+                                        instant.Players |> List.tryFind (fun player -> player.Name = name)
+                                    )
+                          }
 
                     let read (index: int) : Async<Result<Instant, exn>> =
                         ReadInstantAsync(Path.Join(directory, string index))
@@ -212,7 +231,7 @@ module public Persistence =
                         | Some(Snapshot channel) -> channel.Reply(count, isComplete, roundEnds)
                         | Some(Read(index, channel)) ->
                             let! instant = lookup index
-                            channel.Reply instant
+                            instant |> Result.map seatPlayers |> channel.Reply
                         | None -> ()
 
                         match frontier with
@@ -223,6 +242,10 @@ module public Persistence =
                             | Error _ -> count <- count + 1
                             | Ok instant ->
                                 remember count instant
+
+                                if count = 0 && emitPlayersInSeatedOrder then
+                                    seating <- Some(instant.Players |> List.map (fun player -> player.Name))
+
                                 if instant.Event.IsRoundEnded then
                                     roundEnds <- roundEnds @ [ count ]
                                     if instant.Players |> List.exists (fun player -> player.FirmScore >= 200u) then
