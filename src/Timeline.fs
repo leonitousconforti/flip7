@@ -155,9 +155,10 @@ module public Timeline =
         (active: Player list)
         (finished: Player list)
         (decks: Deck * Deck)
-        : Instant list * Player list * Player list * (Deck * Deck) =
+        : Async<Instant list * Player list * Player list * (Deck * Deck)> = async {
         let index, target = ChooseAny random active
-        step (Froze(source, target.Name)) (List.removeAt index active) (WithCard card target :: finished) decks
+        return step (Froze(source, target.Name)) (List.removeAt index active) (WithCard card target :: finished) decks
+    }
 
     let private GiveAwaySecondChance
         (random: System.Random)
@@ -165,7 +166,7 @@ module public Timeline =
         (holder: string)
         (active: Player list)
         (decks: Deck * Deck)
-        : string option * Player list * (Deck * Deck) =
+        : Async<string option * Player list * (Deck * Deck)> = async {
         let candidates =
             active
             |> List.indexed
@@ -174,10 +175,11 @@ module public Timeline =
         match candidates with
         | [] ->
             let deck, discards = decks
-            None, active, (deck, Deck.Increment discards card)
+            return None, active, (deck, Deck.Increment discards card)
         | _ ->
             let index, recipient = candidates |> List.randomChoiceWith random
-            Some recipient.Name, List.updateAt index (WithCard card recipient) active, decks
+            return Some recipient.Name, List.updateAt index (WithCard card recipient) active, decks
+    }
 
     let private RemoveFirst (card: Card) (hand: Hand) : Hand =
         match hand |> List.tryFindIndex ((=) card) with
@@ -204,7 +206,7 @@ module public Timeline =
         (active: Player list)
         (finished: Player list)
         (decks: Deck * Deck)
-        : Instant list * Player list * Player list * (Deck * Deck) =
+        : Async<Instant list * Player list * Player list * (Deck * Deck)> = async {
 
         let targetName = (List.item targetIndex active).Name
 
@@ -214,11 +216,11 @@ module public Timeline =
             (setAsides: Card list)
             (active: Player list)
             (decks: Deck * Deck)
-            : bool * Card list * Card list * Player list * (Deck * Deck) =
+            : Async<bool * Card list * Card list * Player list * (Deck * Deck)> = async {
             let target = List.item targetIndex active
 
             if remaining = 0u || Hand.HasFlip7Bonus target.Hand then
-                false, List.rev flipped, List.rev setAsides, active, decks
+                return false, List.rev flipped, List.rev setAsides, active, decks
             else
 
             let decks', card = Deck.Draw1With random decks
@@ -231,15 +233,15 @@ module public Timeline =
             | ActionCard Card.Freeze
             | ActionCard Card.Deal3 ->
                 let active' = List.updateAt targetIndex (WithCard card target) active
-                Flip (remaining - 1u) flipped' (card :: setAsides) active' decks'
+                return! Flip (remaining - 1u) flipped' (card :: setAsides) active' decks'
 
             | ActionCard Card.SecondChance when not (HasSecondChance target) ->
                 let active' = List.updateAt targetIndex (WithCard card target) active
-                Flip (remaining - 1u) flipped' setAsides active' decks'
+                return! Flip (remaining - 1u) flipped' setAsides active' decks'
 
             | ActionCard Card.SecondChance ->
-                let _, active', decks'' = GiveAwaySecondChance random card target.Name active decks'
-                Flip (remaining - 1u) flipped' setAsides active' decks''
+                let! _, active', decks'' = GiveAwaySecondChance random card target.Name active decks'
+                return! Flip (remaining - 1u) flipped' setAsides active' decks''
 
             | ValueCard _
             | ModifierCard _ ->
@@ -248,18 +250,19 @@ module public Timeline =
                 let active' = List.updateAt targetIndex { target with Hand = reducedHand } active
 
                 if isBust then
-                    true, List.rev flipped', List.rev setAsides, active', decks''
+                    return true, List.rev flipped', List.rev setAsides, active', decks''
                 else
-                    Flip (remaining - 1u) flipped' setAsides active' decks''
+                    return! Flip (remaining - 1u) flipped' setAsides active' decks''
+        }
 
-        let isBust, flipped, setAsides, active', decks' = Flip 3u [] [] active decks
+        let! isBust, flipped, setAsides, active', decks' = Flip 3u [] [] active decks
         let event = Dealt3(source, targetName, flipped)
 
         if isBust then
             let target' = List.item targetIndex active'
             let active'' = List.removeAt targetIndex active'
             let finished' = target' :: finished
-            step event active'' finished' decks'
+            return step event active'' finished' decks'
         else
             // Takes the pending set-aside card out of the target's hand
             // (wherever the target sits now) so it can move to its destination.
@@ -276,39 +279,49 @@ module public Timeline =
             let ResolveSetAside
                 ((instants, active, finished, decks): Instant list * Player list * Player list * (Deck * Deck))
                 (setAside: Card)
-                =
+                : Async<Instant list * Player list * Player list * (Deck * Deck)> = async {
                 let roundEnded =
                     List.isEmpty active
                     || active |> List.exists (fun player -> Hand.HasFlip7Bonus player.Hand)
 
                 match setAside with
-                | _ when roundEnded -> instants, active, finished, decks
+                | _ when roundEnded -> return instants, active, finished, decks
                 | ActionCard Card.Freeze ->
                     let active, finished = unpark active finished setAside
 
-                    let more, active', finished', decks' =
+                    let! more, active', finished', decks' =
                         FreezePlayer random targetName setAside active finished decks
 
-                    instants @ more, active', finished', decks'
+                    return instants @ more, active', finished', decks'
                 | ActionCard Card.Deal3 ->
                     let active, finished = unpark active finished setAside
                     let deck, discards = decks
                     let decks = deck, Deck.Increment discards setAside
                     let index, _ = ChooseAny random active
 
-                    let nested, active', finished', decks' =
+                    let! nested, active', finished', decks' =
                         ResolveDeal3 random targetName index active finished decks
 
-                    instants @ nested, active', finished', decks'
-                | _ -> raise (System.InvalidOperationException $"Unexpected set-aside card: {setAside}")
+                    return instants @ nested, active', finished', decks'
+                | _ -> return raise (System.InvalidOperationException $"Unexpected set-aside card: {setAside}")
+            }
 
-            setAsides |> List.fold ResolveSetAside (step event active' finished decks')
+            return!
+                setAsides
+                |> AsyncSeq.ofSeq
+                |> AsyncSeq.foldAsync ResolveSetAside (step event active' finished decks')
+    }
 
     // Resolves a single card drawn by the current player on a hit: adds it to
     // the hand, gives away or discards an unkeepable second chance, freezes a
     // player, busts on a duplicate, or hands off to the deal3 resolver. Returns
     // the instants produced and the active players, finished players, and decks
     // to continue from. The decks passed in are already past the draw.
+    //
+    // Resolution is asynchronous because a card can pose a choice - who to
+    // freeze, who receives a deal3, who is passed a second chance - and whoever
+    // answers may need to be awaited. Those choices are made by ChooseAny for
+    // now, so nothing suspends and the draw order off the random is unchanged.
     let private ResolveDraw
         (random: System.Random)
         (current: Player)
@@ -316,7 +329,7 @@ module public Timeline =
         (finished: Player list)
         (decks: Deck * Deck)
         (card: Card)
-        : Instant list * Player list * Player list * (Deck * Deck) =
+        : Async<Instant list * Player list * Player list * (Deck * Deck)> = async {
         let deck, discards = decks
 
         // Adds a card that can never bust the player to their hand and passes
@@ -325,14 +338,14 @@ module public Timeline =
             step (Drew(current.Name, card)) (others @ [ WithCard card current ]) finished decks
 
         match card with
-        | ModifierCard _ -> keep ()
-        | ActionCard Card.SecondChance when not (HasSecondChance current) -> keep ()
+        | ModifierCard _ -> return keep ()
+        | ActionCard Card.SecondChance when not (HasSecondChance current) -> return keep ()
 
         // Can never bust on a second chance card, but you also can't hold two of
         // them at the same time: give it away, or discard it if no one can hold
         // it
         | ActionCard Card.SecondChance ->
-            let recipient, active', decks' =
+            let! recipient, active', decks' =
                 GiveAwaySecondChance random card current.Name (others @ [ current ]) decks
 
             let event =
@@ -340,11 +353,11 @@ module public Timeline =
                 | Some name -> SecondChancePassed(current.Name, name)
                 | None -> SecondChanceDiscarded current.Name
 
-            step event active' finished decks'
+            return step event active' finished decks'
 
         // Can never bust on a freeze card, just pick someone to freeze (possibly
         // yourself); they bank their points and are done for the round
-        | ActionCard Card.Freeze -> FreezePlayer random current.Name card (others @ [ current ]) finished decks
+        | ActionCard Card.Freeze -> return! FreezePlayer random current.Name card (others @ [ current ]) finished decks
 
         // Can bust on a value card, so reduce the hand to see whether the player
         // is done
@@ -354,9 +367,9 @@ module public Timeline =
             let current' = { current with Hand = reducedHand }
 
             if isBust then
-                step (Busted(current.Name, card)) others (current' :: finished) decks'
+                return step (Busted(current.Name, card)) others (current' :: finished) decks'
             else
-                step (Drew(current.Name, card)) (others @ [ current' ]) finished decks'
+                return step (Drew(current.Name, card)) (others @ [ current' ]) finished decks'
 
         // The deal3 card itself is used up immediately; the receiving player
         // (possibly yourself) then flips up to three cards
@@ -364,7 +377,8 @@ module public Timeline =
             let decks' = deck, Deck.Increment discards card
             let rotated = others @ [ current ]
             let index, _ = ChooseAny random rotated
-            ResolveDeal3 random current.Name index rotated finished decks'
+            return! ResolveDeal3 random current.Name index rotated finished decks'
+    }
 
     let rec private GoonSession
         (random: System.Random)
@@ -422,7 +436,7 @@ module public Timeline =
                 | Strategy.Hit ->
                     let decks', card = Deck.Draw1With random decks
 
-                    let instants, active', finished', decks'' =
+                    let! instants, active', finished', decks'' =
                         ResolveDraw random current others finished decks' card
 
                     for instant in instants do
