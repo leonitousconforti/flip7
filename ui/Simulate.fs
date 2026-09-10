@@ -7,7 +7,7 @@ open FSharp.Control
 open Flip7
 
 let public Run
-    (players: (string * Strategy) list)
+    (players: (string * Strategy * Targeting) list)
     (seed: int option)
     (pace: int option)
     (cacheCapacity: int option)
@@ -20,8 +20,6 @@ let public Run
         raise (ArgumentException "Please provide at least one player name as a command-line argument.")
     if players.Length > 5 then
         raise (ArgumentException "Please provide no more than five player names as command-line arguments.")
-    if players |> List.map fst |> List.distinct |> List.length <> players.Length then
-        raise (ArgumentException "Player names must be unique.")
 
     let random =
         match seed with

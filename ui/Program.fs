@@ -29,7 +29,7 @@ type public SimulateArgs =
         member this.Usage =
             match this with
             | SimulateArgs.Player _ ->
-                "a player: a name, optionally with a strategy after a comma: \"Alice,HitUntilScore 25\"; repeat for each of up to five players"
+                "a player: a name, optionally with a strategy and then a targeting policy after commas: \"Alice,HitUntilScore 25,PlaysSpitefully\"; repeat for each of up to five players"
             | SimulateArgs.Seed _ -> "seed for the game's randomness, so the run is reproducible"
             | SimulateArgs.Pace _ -> "milliseconds between ingested instants; lower fast-forwards the game"
             | SimulateArgs.CacheCapacity _ ->
@@ -64,13 +64,25 @@ let parseSimulatePlayers (simulate: ParseResults<SimulateArgs>) =
     simulate.GetResults <@ SimulateArgs.Player @>
     |> List.map (fun player ->
         let parts = player.Split ','
-        if parts.Length = 1 then
-            parts[0], Flip7.Strategy.Random
-        else
 
-        match Flip7.Strategy.TryParse parts[1] with
-        | Some strategy -> parts[0], strategy
-        | None -> simulate.Raise $"invalid strategy for {parts[0]}: {parts[1]}"
+        let strategy =
+            match parts with
+            | [| _ |] -> Flip7.Strategy.Random
+            | _ ->
+                match Flip7.Strategy.TryParse parts[1] with
+                | Some strategy -> strategy
+                | None -> simulate.Raise $"invalid strategy for {parts[0]}: {parts[1]}"
+
+        let targeting =
+            match parts with
+            | [| _ |]
+            | [| _; _ |] -> Flip7.ChoosesRandomly
+            | _ ->
+                match Flip7.Targeting.TryParse parts[2] with
+                | Some targeting -> targeting
+                | None -> simulate.Raise $"invalid targeting for {parts[0]}: {parts[2]}"
+
+        parts[0], strategy, targeting
     )
 
 // Every mode shares the same console lifecycle - cleared and cursor hidden on
