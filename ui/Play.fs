@@ -2,6 +2,7 @@ module public Play
 
 open System
 open System.IO
+open System.Threading.Channels
 open System.Threading.Tasks
 
 open FSharp.Control
@@ -11,65 +12,32 @@ open Flip7
 let private width = 80
 let private playerSlots = 5
 let private paceMilliseconds = 400
-
-// The play screen is Simulate's architecture with a human decider: a driver
-// task drains the engine to disk, and the screen is a TimelineStore viewer
-// whose cursor chases the newest instant - the disk is the only channel
-// between them. The engine pauses inside the decider awaiting a reply, and
-// the exceptions that unwind it on a quit or an edit live entirely inside
-// the driver: a task CE rethrows the original exception, so the catches are
-// plain and nothing exception-shaped ever reaches the model.
+let private terminalPrompt = "TerminalPrompt"
 
 type private QuitException() =
     inherit Exception()
 
-// A mid-round state to fork the game from after an edit: the active players
-// in rotation order (the editing player at the head, about to be re-asked at
-// Turn), the finished players, and the amended decks
-type private Splice = {
+type private Prompt = {
     Round: uint
     Turn: uint
-    Active: Player list
+    At: int
+    Player: Player
+    Others: Player list
     Finished: Player list
     Deck: Deck
     Discards: Deck
 }
 
-type private EditException(splice: Splice) =
-    inherit Exception()
-    member _.Splice = splice
-
-// What a human is being asked, and where to send the answer. At is how many
-// instants precede the ask: the prompt is held back until the cursor has
-// caught up to them, so a decision is never asked for before the plays
-// leading up to it have been shown.
-type private Prompt = {
-    Round: uint
-    Turn: uint
-    At: int
-    Player: Strategy.StrategyPlayer
-    Others: Strategy.StrategyPlayer list
-    Finished: Strategy.StrategyPlayer list
-    Deck: Deck
-    Discards: Deck
-    Reply: TaskCompletionSource<Decision>
-}
-
-and private Decision =
+type private Decision =
     | Answered of Strategy.HitOrStand
-    | Forked of Splice
+    | Forked of Editor.Splice
     | Quitting
 
-type private Phase =
-    | Watching
-    | Prompting of Prompt
-    | Editing of Prompt * Editor.Model
-    | GameOver
-
 type private Model = {
-    Phase: Phase
-    // A prompt waiting for the cursor to catch up to it
-    Pending: Prompt option
+    // The open ask, held here from the decider's dispatch until answered
+    Prompt: Prompt option
+    // The editing overlay; only ever opened while a prompt is being asked
+    Editor: Editor.Model option
     // The newest instant shown; the screen is always a view of its frame
     Cursor: int
     Snapshot: int * bool * int list
@@ -80,12 +48,8 @@ type private Model = {
     // Whether a snapshot refresh is in flight: declaring it here is what
     // requests one, re-requested by the heartbeat
     Refreshing: bool
-    // Extra ticks to linger on the shown frame (a round end dwells longer)
-    Cooldown: int
-    // Whether the engine driver is running: turning this on is what starts it
-    Started: bool
     // The answer to the current prompt: declaring it here is what sends it
-    Resolved: (TaskCompletionSource<Decision> * Decision) option
+    Resolved: Decision option
     Quit: bool
 }
 
@@ -98,64 +62,71 @@ type private Msg =
     | Tick
 
 type private Effect =
-    | StartEngine
     | RefreshSnapshot
     | ReadFrame of index: int
-    | Resolve of TaskCompletionSource<Decision> * Decision
+    | Resolve of Decision
 
 let private init: Model = {
-    Phase = Watching
-    Pending = None
+    Prompt = None
+    Editor = None
     Cursor = 0
     Snapshot = 0, false, []
     Frame = None
     Reading = None
     Refreshing = false
-    Cooldown = 0
-    Started = false
     Resolved = None
     Quit = false
 }
 
-let private editorFor (prompt: Prompt) : Editor.Model =
-    Editor.Make (prompt.Player :: prompt.Others) prompt.Finished prompt.Deck prompt.Discards
+// There is no phase machine: what the screen is doing is derived from the
+// facts above. The index of the frame on screen is the cursor once its read
+// has landed
+let private showing (model: Model) : int option =
+    match model.Reading, model.Frame with
+    | None, Some _ -> Some model.Cursor
+    | _ -> None
 
-let private spliceOf (strategyOf: Map<string, Strategy>) (prompt: Prompt) (edited: Editor.Model) : Splice =
-    let toPlayer (player: Strategy.StrategyPlayer) =
-        Player.Make(player.Name, strategyOf[player.Name], player.FirmScore, player.Hand)
+// A prompt is asked only once every instant preceding it has been shown
+let private asking (model: Model) : Prompt option =
+    model.Prompt
+    |> Option.filter (fun prompt -> showing model = Some(prompt.At - 1))
 
-    {
-        Round = prompt.Round
-        Turn = prompt.Turn
-        Active = edited.Active |> List.map toPlayer
-        Finished = edited.Finished |> List.map toPlayer
-        Deck = edited.Deck
-        Discards = edited.Discards
-    }
+// The game is over once the final instant of a complete timeline has been
+// shown
+let private gameOver (model: Model) : bool =
+    let count, isComplete, _ = model.Snapshot
+    isComplete && count > 0 && showing model = Some(count - 1)
 
-let private update (strategyOf: Map<string, Strategy>) (paceTicks: int) (msg: Msg) (model: Model) : Model =
+// The editor's players come from the prompt in rotation order, but its rows
+// follow the shown frame's order, which the store already emits seated
+let private editorFor (model: Model) (prompt: Prompt) : Editor.Model =
+    let seating =
+        match model.Frame with
+        | Some(Ok instant) -> Some(instant.Players |> List.map (fun player -> player.Name))
+        | _ -> None
+
+    Editor.Make seating (prompt.Player :: prompt.Others) prompt.Finished prompt.Deck prompt.Discards
+
+let private update (strategyOf: Map<string, Strategy>) (msg: Msg) (model: Model) : Model =
     match msg with
     | Tick ->
-        let count, isComplete, _ = model.Snapshot
-        let newest = count - 1
-        let model = { model with Refreshing = true; Started = true }
+        let count, _, _ = model.Snapshot
+        let model = { model with Refreshing = true }
 
-        match model.Phase with
-        | Watching when model.Reading.IsNone ->
-            if model.Cooldown > 0 then
-                { model with Cooldown = model.Cooldown - 1 }
-            elif model.Cursor < newest then
-                // The store meters ingestion to the pace, so chasing the
-                // newest instant is what unfolds the game at watchable speed
-                { model with Cursor = model.Cursor + 1; Reading = Some(model.Cursor + 1) }
-            else
-                match model.Pending with
-                | Some prompt when model.Cursor = prompt.At - 1 && model.Frame.IsSome ->
-                    { model with Phase = Prompting prompt; Pending = None }
-                | _ when isComplete && count > 0 && model.Cursor = newest && model.Frame.IsSome ->
-                    { model with Phase = GameOver }
-                | _ -> model
-        | _ -> model
+        // No guard against advancing past an open prompt is needed: the
+        // engine is suspended at the ask, so no instant past it exists yet
+        if model.Reading.IsSome then
+            model
+        elif model.Cursor < count - 1 then
+            // The store meters ingestion to the pace, so chasing the
+            // newest instant is what unfolds the game at watchable speed
+            {
+                model with
+                    Cursor = model.Cursor + 1
+                    Reading = Some(model.Cursor + 1)
+            }
+        else
+            model
 
     | Refreshed((count', _, _) as snapshot) ->
         let model' = { model with Snapshot = snapshot; Refreshing = false }
@@ -168,74 +139,64 @@ let private update (strategyOf: Map<string, Strategy>) (paceTicks: int) (msg: Ms
 
     | Loaded(index, result) ->
         if index = model.Cursor then
-            // A round end dwells an extra pace before play moves on
-            let linger =
-                match result with
-                | Ok instant when instant.Event.IsRoundEnded -> paceTicks
-                | _ -> 0
-
-            { model with Reading = None; Frame = Some result; Cooldown = linger }
+            { model with Reading = None; Frame = Some result }
         else
             { model with Reading = Some model.Cursor }
 
-    | Prompted prompt -> { model with Pending = Some prompt; Resolved = None }
+    // A new question has no answer yet. The reset is load-bearing: two
+    // prompts in a row answered identically must still each produce a
+    // Resolved change for the effects diff to send
+    | Prompted prompt -> { model with Prompt = Some prompt; Resolved = None }
 
     | Quitted -> { model with Quit = true }
 
     | Pressed key ->
-        match model.Phase with
-        | Watching -> model
-        | GameOver -> { model with Quit = true }
-
-        | Prompting prompt ->
-            match key.Key with
-            | ConsoleKey.H -> {
-                model with
-                    Phase = Watching
-                    Resolved = Some(prompt.Reply, Answered Strategy.Hit)
-              }
-            | ConsoleKey.S -> {
-                model with
-                    Phase = Watching
-                    Resolved = Some(prompt.Reply, Answered Strategy.Stand)
-              }
-            | ConsoleKey.Q
-            | ConsoleKey.Escape -> {
-                model with
-                    Phase = Watching
-                    Resolved = Some(prompt.Reply, Quitting)
-              }
-            | ConsoleKey.E -> { model with Phase = Editing(prompt, editorFor prompt) }
-            | _ -> model
-
-        | Editing(prompt, editor) ->
+        match model.Editor, asking model with
+        | Some editor, Some prompt ->
             match Editor.Key key editor with
-            | Some editor' -> { model with Phase = Editing(prompt, editor') }
-            | None when Editor.BustedActives editor |> List.isEmpty |> not ->
+            | Some editor' -> { model with Editor = Some editor' }
+            | None when editor.Active |> List.exists (fun player -> Hand.IsBust player.Hand) ->
                 // Applying is refused while an active player is busted; the
                 // editor's footer already says so
                 model
             | None ->
-                let initial = editorFor prompt
+                let initial = editorFor model prompt
 
                 if { editor with Cursor = initial.Cursor; Help = initial.Help } = initial then
                     // Nothing changed: back to the table and keep asking
-                    { model with Phase = Prompting prompt }
+                    { model with Editor = None }
                 else
                     {
                         model with
-                            Phase = Watching
-                            Resolved = Some(prompt.Reply, Forked(spliceOf strategyOf prompt editor))
+                            Editor = None
+                            Prompt = None
+                            Resolved = Some(Forked(Editor.SpliceOf prompt.Round prompt.Turn editor))
                     }
 
-// The engine starts exactly when Started turns on, a read starts exactly
-// when Reading changes to a new index, a refresh starts exactly when
-// Refreshing turns on, and a prompt is answered exactly when Resolved
-// changes to a new reply
-let private effects (before: Model) (after: Model) : Effect list = [
-    if after.Started && not before.Started then
-        StartEngine
+        | _, Some prompt ->
+            match key.Key with
+            | ConsoleKey.H -> {
+                model with
+                    Prompt = None
+                    Resolved = Some(Answered Strategy.Hit)
+              }
+            | ConsoleKey.S -> {
+                model with
+                    Prompt = None
+                    Resolved = Some(Answered Strategy.Stand)
+              }
+            | ConsoleKey.Q
+            | ConsoleKey.Escape -> { model with Prompt = None; Resolved = Some Quitting }
+            | ConsoleKey.E -> { model with Editor = Some(editorFor model prompt) }
+            | _ -> model
 
+        | _ when gameOver model -> { model with Quit = true }
+        | _ -> model
+
+// A read starts exactly when Reading changes to a new index, a refresh
+// starts exactly when Refreshing turns on, and a prompt is answered exactly
+// when Resolved changes to a new reply
+let private effects (before: Model) (after: Model) : Effect list = [
     if after.Refreshing && not before.Refreshing then
         RefreshSnapshot
 
@@ -246,13 +207,14 @@ let private effects (before: Model) (after: Model) : Effect list = [
 
     if after.Resolved <> before.Resolved then
         match after.Resolved with
-        | Some(reply, decision) -> Resolve(reply, decision)
+        | Some decision -> Resolve decision
         | None -> ()
 ]
 
 let private viewKey (model: Model) =
     let _, _, roundEnds = model.Snapshot
-    model.Phase, model.Frame, Persistence.TimelineStore.RoundOf roundEnds model.Cursor
+
+    model.Editor, asking model, gameOver model, model.Frame, Persistence.TimelineStore.RoundOf roundEnds model.Cursor
 
 let private promptFooter (prompt: Prompt) : string =
     let bust =
@@ -267,10 +229,10 @@ let private promptFooter (prompt: Prompt) : string =
     |> styled [ Ansi.Bright ]
 
 let private view (directory: string) (model: Model) : unit =
-    match model.Phase with
-    | Editing(_, editor) when editor.Help -> Editor.RenderHelp()
-    | Editing(_, editor) -> Editor.Render editor
-    | _ ->
+    match model.Editor with
+    | Some editor when editor.Help -> Editor.RenderHelp()
+    | Some editor -> Editor.Render editor
+    | None ->
         match model.Frame with
         | None -> ()
         | Some(Error error) -> RenderError directory model.Snapshot model.Cursor error
@@ -279,15 +241,15 @@ let private view (directory: string) (model: Model) : unit =
             let round = Persistence.TimelineStore.RoundOf roundEnds model.Cursor
 
             let footer =
-                match model.Phase with
-                | Prompting prompt -> promptFooter prompt
-                | GameOver ->
+                match asking model with
+                | Some prompt -> promptFooter prompt
+                | None when gameOver model ->
                     let winner = instant.Players |> List.maxBy (fun player -> player.FirmScore)
 
                     $"game over: {winner.Name} wins with {winner.FirmScore}pts!   [any key]"
                     |> centered width
                     |> styled [ Ansi.BrightGreen ]
-                | _ -> "[q at your turn] quit" |> centered width |> styled [ Ansi.Dim; Ansi.Cyan ]
+                | None -> "[q at your turn] quit" |> centered width |> styled [ Ansi.Dim; Ansi.Cyan ]
 
             RenderPlay round instant footer
 
@@ -315,7 +277,6 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
         | None -> Random()
 
     let paceMs = defaultArg pace paceMilliseconds
-    let paceTicks = paceMs / Mvu.pollMilliseconds
     let pool = [
         HitUntilScore 22u
         HitUntilScore 26u
@@ -333,7 +294,7 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
         pool |> List.sortBy (fun _ -> random.Next()) |> List.take botNames.Length
 
     let players =
-        (humanNames |> List.map (fun name -> name, Custom "TerminalPrompt"))
+        (humanNames |> List.map (fun name -> name, Custom terminalPrompt))
         @ List.zip botNames naive
         |> List.sortBy (fun _ -> random.Next())
 
@@ -341,24 +302,30 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
     let strategyOf = players |> Map.ofList
 
     // The store meters ingestion to the pace, so the viewer side needs no
-    // pacing of its own beyond the round-end linger
+    // pacing of its own
     use store =
-        new Persistence.TimelineStore(directory, ingestDelayMilliseconds = int64 paceMs)
+        new Persistence.TimelineStore(
+            directory,
+            ingestDelayMilliseconds = int64 paceMs,
+            emitPlayersInSeatedOrder = true
+        )
 
     // Instants written so far: the driver advances it, and the decider
     // stamps each prompt with it so the viewer can catch up before asking
     let mutable written = 0
 
+    // The one reply channel. The engine suspends at each prompt, so prompts
+    // are strictly sequential and a single shared channel is safe by
+    // construction; and channels never run continuations synchronously by
+    // default, so answering a prompt from the runtime loop never re-enters
+    // the engine inline
+    let replies = Channel.CreateUnbounded<Decision>()
+
     let decider (dispatch: Msg -> unit) : Strategy.Decider =
         fun strategy round turn player others finished decks ->
             match strategy with
-            | Custom name when name = "TerminalPrompt" -> async {
+            | Custom name when name = terminalPrompt -> async {
                 let deck, discards = decks
-
-                // Completions run asynchronously so answering a prompt
-                // from the runtime loop never re-enters the engine inline
-                let reply =
-                    TaskCompletionSource<Decision>(TaskCreationOptions.RunContinuationsAsynchronously)
 
                 dispatch (
                     Prompted {
@@ -370,89 +337,41 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
                         Finished = finished
                         Deck = deck
                         Discards = discards
-                        Reply = reply
                     }
                 )
 
-                match! reply.Task |> Async.AwaitTask with
+                match! replies.Reader.ReadAsync().AsTask() |> Async.AwaitTask with
                 | Answered decision -> return decision
-                | Forked splice -> return raise (EditException splice)
+                | Forked splice -> return raise (Editor.EditException splice)
                 | Quitting -> return raise (QuitException())
               }
             | strategy -> Strategy.DecideWith random strategy round turn player others finished decks
 
-    // A fork after an edit: an Edited instant records the amended table, and
-    // the game continues from exactly where it stood. The editing player sits
-    // at the head of the rotation about to be re-asked at the same turn, so
-    // everyone active is counted one turn behind them.
-    let spliced (decide: Strategy.Decider) (splice: Splice) : Timeline =
-        let turnsTaken =
-            splice.Active
-            |> List.map (fun player -> player.Name, splice.Turn - 1u)
-            |> Map.ofList
-
-        asyncSeq {
-            yield {
-                Event = Edited (List.head splice.Active).Name
-                Players = splice.Active @ splice.Finished
-                Deck = splice.Deck
-                Discards = splice.Discards
-            }
-
-            yield!
-                Timeline.ContinueWith
-                    random
-                    decide
-                    splice.Round
-                    turnsTaken
-                    splice.Active
-                    splice.Finished
-                    (splice.Deck, splice.Discards)
-        }
-
     // The driver: drains the engine to disk until the game ends on its own.
     // A quit or an edit unwinds the paused engine with an exception, which
-    // arrives here with its original type - an edit continues the timeline
-    // in the same directory, right behind the instants already written
+    // async propagates here with its original type - an edit continues the
+    // timeline in the same directory, right behind the instants already
+    // written
     let drive (dispatch: Msg -> unit) : Task<unit> =
         let decide = decider dispatch
 
-        task {
-            let mutable timeline = Some(Timeline.SimulateWithDecider random decide players)
-
-            while timeline.IsSome do
-                let enumerator =
-                    (timeline.Value |> Persistence.WriteTimelineLazyFrom directory written)
-                        .GetAsyncEnumerator()
-
-                try
-                    let mutable pulled = true
-
-                    while pulled do
-                        let! more = enumerator.MoveNextAsync()
-
-                        if more then
-                            written <- written + 1
-
-                        pulled <- more
-
-                    timeline <- None
-                with
-                | :? QuitException ->
-                    dispatch Quitted
-                    timeline <- None
-                | :? EditException as edit -> timeline <- Some(spliced decide edit.Splice)
-
-                do! enumerator.DisposeAsync()
+        let rec drain (timeline: Timeline) : Async<unit> = async {
+            try
+                do!
+                    timeline
+                    |> Persistence.WriteTimelineLazyFrom directory written
+                    |> AsyncSeq.iter (fun _ -> written <- written + 1)
+            with
+            | :? QuitException -> dispatch Quitted
+            | :? Editor.EditException as edit -> return! drain (Editor.Fork random decide edit.Splice)
         }
 
-    let mutable driver: Task<unit> option = None
+        Async.StartAsTask(Timeline.SimulateWithDecider random decide players |> drain)
 
     let execute (dispatch: Msg -> unit) : Effect -> unit =
         fun effect ->
             match effect with
-            | StartEngine -> driver <- Some(drive dispatch)
-            | Resolve(reply, decision) -> reply.SetResult decision
+            | Resolve decision -> replies.Writer.TryWrite decision |> ignore
             | RefreshSnapshot ->
                 async {
                     let! snapshot = store.Snapshot
@@ -466,12 +385,13 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
                 }
                 |> Async.Start
 
-    do!
+    let! driver =
         Mvu.run {
             Init = init
-            Update = update strategyOf paceTicks
+            Update = update strategyOf
             Effects = effects
             Execute = execute
+            Subscribe = drive
             ViewKey = viewKey
             View = view directory
             Quit = fun model -> model.Quit
@@ -479,7 +399,5 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
             Tick = Tick
         }
 
-    match driver with
-    | Some task -> do! task |> Async.AwaitTask
-    | None -> ()
+    do! driver |> Async.AwaitTask
 }

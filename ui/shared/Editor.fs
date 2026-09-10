@@ -9,15 +9,23 @@ open Flip7
 type public Model = {
     Cursor: Choice<Card, string>
     Help: bool
+    Seating: string list option
     Active: Player list
     Finished: Player list
     Deck: Deck
     Discards: Deck
 }
 
-let public Make (active: Player list) (finished: Player list) (deck: Deck) (discards: Deck) : Model = {
+let public Make
+    (seating: string list option)
+    (active: Player list)
+    (finished: Player list)
+    (deck: Deck)
+    (discards: Deck)
+    : Model = {
     Cursor = Choice1Of2(ValueCard Card.Zero)
     Help = false
+    Seating = seating
     Active = active
     Finished = finished
     Deck = deck
@@ -72,8 +80,18 @@ let private unDeal (name: string) (editor: Model) : Model =
         { editor with Deck = Deck.Increment editor.Deck card }
         |> updateHand name (fun _ -> rest)
 
+let private seated (seating: string list option) (players: Player list) : Player list =
+    match seating with
+    | None -> players
+    | Some seating ->
+        seating
+        |> List.choose (fun name -> players |> List.tryFind (fun player -> player.Name = name))
+
 let public Key (key: ConsoleKeyInfo) (editor: Model) : Model option =
-    let names = editor.Active @ editor.Finished |> List.map (fun player -> player.Name)
+    let names =
+        editor.Active @ editor.Finished
+        |> seated editor.Seating
+        |> List.map (fun player -> player.Name)
 
     if editor.Help then
         Some { editor with Help = false }
@@ -274,11 +292,10 @@ let public Render (editor: Model) : unit =
             (if isFinished then " (done)" else "")
             player
 
+    let finishedNames = editor.Finished |> List.map (fun player -> player.Name)
     let content = [
-        for player in editor.Active do
-            yield renderPlayer false player
-        for player in editor.Finished do
-            yield renderPlayer true player
+        for player in editor.Active @ editor.Finished |> seated editor.Seating do
+            yield renderPlayer (finishedNames |> List.contains player.Name) player
     ]
 
     let bottom = ""
