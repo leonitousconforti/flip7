@@ -92,7 +92,7 @@ let private genEngineTargeting: Gen<Targeting> =
     Gen.oneof [
         Gen.constant ChoosesRandomly
         Gen.constant PlaysSpitefully
-        Gen.constant PlaysGreedily
+        Gen.map2 (fun banksAbove deal3sBelow -> PlaysGreedily(banksAbove, deal3sBelow)) genProbability genProbability
     ]
 
 let private genTargeting: Gen<Targeting> =

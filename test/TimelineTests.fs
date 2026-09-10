@@ -119,6 +119,39 @@ let ``a busted flipper never gives out a set-aside card`` (seed: int) =
             // yourself a deal3 and bust on the flips
             Assert.DoesNotContain(before.Players, (fun player -> player.Name = name && Hand.IsBust player.Hand))
 
+// Names are how the engine tells seats apart, so a duplicate has to be caught
+// rather than quietly scoring two players as one
+[<Fact>]
+let ``seating the same name twice is refused`` () =
+    // Eagerly, before anything is enumerated: the error belongs where the
+    // lineup was written, not wherever the timeline was first pulled
+    Assert.Throws<System.ArgumentException>(fun () ->
+        Timeline.SimulateWith (System.Random 1) [
+            "Alice", AlwaysHits, ChoosesRandomly
+            "Alice", AlwaysStands, ChoosesRandomly
+        ]
+        |> ignore
+    )
+    |> ignore
+
+[<Fact>]
+let ``continuing from a state with a repeated name is refused`` () =
+    let active = [ Player.Make("A", AlwaysHits) ]
+    let finished = [ Player.Make("A", AlwaysStands) ]
+
+    Assert.Throws<System.ArgumentException>(fun () ->
+        Timeline.ContinueWith
+            (System.Random 1)
+            (Strategy.DecideWith(System.Random 1))
+            1u
+            Map.empty
+            active
+            finished
+            (Deck.Full, Deck.Empty)
+        |> ignore
+    )
+    |> ignore
+
 [<Fact>]
 let ``SimulateWithDecider routes prompt players through the injected decider`` () =
     let mutable decisions = 0
