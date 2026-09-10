@@ -240,8 +240,8 @@ let public RenderHelp () : unit =
         entry "←/→" "move along the distributions (wraps around)"
         ""
         section "deck" "with the cursor on the distributions"
-        entry "+" "move a copy of the highlighted card from the discards to the deck"
-        entry "-" "move a copy of the highlighted card from the deck to the discards"
+        entry "+" "move a copy of the highlighted card from discards to deck"
+        entry "-" "move a copy of the highlighted card from deck to discards"
         ""
         section "hands" "with the cursor on a player"
         entry "0-9" "value card 0-9, dealt from the deck"
@@ -253,6 +253,8 @@ let public RenderHelp () : unit =
         ""
         styled [ Ansi.Bright ] " program"
         entry "enter or esc" "apply the edits and return to the game"
+        ""
+        ""
         "[any key] back to the editor" |> centered 80 |> styled [ Ansi.Dim; Ansi.Cyan ]
     ]
     |> String.concat "\n"
