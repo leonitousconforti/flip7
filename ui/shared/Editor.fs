@@ -328,7 +328,7 @@ let public Render (editor: Model) : unit =
             |> centered 80
             |> styled [ Ansi.BrightRed ]
         | _ ->
-            "[↕↔] cursor   [+/-] deck   [cards] deal   [backspace] undo   [?] help   [enter] resume"
+            "[↕↔] cursor  [+/-] deck  [cards] deal  [bksp] undo  [?] help  [enter] resume"
             |> centered 80
             |> styled [ Ansi.Dim; Ansi.Cyan ]
 
