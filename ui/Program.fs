@@ -76,7 +76,7 @@ let parseSimulatePlayers (simulate: ParseResults<SimulateArgs>) =
         let targeting =
             match parts with
             | [| _ |]
-            | [| _; _ |] -> Flip7.ChoosesRandomly
+            | [| _; _ |] -> Flip7.Targeting.ChoosesRandomly
             | _ ->
                 match Flip7.Targeting.TryParse parts[2] with
                 | Some targeting -> targeting
