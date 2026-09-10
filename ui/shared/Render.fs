@@ -105,7 +105,7 @@ let public playerRow
     |> fun (top, mid, bot) -> [ padded top; padded mid; padded bot ]
     |> String.concat "\n"
 
-let public playerRows (instant: Instant) : string list =
+let public playerRows (prompting: string option) (aiming: string option) (instant: Instant) : string list =
     let actor = instant.Event.Actor()
 
     instant.Players
@@ -118,8 +118,17 @@ let public playerRows (instant: Instant) : string list =
             Simulation.probabilityToBust instant.Deck instant.Discards player.Hand onlyPlayerNotBusted
             * 100.0
 
-        let annotation = ""
-        let highlighted = actor = Some player.Name
+        let aimed = aiming = Some player.Name
+        let annotation =
+            if aimed then " (aim)"
+            elif prompting = Some player.Name then " (thinking...)"
+            else ""
+
+        let highlighted =
+            if aimed then true
+            elif prompting = Some player.Name then true
+            else prompting.IsNone && actor = Some player.Name
+
         let dimmed = Hand.IsBust player.Hand
         playerRow probabilityToBust highlighted dimmed annotation player
     )
@@ -168,7 +177,7 @@ let public RenderTable
         else
             string instant.Event |> centered width |> styled (captionStyle instant.Event)
 
-    let content = playerRows instant
+    let content = playerRows None None instant
     let bottom = $"\n{progressBar count roundEnds cursor}\n"
     let footer =
         "[↔] scrub   [↕] jump rounds   [home/end] start/end   [q/esc] quit"
@@ -219,10 +228,16 @@ let public RenderLoading
 
     Frame status caption content bottom footer
 
-let public RenderPlay (round: int) (instant: Instant) (footer: string) : unit =
+let public RenderPlay
+    (round: int)
+    (instant: Instant)
+    (prompting: string option)
+    (aiming: string option)
+    (footer: string)
+    : unit =
     let status = statusLine "play: first to 200pts wins" $"round {round}"
     let captionStyle = captionStyle instant.Event
     let caption = string instant.Event |> centered width |> styled captionStyle
-    let content = playerRows instant
+    let content = playerRows prompting aiming instant
     let bottom = "\n\n\n"
     Frame status caption content bottom footer
