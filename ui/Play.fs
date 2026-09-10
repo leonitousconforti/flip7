@@ -107,7 +107,7 @@ let private editorFor (model: Model) (prompt: Prompt) : Editor.Model =
 
     Editor.Make seating (prompt.Player :: prompt.Others) prompt.Finished prompt.Deck prompt.Discards
 
-let private update (strategyOf: Map<string, Strategy>) (msg: Msg) (model: Model) : Model =
+let private update (msg: Msg) (model: Model) : Model =
     match msg with
     | Tick ->
         let count, _, _ = model.Snapshot
@@ -193,9 +193,6 @@ let private update (strategyOf: Map<string, Strategy>) (msg: Msg) (model: Model)
         | _ when gameOver model -> { model with Quit = true }
         | _ -> model
 
-// A read starts exactly when Reading changes to a new index, a refresh
-// starts exactly when Refreshing turns on, and a prompt is answered exactly
-// when Resolved changes to a new reply
 let private effects (before: Model) (after: Model) : Effect list = [
     if after.Refreshing && not before.Refreshing then
         RefreshSnapshot
@@ -256,10 +253,8 @@ let private view (directory: string) (model: Model) : unit =
 let public Run (humanNames: string list) (seed: int option) (pace: int option) : Async<unit> = async {
     if humanNames.Length < 1 || humanNames.Length > 5 then
         raise (ArgumentException "Please provide one to five player names as command-line arguments.")
-
     if humanNames |> List.exists String.IsNullOrWhiteSpace then
         raise (ArgumentException "Player names must not be empty.")
-
     if humanNames |> List.distinct |> List.length <> humanNames.Length then
         raise (ArgumentException "Player names must be unique.")
 
@@ -298,11 +293,8 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
         @ List.zip botNames naive
         |> List.sortBy (fun _ -> random.Next())
 
-    let directory = Path.Join("timelines", DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss")
-    let strategyOf = players |> Map.ofList
-
-    // The store meters ingestion to the pace, so the viewer side needs no
-    // pacing of its own
+    let now = DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss"
+    let directory = Path.Join("timelines", now)
     use store =
         new Persistence.TimelineStore(
             directory,
@@ -347,11 +339,10 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
               }
             | strategy -> Strategy.DecideWith random strategy round turn player others finished decks
 
-    // The driver: drains the engine to disk until the game ends on its own.
-    // A quit or an edit unwinds the paused engine with an exception, which
-    // async propagates here with its original type - an edit continues the
-    // timeline in the same directory, right behind the instants already
-    // written
+    // The driver: drains the engine to disk until the game ends on its own. A
+    // quit or an edit unwinds the paused engine with an exception, which async
+    // propagates here with its original type - an edit continues the timeline
+    // in the same directory, right behind the instants already written
     let drive (dispatch: Msg -> unit) : Task<unit> =
         let decide = decider dispatch
 
@@ -363,10 +354,15 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
                     |> AsyncSeq.iter (fun _ -> written <- written + 1)
             with
             | :? QuitException -> dispatch Quitted
-            | :? Editor.EditException as edit -> return! drain (Editor.Fork random decide edit.Splice)
+            | :? Editor.EditException as edit ->
+                let fork = Editor.Fork random decide edit.Splice
+                return! drain fork
         }
 
-        Async.StartAsTask(Timeline.SimulateWithDecider random decide players |> drain)
+        (random, decide, players)
+        |||> Timeline.SimulateWithDecider
+        |> drain
+        |> Async.StartAsTask
 
     let execute (dispatch: Msg -> unit) : Effect -> unit =
         fun effect ->
@@ -388,7 +384,7 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
     let! driver =
         Mvu.run {
             Init = init
-            Update = update strategyOf
+            Update = update
             Effects = effects
             Execute = execute
             Subscribe = drive
