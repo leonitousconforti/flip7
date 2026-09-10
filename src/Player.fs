@@ -91,24 +91,31 @@ type public Strategy =
 type public Targeting =
     | ChoosesRandomly
     | PlaysSpitefully
-    | PlaysGreedily
+    | PlaysGreedily of BanksAbove: float * Deal3sBelow: float
     | ChoosesExternally of string
 
     override self.ToString() : string =
+        let writeFloat (value: float) =
+            value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+
         match self with
         | ChoosesRandomly -> "ChoosesRandomly"
         | PlaysSpitefully -> "PlaysSpitefully"
-        | PlaysGreedily -> "PlaysGreedily"
+        | PlaysGreedily(banksAbove, deal3sBelow) -> $"PlaysGreedily {writeFloat banksAbove} {writeFloat deal3sBelow}"
         | ChoosesExternally name -> $"ChoosesExternally {name}"
 
     static member public Parse(string: string) : Targeting =
+        let readFloat (value: string) =
+            System.Double.Parse(value, System.Globalization.CultureInfo.InvariantCulture)
+
         if string.StartsWith("ChoosesExternally ", System.StringComparison.Ordinal) then
             ChoosesExternally(string.Substring("ChoosesExternally ".Length))
         else
-            match string with
-            | "ChoosesRandomly" -> ChoosesRandomly
-            | "PlaysSpitefully" -> PlaysSpitefully
-            | "PlaysGreedily" -> PlaysGreedily
+            match string.Split ' ' with
+            | [| "ChoosesRandomly" |] -> ChoosesRandomly
+            | [| "PlaysSpitefully" |] -> PlaysSpitefully
+            | [| "PlaysGreedily"; banksAbove; deal3sBelow |] ->
+                PlaysGreedily(readFloat banksAbove, readFloat deal3sBelow)
             | _ -> raise (System.FormatException $"Invalid targeting string: {string}")
 
     static member TryParse(string: string) : Targeting option =
