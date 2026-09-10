@@ -14,6 +14,7 @@ module public Strategy =
     /// rather than the namespace so that it cannot be confused with
     /// System.Action or with Card.ActionCard.
     /// </summary>
+    [<RequireQualifiedAccess>]
     type public Ask =
         | WhoToFreeze
         | WhoReceivesDeal3
@@ -173,7 +174,7 @@ module public Strategy =
             let hurts () =
                 match ask, opponents with
                 | _, [] -> List.head candidates
-                | WhoReceivesDeal3, opponents -> opponents |> List.maxBy bustProbability
+                | Ask.WhoReceivesDeal3, opponents -> opponents |> List.maxBy bustProbability
                 | _, opponents -> opponents |> List.maxBy Showing
 
             // Helps the least: whoever is furthest behind
@@ -183,14 +184,14 @@ module public Strategy =
             | Targeting.ChoosesRandomly -> candidates |> List.randomChoiceWith random
             | Targeting.PlaysSpitefully ->
                 match ask with
-                | WhoReceivesSecondChance -> helpsLeast ()
-                | WhoToFreeze -> hurts ()
-                | WhoReceivesDeal3 -> hurts ()
+                | Ask.WhoReceivesSecondChance -> helpsLeast ()
+                | Ask.WhoToFreeze -> hurts ()
+                | Ask.WhoReceivesDeal3 -> hurts ()
             | Targeting.PlaysGreedily(banksAbove, deal3sBelow) ->
                 match ask, self with
-                | WhoReceivesSecondChance, _ -> helpsLeast ()
-                | WhoToFreeze, Some self when bustProbability self >= banksAbove -> self
-                | WhoReceivesDeal3, Some self when bustProbability self <= deal3sBelow -> self
+                | Ask.WhoReceivesSecondChance, _ -> helpsLeast ()
+                | Ask.WhoToFreeze, Some self when bustProbability self >= banksAbove -> self
+                | Ask.WhoReceivesDeal3, Some self when bustProbability self <= deal3sBelow -> self
                 | _ -> hurts ()
             | Targeting.ChoosesExternally name ->
                 raise (

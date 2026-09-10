@@ -293,40 +293,40 @@ let ``TryParse returns None for an unparseable targeting policy`` () =
 [<Fact>]
 let ``Externally decided targeting cannot be evaluated by DecideTargetWith`` () =
     Assert.Throws<System.InvalidOperationException>(fun () ->
-        aim (Targeting.ChoosesExternally "TerminalPrompt") Strategy.WhoToFreeze player opponents
+        aim (Targeting.ChoosesExternally "TerminalPrompt") Strategy.Ask.WhoToFreeze player opponents
         |> ignore
     )
     |> ignore
 
 [<Fact>]
 let ``a spiteful player freezes whoever is furthest ahead`` () =
-    Assert.Equal("Bob", (aim Targeting.PlaysSpitefully Strategy.WhoToFreeze player opponents).Name)
+    Assert.Equal("Bob", (aim Targeting.PlaysSpitefully Strategy.Ask.WhoToFreeze player opponents).Name)
 
 [<Fact>]
 let ``a spiteful player deals three to whoever is closest to busting`` () =
-    Assert.Equal("Carol", (aim Targeting.PlaysSpitefully Strategy.WhoReceivesDeal3 player opponents).Name)
+    Assert.Equal("Carol", (aim Targeting.PlaysSpitefully Strategy.Ask.WhoReceivesDeal3 player opponents).Name)
 
 [<Fact>]
 let ``a spiteful player passes a second chance to whoever is furthest behind`` () =
-    Assert.Equal("Dave", (aim Targeting.PlaysSpitefully Strategy.WhoReceivesSecondChance player opponents).Name)
+    Assert.Equal("Dave", (aim Targeting.PlaysSpitefully Strategy.Ask.WhoReceivesSecondChance player opponents).Name)
 
 [<Fact>]
 let ``a greedy player freezes themselves rather than flip on a likely bust`` () =
     let chooser = { player with Hand = risky }
 
-    Assert.Equal("Alice", (aim greedy Strategy.WhoToFreeze chooser (chooser :: opponents)).Name)
+    Assert.Equal("Alice", (aim greedy Strategy.Ask.WhoToFreeze chooser (chooser :: opponents)).Name)
 
 [<Fact>]
 let ``a greedy player deals three to themselves while their hand is safe`` () =
     let chooser = { player with Hand = safe }
 
-    Assert.Equal("Alice", (aim greedy Strategy.WhoReceivesDeal3 chooser (chooser :: opponents)).Name)
+    Assert.Equal("Alice", (aim greedy Strategy.Ask.WhoReceivesDeal3 chooser (chooser :: opponents)).Name)
 
 [<Fact>]
 let ``a greedy player deals three away once their own hand is risky`` () =
     let chooser = { player with Hand = risky }
 
-    Assert.Equal("Carol", (aim greedy Strategy.WhoReceivesDeal3 chooser (chooser :: opponents)).Name)
+    Assert.Equal("Carol", (aim greedy Strategy.Ask.WhoReceivesDeal3 chooser (chooser :: opponents)).Name)
 
 [<Fact>]
 let ``a greedy player's banking threshold decides whether it flips on`` () =
@@ -334,21 +334,24 @@ let ``a greedy player's banking threshold decides whether it flips on`` () =
     let candidates = chooser :: opponents
 
     // 53% of a card busting this hand, so it banks by freezing itself...
-    Assert.Equal("Alice", (aim greedy Strategy.WhoToFreeze chooser candidates).Name)
+    Assert.Equal("Alice", (aim greedy Strategy.Ask.WhoToFreeze chooser candidates).Name)
 
     // ...unless it takes more than that to scare it, and then the freeze goes
     // to whoever is furthest ahead instead
-    Assert.Equal("Bob", (aim (Targeting.PlaysGreedily(0.9, 0.1)) Strategy.WhoToFreeze chooser candidates).Name)
+    Assert.Equal("Bob", (aim (Targeting.PlaysGreedily(0.9, 0.1)) Strategy.Ask.WhoToFreeze chooser candidates).Name)
 
 [<Fact>]
 let ``a greedy player's deal3 threshold decides who takes the three flips`` () =
     let candidates = player :: opponents
 
     // 16% of a card busting this hand, too rich for the default threshold...
-    Assert.Equal("Carol", (aim greedy Strategy.WhoReceivesDeal3 player candidates).Name)
+    Assert.Equal("Carol", (aim greedy Strategy.Ask.WhoReceivesDeal3 player candidates).Name)
 
     // ...but worth keeping for a player happy to run at a fifth
-    Assert.Equal("Alice", (aim (Targeting.PlaysGreedily(0.5, 0.25)) Strategy.WhoReceivesDeal3 player candidates).Name)
+    Assert.Equal(
+        "Alice",
+        (aim (Targeting.PlaysGreedily(0.5, 0.25)) Strategy.Ask.WhoReceivesDeal3 player candidates).Name
+    )
 
 // A player frozen earlier in a deal3 still hands out the cards they set aside,
 // and can no longer keep one for themselves
@@ -356,12 +359,12 @@ let ``a greedy player's deal3 threshold decides who takes the three flips`` () =
 let ``a chooser who is no longer a candidate still aims at someone legal`` () =
     let chooser = { player with Hand = risky }
 
-    Assert.Equal("Bob", (aim greedy Strategy.WhoToFreeze chooser opponents).Name)
-    Assert.Equal("Carol", (aim greedy Strategy.WhoReceivesDeal3 chooser opponents).Name)
+    Assert.Equal("Bob", (aim greedy Strategy.Ask.WhoToFreeze chooser opponents).Name)
+    Assert.Equal("Carol", (aim greedy Strategy.Ask.WhoReceivesDeal3 chooser opponents).Name)
 
 [<Fact>]
 let ``choosing randomly always answers with one of the candidates`` () =
     let names = opponents |> List.map (fun candidate -> candidate.Name)
 
     for _ in 1..50 do
-        Assert.Contains((aim Targeting.ChoosesRandomly Strategy.WhoToFreeze player opponents).Name, names)
+        Assert.Contains((aim Targeting.ChoosesRandomly Strategy.Ask.WhoToFreeze player opponents).Name, names)
