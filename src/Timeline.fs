@@ -98,8 +98,8 @@ module public Event =
           |]
 
     /// <summary>
-    /// Parses an event from a sequence of lines: the event kind followed by
-    /// its fields, one per line.
+    /// Parses an event from a sequence of lines: the event kind followed by its
+    /// fields, one per line.
     /// </summary>
     let public Deserialize (lines: string seq) : Event =
         match lines |> Seq.toList with
@@ -145,39 +145,73 @@ module public Timeline =
 
     let private WithCard (card: Card) (player: Player) : Player = { player with Hand = card :: player.Hand }
 
-    let private ChooseAny (random: System.Random) (players: Player list) : int * Player =
-        players |> List.indexed |> List.randomChoiceWith random
+    // Asks the chooser's targeting policy to pick one of the candidates, which
+    // the caller has already narrowed to the legal targets and which is never
+    // empty. Returns the pick's position together with the engine's own value
+    // for that player, so a decider answering with a stale Player cannot write
+    // an old hand or score back into the game.
+    let private ChooseTarget
+        (decide: Strategy.TargetDecider)
+        (ask: Strategy.Ask)
+        (chooser: Player)
+        (candidates: Player list)
+        (finished: Player list)
+        (decks: Deck * Deck)
+        : Async<int * Player> = async {
+        assert (not (List.isEmpty candidates))
+
+        let! chosen = decide chooser.Targeting ask chooser candidates finished decks
+
+        match candidates |> List.tryFindIndex (fun candidate -> candidate.Name = chosen.Name) with
+        | Some index -> return index, List.item index candidates
+        | None ->
+            let legal =
+                candidates |> List.map (fun candidate -> candidate.Name) |> String.concat ", "
+
+            return
+                raise (
+                    System.InvalidOperationException
+                        $"{chooser.Name} aimed {ask} at {chosen.Name}, which is not among: {legal}"
+                )
+    }
 
     let private FreezePlayer
-        (random: System.Random)
-        (source: string)
+        (decide: Strategy.TargetDecider)
+        (source: Player)
         (card: Card)
         (active: Player list)
         (finished: Player list)
         (decks: Deck * Deck)
         : Async<Instant list * Player list * Player list * (Deck * Deck)> = async {
-        let index, target = ChooseAny random active
-        return step (Froze(source, target.Name)) (List.removeAt index active) (WithCard card target :: finished) decks
+        let! index, target =
+            ChooseTarget decide Strategy.Ask.WhoToFreeze source active finished decks
+
+        return
+            step (Froze(source.Name, target.Name)) (List.removeAt index active) (WithCard card target :: finished) decks
     }
 
     let private GiveAwaySecondChance
-        (random: System.Random)
+        (decide: Strategy.TargetDecider)
         (card: Card)
-        (holder: string)
+        (holder: Player)
         (active: Player list)
+        (finished: Player list)
         (decks: Deck * Deck)
         : Async<string option * Player list * (Deck * Deck)> = async {
         let candidates =
             active
             |> List.indexed
-            |> List.where (fun (_, player) -> player.Name <> holder && not (HasSecondChance player))
+            |> List.where (fun (_, player) -> player.Name <> holder.Name && not (HasSecondChance player))
 
         match candidates with
         | [] ->
             let deck, discards = decks
             return None, active, (deck, Deck.Increment discards card)
         | _ ->
-            let index, recipient = candidates |> List.randomChoiceWith random
+            let! position, recipient =
+                ChooseTarget decide Strategy.Ask.WhoReceivesSecondChance holder (List.map snd candidates) finished decks
+
+            let index, _ = List.item position candidates
             return Some recipient.Name, List.updateAt index (WithCard card recipient) active, decks
     }
 
@@ -201,6 +235,7 @@ module public Timeline =
     // - with a nested deal3 resolving recursively.
     let rec private ResolveDeal3
         (random: System.Random)
+        (decide: Strategy.TargetDecider)
         (source: string)
         (targetIndex: int)
         (active: Player list)
@@ -208,7 +243,8 @@ module public Timeline =
         (decks: Deck * Deck)
         : Async<Instant list * Player list * Player list * (Deck * Deck)> = async {
 
-        let targetName = (List.item targetIndex active).Name
+        let dealtTo = List.item targetIndex active
+        let targetName = dealtTo.Name
 
         let rec Flip
             (remaining: uint)
@@ -240,7 +276,8 @@ module public Timeline =
                 return! Flip (remaining - 1u) flipped' setAsides active' decks'
 
             | ActionCard Card.SecondChance ->
-                let! _, active', decks'' = GiveAwaySecondChance random card target.Name active decks'
+                let! _, active', decks'' =
+                    GiveAwaySecondChance decide card target active finished decks'
                 return! Flip (remaining - 1u) flipped' setAsides active' decks''
 
             | ValueCard _
@@ -276,6 +313,15 @@ module public Timeline =
                     )
                 take active, take finished
 
+            // The set-aside cards are given out by whoever flipped them, and by
+            // now that player may have moved: an earlier set-aside can have
+            // frozen them out of the round. Recover them from wherever they sit
+            // now, the way unpark does.
+            let chooser (active: Player list) (finished: Player list) : Player =
+                active @ finished
+                |> List.tryFind (fun player -> player.Name = targetName)
+                |> Option.defaultValue dealtTo
+
             let ResolveSetAside
                 ((instants, active, finished, decks): Instant list * Player list * Player list * (Deck * Deck))
                 (setAside: Card)
@@ -284,23 +330,41 @@ module public Timeline =
                     List.isEmpty active
                     || active |> List.exists (fun player -> Hand.HasFlip7Bonus player.Hand)
 
+                // A bust discards the flipper's remaining set-asides
+                // unresolved, and they can still bust here: an earlier
+                // set-aside deal3 given to themselves can end their round
+                // between one set-aside and the next. Leaving the card parked
+                // in their hand is what discards it, since hands go to the
+                // discards when the round ends. Being frozen is not busting, so
+                // a frozen flipper still gives out the rest.
+                let flipperBusted =
+                    active @ finished
+                    |> List.exists (fun player -> player.Name = targetName && Hand.IsBust player.Hand)
+
                 match setAside with
-                | _ when roundEnded -> return instants, active, finished, decks
+                | _ when roundEnded || flipperBusted -> return instants, active, finished, decks
                 | ActionCard Card.Freeze ->
                     let active, finished = unpark active finished setAside
 
                     let! more, active', finished', decks' =
-                        FreezePlayer random targetName setAside active finished decks
+                        FreezePlayer decide (chooser active finished) setAside active finished decks
 
                     return instants @ more, active', finished', decks'
                 | ActionCard Card.Deal3 ->
                     let active, finished = unpark active finished setAside
                     let deck, discards = decks
                     let decks = deck, Deck.Increment discards setAside
-                    let index, _ = ChooseAny random active
+                    let! index, _ =
+                        ChooseTarget
+                            decide
+                            Strategy.Ask.WhoReceivesDeal3
+                            (chooser active finished)
+                            active
+                            finished
+                            decks
 
                     let! nested, active', finished', decks' =
-                        ResolveDeal3 random targetName index active finished decks
+                        ResolveDeal3 random decide targetName index active finished decks
 
                     return instants @ nested, active', finished', decks'
                 | _ -> return raise (System.InvalidOperationException $"Unexpected set-aside card: {setAside}")
@@ -320,10 +384,11 @@ module public Timeline =
     //
     // Resolution is asynchronous because a card can pose a choice - who to
     // freeze, who receives a deal3, who is passed a second chance - and whoever
-    // answers may need to be awaited. Those choices are made by ChooseAny for
-    // now, so nothing suspends and the draw order off the random is unchanged.
+    // answers may need to be awaited: the targeting decider is asked who
+    // receives the card, and a human decider can suspend the game there.
     let private ResolveDraw
         (random: System.Random)
+        (decide: Strategy.TargetDecider)
         (current: Player)
         (others: Player list)
         (finished: Player list)
@@ -341,12 +406,12 @@ module public Timeline =
         | ModifierCard _ -> return keep ()
         | ActionCard Card.SecondChance when not (HasSecondChance current) -> return keep ()
 
-        // Can never bust on a second chance card, but you also can't hold two of
-        // them at the same time: give it away, or discard it if no one can hold
-        // it
+        // Can never bust on a second chance card, but you also can't hold two
+        // of them at the same time: give it away, or discard it if no one can
+        // hold it
         | ActionCard Card.SecondChance ->
             let! recipient, active', decks' =
-                GiveAwaySecondChance random card current.Name (others @ [ current ]) decks
+                GiveAwaySecondChance decide card current (others @ [ current ]) finished decks
 
             let event =
                 match recipient with
@@ -355,12 +420,13 @@ module public Timeline =
 
             return step event active' finished decks'
 
-        // Can never bust on a freeze card, just pick someone to freeze (possibly
-        // yourself); they bank their points and are done for the round
-        | ActionCard Card.Freeze -> return! FreezePlayer random current.Name card (others @ [ current ]) finished decks
+        // Can never bust on a freeze card, just pick someone to freeze
+        // (possibly yourself); they bank their points and are done for the
+        // round
+        | ActionCard Card.Freeze -> return! FreezePlayer decide current card (others @ [ current ]) finished decks
 
-        // Can bust on a value card, so reduce the hand to see whether the player
-        // is done
+        // Can bust on a value card, so reduce the hand to see whether the
+        // player is done
         | ValueCard _ ->
             let isBust, reducedHand, removedCards = Hand.Reduce(card :: current.Hand)
             let decks' = deck, List.fold Deck.Increment discards removedCards
@@ -376,8 +442,9 @@ module public Timeline =
         | ActionCard Card.Deal3 ->
             let decks' = deck, Deck.Increment discards card
             let rotated = others @ [ current ]
-            let index, _ = ChooseAny random rotated
-            return! ResolveDeal3 random current.Name index rotated finished decks'
+            let! index, _ =
+                ChooseTarget decide Strategy.Ask.WhoReceivesDeal3 current rotated finished decks'
+            return! ResolveDeal3 random decide current.Name index rotated finished decks'
     }
 
     let rec private GoonSession
@@ -425,7 +492,7 @@ module public Timeline =
                     if turn = 1u then
                         async.Return Strategy.Hit
                     else
-                        decide current.Strategy round turn current others finished decks
+                        decide.HitOrStand current.Strategy round turn current others finished decks
 
                 match hitOrStand with
                 | Strategy.Stand ->
@@ -437,13 +504,35 @@ module public Timeline =
                     let decks', card = Deck.Draw1With random decks
 
                     let! instants, active', finished', decks'' =
-                        ResolveDraw random current others finished decks' card
+                        ResolveDraw random decide.Target current others finished decks' card
 
                     for instant in instants do
                         yield instant
 
                     yield! GoonSession random decide round turnsTaken active' finished' decks''
             }
+
+    // Names are the engine's identity key: turn counts, round scores,
+    // unparking a set-aside card during a deal3, and matching a targeting
+    // decider's answer back to a seat are all done by name, and a duplicate
+    // corrupts all four quietly rather than failing. Checked where a game or a
+    // continuation is set up, and eagerly rather than inside the timeline, so
+    // the error lands where the lineup was written instead of wherever it
+    // first came to be enumerated.
+    let private EnsureDistinctNames (players: Player list) : unit =
+        let duplicated =
+            players
+            |> List.countBy (fun player -> player.Name)
+            |> List.where (fun (_, seats) -> seats > 1)
+            |> List.map fst
+
+        if not (List.isEmpty duplicated) then
+            let duplicated = String.concat ", " duplicated
+
+            raise (
+                System.ArgumentException
+                    $"Player names must be unique, but these are seated more than once: {duplicated}"
+            )
 
     /// <summary>
     /// Continues a game from a mid-round state: the active players in rotation
@@ -453,8 +542,8 @@ module public Timeline =
     /// player first reaches 200 points at a RoundEnded, which is the last
     /// instant of the timeline. A player whose turn count is zero is dealt a
     /// forced first hit, so a continuation should count at least one turn for
-    /// anyone already holding cards. The next round's rotation derives from
-    /// the given ordering, since the original seating is not recoverable.
+    /// anyone already holding cards. The next round's rotation derives from the
+    /// given ordering, since the original seating is not recoverable.
     /// </summary>
     let public ContinueWith
         (random: System.Random)
@@ -465,7 +554,10 @@ module public Timeline =
         (startingFinished: Player list)
         (startingDecks: Deck * Deck)
         : Timeline =
-        if List.isEmpty startingActive && List.isEmpty startingFinished then
+        let everyone = startingActive @ startingFinished
+        EnsureDistinctNames everyone
+
+        if List.isEmpty everyone then
             AsyncSeq.empty
         else
 
@@ -544,19 +636,22 @@ module public Timeline =
         }
 
     /// <summary>
-    /// Simulates a full game like SimulateWith, but every hit or stand
-    /// decision is routed through the given decider, so Prompt strategies can
-    /// be answered by a human at the terminal. Pulling the timeline drives
-    /// the game, so a decider may await (a key press, a network message) and
-    /// the game simply pauses there without holding a thread.
+    /// Simulates a full game like SimulateWith, but every hit or stand decision
+    /// is routed through the given decider, so Prompt strategies can be
+    /// answered by a human at the terminal. Pulling the timeline drives the
+    /// game, so a decider may await (a key press, a network message) and the
+    /// game simply pauses there without holding a thread.
     /// </summary>
     let public SimulateWithDecider
         (random: System.Random)
         (decide: Strategy.Decider)
-        (players: list<string * Strategy>)
+        (players: list<string * Strategy * Targeting>)
         : Timeline =
         let startingPlayers =
-            players |> List.map (fun (name, strategy) -> Player.Make(name, strategy))
+            players
+            |> List.map (fun (name, strategy, targeting) -> Player.Make(name, strategy, targeting = targeting))
+
+        EnsureDistinctNames startingPlayers
 
         asyncSeq {
             yield {
@@ -578,12 +673,12 @@ module public Timeline =
     /// enumerating it advances the random, so enumerate it once (or cache it)
     /// when reproducibility matters.
     /// </summary>
-    let public SimulateWith (random: System.Random) (players: list<string * Strategy>) : Timeline =
+    let public SimulateWith (random: System.Random) (players: list<string * Strategy * Targeting>) : Timeline =
         SimulateWithDecider random (Strategy.DecideWith random) players
 
     /// <summary>
     /// Simulates a full game without threading a source of randomness.
     /// </summary>
     [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Timeline.SimulateWith instead")>]
-    let public Simulate (players: list<string * Strategy>) : Timeline =
+    let public Simulate (players: list<string * Strategy * Targeting>) : Timeline =
         SimulateWith System.Random.Shared players
