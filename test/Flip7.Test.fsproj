@@ -16,6 +16,7 @@
     <Compile Include="TimelineTests.fs" />
     <Compile Include="PersistenceTests.fs" />
     <Compile Include="ObservationTests.fs" />
+    <Compile Include="InferenceTests.fs" />
     <Compile Include="PropertyTests.fs" />
   </ItemGroup>
 
