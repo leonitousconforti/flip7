@@ -25,6 +25,7 @@
     <Compile Include="Timeline.fs" />
     <Compile Include="Persistence.fs" />
     <Compile Include="Observation.fs" />
+    <Compile Include="Inference.fs" />
   </ItemGroup>
 
   <ItemGroup>

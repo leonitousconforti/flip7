@@ -55,16 +55,6 @@ module public Strategy =
     let public Random: Strategy = Strategy.RandomWithProbability 0.5
 
     /// <summary>
-    /// What a player is showing: banked points plus whatever their hand is
-    /// currently worth, or just the banked points once they have busted.
-    /// </summary>
-    let private Showing (player: Player) : uint =
-        if Hand.IsBust player.Hand then
-            player.FirmScore
-        else
-            player.FirmScore + Hand.Score player.Hand
-
-    /// <summary>
     /// Evaluates a strategy using the given source of randomness, given the
     /// current round number, the current turn (how many times play has come
     /// around the table this round, counting from one for the player being
@@ -128,7 +118,8 @@ module public Strategy =
                     Stand
             | Strategy.HitWhileBehindLeader margin ->
                 let total = player.FirmScore + Hand.Score player.Hand
-                let leader = otherPlayers @ finishedPlayers |> List.map Showing |> List.fold max 0u
+                let leader =
+                    otherPlayers @ finishedPlayers |> List.map Player.Showing |> List.fold max 0u
                 if total < leader + margin then Hit else Stand
             | Strategy.StandsAfterTurn turns -> if turn <= turns then Hit else Stand
             | Strategy.MaximizesExpectedValue ->
@@ -175,10 +166,10 @@ module public Strategy =
                 match ask, opponents with
                 | _, [] -> List.head candidates
                 | Ask.WhoReceivesDeal3, opponents -> opponents |> List.maxBy bustProbability
-                | _, opponents -> opponents |> List.maxBy Showing
+                | _, opponents -> opponents |> List.maxBy Player.Showing
 
             // Helps the least: whoever is furthest behind
-            let helpsLeast () = candidates |> List.minBy Showing
+            let helpsLeast () = candidates |> List.minBy Player.Showing
 
             match targeting with
             | Targeting.ChoosesRandomly -> candidates |> List.randomChoiceWith random
