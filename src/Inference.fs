@@ -8,8 +8,6 @@ type public PlayerModel = {
     Name: string
     Observations: int
     HitRate: float
-    /// Candidate strategies with normalized posterior probabilities, most
-    /// probable first.
     Posterior: (Strategy * float) list
 }
 
@@ -29,8 +27,8 @@ module public Inference =
     /// <summary>
     /// The probability that a strategy hits in the state captured by an
     /// observation. Mirrors Strategy.DecideHitOrStandWith, but returns the
-    /// probability of hitting instead of sampling a decision so likelihoods
-    /// are exact; probabilistic strategies return their actual curve value.
+    /// probability of hitting instead of sampling a decision so likelihoods are
+    /// exact; probabilistic strategies return their actual curve value.
     /// </summary>
     let public ProbabilityOfHit (strategy: Strategy) (observation: Observation) : float =
         match strategy with
@@ -48,17 +46,16 @@ module public Inference =
             else
                 0.0
         | Strategy.HitUntilBustProbability threshold ->
-            let deck, discards = observation.Deck, observation.Discards
             let onlyPlayer = List.isEmpty observation.OtherPlayers
-
-            if Simulation.probabilityToBust deck discards observation.Player.Hand onlyPlayer < threshold then
+            if
+                Simulation.probabilityToBust observation.Deck observation.Discards observation.Player.Hand onlyPlayer < threshold
+            then
                 1.0
             else
                 0.0
         | Strategy.HitUntilNaiveBustProbability threshold ->
             let unseen = observation.Player.Hand |> List.fold Deck.Decrement Deck.Full
             let onlyPlayer = List.isEmpty observation.OtherPlayers
-
             if Simulation.probabilityToBust unseen Deck.Empty observation.Player.Hand onlyPlayer < threshold then
                 1.0
             else
@@ -92,7 +89,6 @@ module public Inference =
                 0.0
         | Strategy.HitWhileBehindLeader margin ->
             let total = observation.Player.FirmScore + Hand.Score observation.Player.Hand
-
             let leader =
                 observation.OtherPlayers @ observation.FinishedPlayers
                 |> List.map Showing
@@ -102,7 +98,6 @@ module public Inference =
         | Strategy.StandsAfterTurn turns -> if observation.Turn <= turns then 1.0 else 0.0
         | Strategy.MaximizesExpectedValue ->
             let deck, discards = observation.Deck, observation.Discards
-
             if Simulation.expectedValueOfHit deck discards observation.Player.Hand > 0.0 then
                 1.0
             else
@@ -184,14 +179,14 @@ module public Inference =
         )
 
     /// <summary>
-    /// Fits with the default candidate grid and a 10% rate of
-    /// out-of-character decisions.
+    /// Fits with the default candidate grid and a 10% rate of out-of-character
+    /// decisions.
     /// </summary>
     let public Fit (observations: Observation list) : PlayerModel list =
         FitWith 0.1 DefaultCandidates observations
 
     /// <summary>
-    /// The maximum a posteriori strategy: the single candidate that best
+    /// The maximum a posterior strategy: the single candidate that best
     /// explains the player's decisions.
     /// </summary>
     let public MostLikely (model: PlayerModel) : Strategy = model.Posterior |> List.head |> fst
@@ -211,10 +206,10 @@ module public Inference =
         )
 
     /// <summary>
-    /// Samples a strategy from a player's posterior. Draw one sample per
-    /// Monte Carlo rollout - held fixed within the rollout, resampled across
-    /// rollouts - so uncertainty about the player propagates into whatever
-    /// the rollouts estimate.
+    /// Samples a strategy from a player's posterior. Draw one sample per Monte
+    /// Carlo rollout - held fixed within the rollout, resampled across rollouts
+    /// - so uncertainty about the player propagates into whatever the rollouts
+    /// estimate.
     /// </summary>
     let public SampleWith (random: System.Random) (model: PlayerModel) : Strategy =
         let rec pick (roll: float) (candidates: (Strategy * float) list) : Strategy =
