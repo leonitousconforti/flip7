@@ -149,3 +149,14 @@ type public Player = {
             FirmScore = firmScore
             Hand = hand
         }
+
+module internal Player =
+    /// <summary>
+    /// What a player is showing: banked points plus whatever their hand is
+    /// currently worth, or just the banked points once they have busted.
+    /// </summary>
+    let internal Showing (player: Player) : uint =
+        if Hand.IsBust player.Hand then
+            player.FirmScore
+        else
+            player.FirmScore + Hand.Score player.Hand

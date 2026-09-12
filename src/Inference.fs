@@ -13,18 +13,6 @@ type public PlayerModel = {
 
 module public Inference =
     /// <summary>
-    /// What a player is showing: banked points plus whatever their hand is
-    /// currently worth, or just the banked points once they have busted.
-    /// Mirrors the private helper Strategy.DecideHitOrStandWith ranks the
-    /// leader with.
-    /// </summary>
-    let private Showing (player: Player) : uint =
-        if Hand.IsBust player.Hand then
-            player.FirmScore
-        else
-            player.FirmScore + Hand.Score player.Hand
-
-    /// <summary>
     /// The probability that a strategy hits in the state captured by an
     /// observation. Mirrors Strategy.DecideHitOrStandWith, but returns the
     /// probability of hitting instead of sampling a decision so likelihoods are
@@ -91,7 +79,7 @@ module public Inference =
             let total = observation.Player.FirmScore + Hand.Score observation.Player.Hand
             let leader =
                 observation.OtherPlayers @ observation.FinishedPlayers
-                |> List.map Showing
+                |> List.map Player.Showing
                 |> List.fold max 0u
 
             if total < leader + margin then 1.0 else 0.0
@@ -109,17 +97,28 @@ module public Inference =
             )
 
     /// <summary>
-    /// The default candidate grid: every existing Strategy case at a spread of
-    /// parameter values. Anything sampled from a posterior over this grid can
-    /// be fed straight back into Timeline.SimulateWith as an opponent model.
+    /// The default candidate grid: every strategy DecideWith can evaluate -
+    /// all but Custom, which is decided externally - at a spread of parameter
+    /// values. Anything sampled from a posterior over this grid can be fed
+    /// straight back into Timeline.SimulateWith as an opponent model.
     /// </summary>
     let public DefaultCandidates: Strategy list =
-        [ Strategy.AlwaysHits; Strategy.AlwaysStands ]
+        [ Strategy.AlwaysHits; Strategy.AlwaysStands; Strategy.MaximizesExpectedValue ]
         @ ([ 0.25; 0.5; 0.75 ] |> List.map Strategy.RandomWithProbability)
         @ ([ 2u .. 2u .. 40u ] |> List.map Strategy.HitUntilScore)
         @ ([ 1u .. 7u ] |> List.map Strategy.HitUntilNumCards)
         @ ([ 1..9 ]
            |> List.map (fun tenths -> Strategy.HitUntilBustProbability(float tenths / 10.0)))
+        @ ([ 1..9 ]
+           |> List.map (fun tenths -> Strategy.HitUntilNaiveBustProbability(float tenths / 10.0)))
+        @ (List.allPairs [ 10u; 20u; 30u ] [ 2.0; 5.0 ]
+           |> List.map Strategy.SoftHitUntilScore)
+        @ ([ 40u .. 40u .. 200u ] |> List.map Strategy.HitUntilTotal)
+        @ ([ 2u .. 6u ] |> List.map Strategy.HitUntilUniqueValues)
+        @ (List.allPairs [ 15u; 20u; 25u ] [ 5u; 6u ] |> List.map Strategy.ChasesFlip7)
+        @ ([ 10u .. 5u .. 30u ] |> List.map Strategy.EmboldenedBySecondChance)
+        @ ([ 0u .. 5u .. 20u ] |> List.map Strategy.HitWhileBehindLeader)
+        @ ([ 1u .. 6u ] |> List.map Strategy.StandsAfterTurn)
 
     /// <summary>
     /// The probability of the observed choice under a candidate strategy,
