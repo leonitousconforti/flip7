@@ -546,7 +546,7 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
                 | Strategy.Custom name when name = adaptive ->
                     // The engine awaits the rollouts like any other decider;
                     // the viewer keeps showing the last frame
-                    (Option.get sage).Decide random round turn player others finished decks
+                    (Option.get sage).Decide random strategy round turn player others finished decks
                 | strategy -> Strategy.DecideHitOrStandWith random strategy round turn player others finished decks
     }
 
