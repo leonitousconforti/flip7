@@ -1,5 +1,7 @@
 namespace Flip7
 
+open FSharp.Control
+
 type public Observation = {
     Name: string
     Choice: Strategy.HitOrStand
@@ -14,10 +16,13 @@ type public Observation = {
 
 module public Observation =
     // The player whose choice produced an event, and what that choice was, or
-    // None for events not produced by a choice. Drawing a Freeze,
-    // SecondChance, or Deal3 still counts as the drawer choosing to hit; how
-    // the drawn card resolves afterwards is not their hit-or-stand decision.
-    let private Actor (event: Event) : (string * Strategy.HitOrStand) option =
+    // None for events not produced by a choice. Drawing a Freeze, SecondChance,
+    // or Deal3 still counts as the drawer choosing to hit; how the drawn card
+    // resolves afterwards is not their hit-or-stand decision. Not
+    // Event.Actor(), which answers whose state an event changed: for a Froze, a
+    // SecondChancePassed, or a Dealt3 that is the target, not the player who
+    // chose to hit.
+    let private Decider (event: Event) : (string * Strategy.HitOrStand) option =
         match event with
         | Drew(name, _) -> Some(name, Strategy.Hit)
         | Busted(name, _) -> Some(name, Strategy.Hit)
@@ -46,24 +51,25 @@ module public Observation =
     /// <summary>
     /// Extracts every voluntary hit-or-stand decision from a timeline. Each
     /// instant is a snapshot immediately after its event, so the preceding
-    /// instant is the exact state the actor decided from. Flips made while the
-    /// actor's hand was empty are dealing, not decisions, and are excluded;
-    /// this also covers the first event of every round, whose predecessor is
-    /// the previous RoundEnded snapshot with all hands discarded. Froze and
-    /// Dealt3 events that resolve a set-aside card from an earlier deal3 are
-    /// the flipper giving out cards they were dealt, not a voluntary hit, and
-    /// are excluded too.
-    ///
-    /// The result is lazy: each observation is yielded as soon as its instant
-    /// is consumed, so unbounded timelines work. Re-enumerating replays the
-    /// timeline from the start.
+    /// instant is the exact state the actor decided from. A player's first turn
+    /// of every round is a forced hit the engine never asks their strategy
+    /// about - it is dealing, not a decision - and is excluded; the turn is
+    /// reconstructed by counting the player's decision events, which matches
+    /// the engine's count because every turn produces exactly one such event.
+    /// Froze and Dealt3 events that resolve a set-aside card from an earlier
+    /// deal3 are the flipper giving out cards they were dealt, not a voluntary
+    /// hit, and are excluded too.
     ///
     /// OtherPlayers contains only the players still in the round, matching what
     /// the hit-or-stand decider receives: busted players are recognized by
     /// their still-bust hands, players who stood or were frozen by replaying
     /// the round's events; both land in FinishedPlayers.
+    ///
+    /// Observations are produced asynchronously as instants arrive, so a live
+    /// game can be observed while it plays and unbounded timelines work.
+    /// Re-enumerating replays the timeline from the start.
     /// </summary>
-    let public FromTimeline (timeline: Instant seq) : Observation seq =
+    let public FromTimeline (timeline: Timeline) : AsyncSeq<Observation> =
         let step
             (
                 finished: Set<string>,
@@ -99,19 +105,19 @@ module public Observation =
                 | _ -> pending
 
             let turns' =
-                match Actor instant.Event with
+                match Decider instant.Event with
                 | Some(name, _) when voluntary ->
                     let taken = turns |> Map.tryFind name |> Option.defaultValue 0u
                     turns |> Map.add name (taken + 1u)
                 | _ -> turns
 
             let observe (before: Instant) : Observation option =
-                Actor instant.Event
+                Decider instant.Event
                 |> Option.filter (fun _ -> voluntary)
+                |> Option.filter (fun (name, _) -> Map.find name turns' > 1u)
                 |> Option.bind (fun (name, choice) ->
                     before.Players
                     |> List.tryFind (fun player -> player.Name = name)
-                    |> Option.filter (fun actor -> not (List.isEmpty actor.Hand))
                     |> Option.map (fun actor ->
                         let others, finishedPlayers =
                             before.Players
@@ -144,12 +150,12 @@ module public Observation =
             finished', round', turns'', pending'', Some instant, previous |> Option.bind observe
 
         timeline
-        |> Seq.scan step (Set.empty, 1u, Map.empty, Map.empty, None, None)
-        |> Seq.choose (fun (_, _, _, _, _, observation) -> observation)
+        |> AsyncSeq.scan step (Set.empty, 1u, Map.empty, Map.empty, None, None)
+        |> AsyncSeq.choose (fun (_, _, _, _, _, observation) -> observation)
 
     /// <summary>
     /// Extracts and pools the decisions of many timelines, e.g. every persisted
     /// game a household has played.
     /// </summary>
-    let public FromTimelines (timelines: Instant seq seq) : Observation seq =
-        timelines |> Seq.collect FromTimeline
+    let public FromTimelines (timelines: Timeline seq) : AsyncSeq<Observation> =
+        timelines |> AsyncSeq.ofSeq |> AsyncSeq.collect FromTimeline

@@ -346,6 +346,52 @@ let ``continuing from any legal mid-round state conserves all 94 cards and finis
     Check.One(Config.QuickThrowOnFailure.WithMaxTest 20, property)
 
 [<Fact>]
+let ``observations reproduce exactly the decisions the engine asked for`` () =
+    let property =
+        Prop.forAll
+            (Arb.fromGen (Gen.map2 (fun seed lineup -> seed, lineup) genSeed genLineup))
+            (fun (seed, lineup) ->
+                // A decider that records every hit-or-stand question as the
+                // engine poses it, so the observations reconstructed from the
+                // timeline can be checked against what the players really saw
+                let random = Random seed
+                let inner = Strategy.DecideWith random
+                let asked = ResizeArray<Observation>()
+
+                let recording = {
+                    inner with
+                        HitOrStand =
+                            fun strategy round turn player others finished decks -> async {
+                                let! choice = inner.HitOrStand strategy round turn player others finished decks
+
+                                asked.Add {
+                                    Name = player.Name
+                                    Choice = choice
+                                    Round = round
+                                    Turn = turn
+                                    Player = player
+                                    OtherPlayers = others
+                                    FinishedPlayers = finished
+                                    Deck = fst decks
+                                    Discards = snd decks
+                                }
+
+                                return choice
+                            }
+                }
+
+                let observations =
+                    Timeline.SimulateWithDecider random recording lineup
+                    |> Observation.FromTimeline
+                    |> AsyncSeq.toListAsync
+                    |> Async.RunSynchronously
+
+                observations = List.ofSeq asked
+            )
+
+    Check.One(Config.QuickThrowOnFailure.WithMaxTest 20, property)
+
+[<Fact>]
 let ``the same seed always produces the same timeline`` () =
     let property =
         Prop.forAll
