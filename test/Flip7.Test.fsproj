@@ -12,9 +12,10 @@
     <Compile Include="DeckTests.fs" />
     <Compile Include="StrategyTests.fs" />
     <Compile Include="SimulationTests.fs" />
-    <Compile Include="PersistenceTests.fs" />
     <Compile Include="EventTests.fs" />
     <Compile Include="TimelineTests.fs" />
+    <Compile Include="PersistenceTests.fs" />
+    <Compile Include="ObservationTests.fs" />
     <Compile Include="PropertyTests.fs" />
   </ItemGroup>
 

@@ -24,6 +24,7 @@
     <Compile Include="Strategy.fs" />
     <Compile Include="Timeline.fs" />
     <Compile Include="Persistence.fs" />
+    <Compile Include="Observation.fs" />
   </ItemGroup>
 
   <ItemGroup>
