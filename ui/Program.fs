@@ -44,7 +44,8 @@ type public PlayArgs =
     interface IArgParserTemplate with
         member this.Usage =
             match this with
-            | PlayArgs.Names _ -> "one to five human names; AIs fill the remaining seats"
+            | PlayArgs.Names _ ->
+                "one to five human names; Sage, an adaptive AI, and naive bots fill the remaining seats"
             | PlayArgs.Seed _ -> "seed for the game's randomness, so the run is reproducible"
             | PlayArgs.Pace _ -> "milliseconds between dealt instants"
 
@@ -58,7 +59,7 @@ type public Arguments =
             match this with
             | Replay _ -> "replay a previously recorded game"
             | Simulate _ -> "simulate a full game and scrub through it as it unfolds"
-            | Play _ -> "play interactively; AIs fill the seats the humans leave open"
+            | Play _ -> "play interactively; Sage, an adaptive AI, and naive bots fill the seats the humans leave open"
 
 let parseSimulatePlayers (simulate: ParseResults<SimulateArgs>) =
     simulate.GetResults <@ SimulateArgs.Player @>

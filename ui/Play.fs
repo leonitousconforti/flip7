@@ -13,9 +13,32 @@ let private width = 80
 let private playerSlots = 5
 let private paceMilliseconds = 400
 let private terminalPrompt = "TerminalPrompt"
+let private adaptive = "Adaptive"
+let private sageName = "Sage"
+let private timelinesRoot = "timelines"
 
 type private QuitException() =
     inherit Exception()
+
+// Every previously persisted game is training data: Sage starts each session
+// already knowing how its regulars play. A directory that does not read back
+// (a session killed mid-write, say) is skipped rather than fatal
+let private LoadHistory () : Instant list list =
+    if not (Directory.Exists timelinesRoot) then
+        []
+    else
+        Directory.GetDirectories timelinesRoot
+        |> Array.sort
+        |> Array.toList
+        |> List.choose (fun directory ->
+            try
+                Persistence.ReadTimeline directory
+                |> AsyncSeq.toListAsync
+                |> Async.RunSynchronously
+                |> Some
+            with _ ->
+                None
+        )
 
 type private Prompt = {
     Round: uint
@@ -396,12 +419,20 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
         raise (ArgumentException "Player names must be unique.")
 
     let botNames =
-        [ "Alice"; "Bob"; "Chloe"; "Dave"; "Eve" ]
+        [ sageName; "Alice"; "Bob"; "Chloe"; "Dave" ]
         |> List.take (playerSlots - humanNames.Length)
 
     match humanNames |> List.tryFind (fun name -> botNames |> List.contains name) with
     | Some taken -> raise (ArgumentException $"{taken} is taken by one of the AIs, please pick another name.")
     | None -> ()
+
+    // Sage takes the first free seat, so it only exists (and only pays for
+    // reading the persisted games) when at least one seat is open
+    let sage =
+        if List.isEmpty botNames then
+            None
+        else
+            Some(Sage(LoadHistory()))
 
     let random =
         match seed with
@@ -422,19 +453,26 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
         Strategy.MaximizesExpectedValue
     ]
 
-    let naive =
-        pool |> List.sortBy (fun _ -> random.Next()) |> List.take botNames.Length
+    let naiveNames = botNames |> List.filter (fun name -> name <> sageName)
 
-    // Bots aim their action cards at random; the humans are asked
+    let naive =
+        pool |> List.sortBy (fun _ -> random.Next()) |> List.take naiveNames.Length
+
+    // Bots aim their action cards at random; the humans are asked. Sage
+    // decides its hits and stands by Monte Carlo best response against its
+    // fitted models of everyone else
     let players =
         (humanNames
          |> List.map (fun name -> name, Strategy.Custom terminalPrompt, Targeting.ChoosesExternally terminalPrompt))
-        @ (List.zip botNames naive
+        @ (botNames
+           |> List.filter (fun name -> name = sageName)
+           |> List.map (fun name -> name, Strategy.Custom adaptive, Targeting.ChoosesRandomly))
+        @ (List.zip naiveNames naive
            |> List.map (fun (name, strategy) -> name, strategy, Targeting.ChoosesRandomly))
         |> List.sortBy (fun _ -> random.Next())
 
     let now = DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss"
-    let directory = Path.Join("timelines", now)
+    let directory = Path.Join(timelinesRoot, now)
     use store =
         new Persistence.TimelineStore(
             directory,
@@ -505,6 +543,11 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
                     | decision ->
                         return raise (InvalidOperationException $"answered a hit-or-stand ask with {decision}")
                   }
+                | Strategy.Custom name when name = adaptive -> async {
+                    // Blocks the engine while the rollouts run, like any other
+                    // decider; the viewer keeps showing the last frame
+                    return (Option.get sage).Decide random round turn player others finished decks
+                  }
                 | strategy -> Strategy.DecideHitOrStandWith random strategy round turn player others finished decks
     }
 
@@ -515,12 +558,25 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
     let drive (dispatch: Msg -> unit) : Task<unit> =
         let decide = decider dispatch
 
+        // The game so far, mirroring what is on disk: an edit continues right
+        // behind the instants already written, so the record is append-only.
+        // Sage refits its models of everyone at every round boundary
+        let recorded = ResizeArray<Instant>()
+
+        let record (instant: Instant) : unit =
+            recorded.Add instant
+            written <- written + 1
+
+            match sage, instant.Event with
+            | Some ai, RoundEnded _ -> ai.Learn(List.ofSeq recorded)
+            | _ -> ()
+
         let rec drain (timeline: Timeline) : Async<unit> = async {
             try
                 do!
                     timeline
                     |> Persistence.WriteTimelineLazyFrom directory written
-                    |> AsyncSeq.iter (fun _ -> written <- written + 1)
+                    |> AsyncSeq.iter record
             with
             | :? QuitException -> dispatch Quitted
             | :? Editor.EditException as edit ->
@@ -565,4 +621,17 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
         }
 
     do! driver |> Async.AwaitTask
+
+    // What Sage made of the humans, once the terminal is back
+    match sage with
+    | None -> ()
+    | Some ai ->
+        for name in humanNames do
+            match ai.ModelOf name with
+            | Some model ->
+                let strategy, probability = List.head model.Posterior
+
+                printfn
+                    $"Sage read {name} as {strategy} (%.0f{probability * 100.0}%% sure, {model.Observations} decisions)"
+            | None -> printfn $"Sage never saw {name} decide"
 }

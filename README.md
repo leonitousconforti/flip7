@@ -22,7 +22,11 @@ distributions and card entry, a bust and undo, then hitting and
 standing](media/play.gif)
 
 Run `dotnet run --project ui -- play You "A Friend"` to take a seat; AIs fill
-the rest. The dealer runs and the game stops at each of your turns, showing your
+the rest. The first open seat goes to Sage, an adaptive AI that models how
+everyone at the table plays (from every game persisted under `timelines/` plus
+the rounds of the current game as they finish) and decides its hits and stands
+by Monte Carlo best response; when the game ends it tells you what it made of
+you. The dealer runs and the game stops at each of your turns, showing your
 points in hand, your bust probability, and the expected value of hitting. Press
 `h` to hit, `s` to stand, or `e` to open the editor and reconcile the table:
 move the cursor along the deck's pdf/cdf sparklines with the arrow keys to read
