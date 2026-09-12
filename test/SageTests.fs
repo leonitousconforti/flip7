@@ -50,7 +50,11 @@ let ``Sage stands when standing wins the game outright`` () =
     let rival = Player.Make("Rival", Strategy.Random, firmScore = 150u)
     let decks = me.Hand |> List.fold Deck.Decrement Deck.Full, Deck.Empty
 
-    Assert.Equal(Strategy.Stand, sage.Decide (System.Random 1) 5u 3u me [ rival ] [] decks)
+    Assert.Equal(
+        Strategy.Stand,
+        sage.Decide (System.Random 1) 5u 3u me [ rival ] [] decks
+        |> Async.RunSynchronously
+    )
 
 [<Fact>]
 let ``Sage hits when its model shows that standing concedes the game`` () =
@@ -71,4 +75,8 @@ let ``Sage hits when its model shows that standing concedes the game`` () =
 
     let decks = me.Hand @ rival.Hand |> List.fold Deck.Decrement Deck.Full, Deck.Empty
 
-    Assert.Equal(Strategy.Hit, sage.Decide (System.Random 1) 5u 3u me [ rival ] [] decks)
+    Assert.Equal(
+        Strategy.Hit,
+        sage.Decide (System.Random 1) 5u 3u me [ rival ] [] decks
+        |> Async.RunSynchronously
+    )

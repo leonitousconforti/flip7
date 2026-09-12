@@ -53,7 +53,7 @@ type public Sage(history: Instant list list, ?rollouts: int) =
         (others: Player list)
         (finished: Player list)
         (decks: Deck * Deck)
-        : float
+        : Async<float>
         =
         // The declared strategies are replaced by the sampled ones (a human's
         // Custom label has no meaning inside a rollout), and everyone aims
@@ -89,23 +89,28 @@ type public Sage(history: Instant list list, ?rollouts: int) =
                         | _ -> canonical.HitOrStand strategy round turn current others finished decks
         }
 
-        let finals =
-            Timeline.ContinueWith random decide round turnsTaken active finished decks
-            |> AsyncSeq.tryLast
-            |> Async.RunSynchronously
-            |> Option.map (fun instant -> instant.Players |> List.map (fun p -> p.Name, p.FirmScore) |> Map.ofList)
-            |> Option.defaultValue (
-                player :: others @ finished
-                |> List.map (fun p -> p.Name, p.FirmScore)
-                |> Map.ofList
-            )
+        async {
+            let! last =
+                Timeline.ContinueWith random decide round turnsTaken active finished decks
+                |> AsyncSeq.tryLast
 
-        let mine = finals |> Map.find player.Name
-        let best = finals |> Map.remove player.Name |> Map.values |> Seq.fold max 0u
+            let finals =
+                last
+                |> Option.map (fun instant -> instant.Players |> List.map (fun p -> p.Name, p.FirmScore) |> Map.ofList)
+                |> Option.defaultValue (
+                    player :: others @ finished
+                    |> List.map (fun p -> p.Name, p.FirmScore)
+                    |> Map.ofList
+                )
 
-        if mine > best then 1.0
-        elif mine = best then 0.5
-        else 0.0
+            let mine = finals |> Map.find player.Name
+            let best = finals |> Map.remove player.Name |> Map.values |> Seq.fold max 0u
+
+            return
+                if mine > best then 1.0
+                elif mine = best then 0.5
+                else 0.0
+        }
 
     /// <summary>
     /// The fitted model of a player, or None before any of their decisions
@@ -133,6 +138,8 @@ type public Sage(history: Instant list list, ?rollouts: int) =
     /// better one. Opponents play strategies sampled from their posteriors
     /// (expected-value play when unmodeled); Sage's own rollout policy is
     /// also expected-value play, since it cannot recurse into itself.
+    /// Asynchronous like every decider, so the rollouts run when the engine
+    /// awaits the answer rather than holding a thread here.
     /// </summary>
     member _.Decide
         (random: System.Random)
@@ -142,7 +149,7 @@ type public Sage(history: Instant list list, ?rollouts: int) =
         (others: Player list)
         (finished: Player list)
         (decks: Deck * Deck)
-        : Strategy.HitOrStand
+        : Async<Strategy.HitOrStand>
         =
         // A derived stream so rollouts do not perturb the game's randomness
         let rng = System.Random(random.Next())
@@ -160,19 +167,36 @@ type public Sage(history: Instant list list, ?rollouts: int) =
                 ))
             |> Map.ofList
 
-        let estimate (action: Strategy.HitOrStand) : float =
-            Seq.init
-                rollouts
-                (fun _ -> Sage.Rollout rng (sampleStrategies ()) action round turn player others finished decks)
-            |> Seq.average
+        // The rollouts share the derived random, so they run one at a time
+        let estimate (action: Strategy.HitOrStand) : Async<float> = async {
+            let mutable total = 0.0
 
-        let hit = estimate Strategy.Hit
-        let stand = estimate Strategy.Stand
+            for _ in 1..rollouts do
+                let! outcome =
+                    Sage.Rollout rng (sampleStrategies ()) action round turn player others finished decks
 
-        if hit > stand then
-            Strategy.Hit
-        elif stand > hit then
-            Strategy.Stand
-        else
-            Strategy.DecideHitOrStandWith rng Strategy.MaximizesExpectedValue round turn player others finished decks
-            |> Async.RunSynchronously
+                total <- total + outcome
+
+            return total / float rollouts
+        }
+
+        async {
+            let! hit = estimate Strategy.Hit
+            let! stand = estimate Strategy.Stand
+
+            if hit > stand then
+                return Strategy.Hit
+            elif stand > hit then
+                return Strategy.Stand
+            else
+                return!
+                    Strategy.DecideHitOrStandWith
+                        rng
+                        Strategy.MaximizesExpectedValue
+                        round
+                        turn
+                        player
+                        others
+                        finished
+                        decks
+        }
