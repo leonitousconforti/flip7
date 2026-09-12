@@ -17,6 +17,7 @@
     <Compile Include="PersistenceTests.fs" />
     <Compile Include="ObservationTests.fs" />
     <Compile Include="InferenceTests.fs" />
+    <Compile Include="SageTests.fs" />
     <Compile Include="PropertyTests.fs" />
   </ItemGroup>
 
