@@ -133,70 +133,64 @@ type public Sage(history: Instant list list, ?rollouts: int) =
         fit ()
 
     /// <summary>
-    /// Hit or stand by Monte Carlo best response: estimate the probability of
-    /// ending the game with the top score under each action and take the
-    /// better one. Opponents play strategies sampled from their posteriors
+    /// Hit or stand by Monte Carlo best response, shaped as a
+    /// HitOrStandDecider closing over the randomness (like
+    /// Strategy.DecideHitOrStandWith) so Sage plugs in wherever the engine
+    /// takes a decider. The declared strategy is ignored: Sage's Custom label
+    /// names it rather than describes it. Estimates the probability of ending
+    /// the game with the top score under each action and takes the better
+    /// one. Opponents play strategies sampled from their posteriors
     /// (expected-value play when unmodeled); Sage's own rollout policy is
     /// also expected-value play, since it cannot recurse into itself.
-    /// Asynchronous like every decider, so the rollouts run when the engine
-    /// awaits the answer rather than holding a thread here.
     /// </summary>
-    member _.Decide
-        (random: System.Random)
-        (round: uint)
-        (turn: uint)
-        (player: Player)
-        (others: Player list)
-        (finished: Player list)
-        (decks: Deck * Deck)
-        : Async<Strategy.HitOrStand>
-        =
-        // A derived stream so rollouts do not perturb the game's randomness
-        let rng = System.Random(random.Next())
+    member _.Decide(random: System.Random) : Strategy.HitOrStandDecider =
+        fun _strategy round turn player others finished decks ->
+            // A derived stream so rollouts do not perturb the game's randomness
+            let rng = System.Random(random.Next())
 
-        let sampleStrategies () =
-            (player.Name, Strategy.MaximizesExpectedValue)
-            :: (others @ finished
-                |> List.map (fun opponent ->
-                    let strategy =
-                        match models |> Map.tryFind opponent.Name with
-                        | Some model -> Inference.SampleWith rng model
-                        | None -> Strategy.MaximizesExpectedValue
+            let sampleStrategies () =
+                (player.Name, Strategy.MaximizesExpectedValue)
+                :: (others @ finished
+                    |> List.map (fun opponent ->
+                        let strategy =
+                            match models |> Map.tryFind opponent.Name with
+                            | Some model -> Inference.SampleWith rng model
+                            | None -> Strategy.MaximizesExpectedValue
 
-                    opponent.Name, strategy
-                ))
-            |> Map.ofList
+                        opponent.Name, strategy
+                    ))
+                |> Map.ofList
 
-        // The rollouts share the derived random, so they run one at a time
-        let estimate (action: Strategy.HitOrStand) : Async<float> = async {
-            let mutable total = 0.0
+            // The rollouts share the derived random, so they run one at a time
+            let estimate (action: Strategy.HitOrStand) : Async<float> = async {
+                let mutable total = 0.0
 
-            for _ in 1..rollouts do
-                let! outcome =
-                    Sage.Rollout rng (sampleStrategies ()) action round turn player others finished decks
+                for _ in 1..rollouts do
+                    let! outcome =
+                        Sage.Rollout rng (sampleStrategies ()) action round turn player others finished decks
 
-                total <- total + outcome
+                    total <- total + outcome
 
-            return total / float rollouts
-        }
+                return total / float rollouts
+            }
 
-        async {
-            let! hit = estimate Strategy.Hit
-            let! stand = estimate Strategy.Stand
+            async {
+                let! hit = estimate Strategy.Hit
+                let! stand = estimate Strategy.Stand
 
-            if hit > stand then
-                return Strategy.Hit
-            elif stand > hit then
-                return Strategy.Stand
-            else
-                return!
-                    Strategy.DecideHitOrStandWith
-                        rng
-                        Strategy.MaximizesExpectedValue
-                        round
-                        turn
-                        player
-                        others
-                        finished
-                        decks
-        }
+                if hit > stand then
+                    return Strategy.Hit
+                elif stand > hit then
+                    return Strategy.Stand
+                else
+                    return!
+                        Strategy.DecideHitOrStandWith
+                            rng
+                            Strategy.MaximizesExpectedValue
+                            round
+                            turn
+                            player
+                            others
+                            finished
+                            decks
+            }

@@ -52,7 +52,7 @@ let ``Sage stands when standing wins the game outright`` () =
 
     Assert.Equal(
         Strategy.Stand,
-        sage.Decide (System.Random 1) 5u 3u me [ rival ] [] decks
+        sage.Decide (System.Random 1) (Strategy.Custom "Adaptive") 5u 3u me [ rival ] [] decks
         |> Async.RunSynchronously
     )
 
@@ -77,6 +77,6 @@ let ``Sage hits when its model shows that standing concedes the game`` () =
 
     Assert.Equal(
         Strategy.Hit,
-        sage.Decide (System.Random 1) 5u 3u me [ rival ] [] decks
+        sage.Decide (System.Random 1) (Strategy.Custom "Adaptive") 5u 3u me [ rival ] [] decks
         |> Async.RunSynchronously
     )
