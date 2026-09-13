@@ -21,8 +21,15 @@ let ``Sage models players from past games`` () =
         )
 
     let sage = Sage history
-    Assert.Equal(Strategy.HitUntilScore 24u, Inference.MostLikely (sage.ModelOf "You").Value)
-    Assert.Equal(Strategy.HitUntilNumCards 4u, Inference.MostLikely (sage.ModelOf "Rival").Value)
+    Assert.Equal(
+        Strategy.HitUntilScore 24u,
+        Inference.MostLikely (sage.ModelOf("You", Strategy.HitUntilScore 24u)).Value
+    )
+
+    Assert.Equal(
+        Strategy.HitUntilNumCards 4u,
+        Inference.MostLikely (sage.ModelOf("Rival", Strategy.HitUntilNumCards 4u)).Value
+    )
 
 [<Fact>]
 let ``Sage folded over a game models it exactly like history it has studied`` () =
@@ -40,8 +47,12 @@ let ``Sage folded over a game models it exactly like history it has studied`` ()
 
     let studied = Sage [ earlier; current ]
 
-    Assert.Equal(studied.ModelOf "You", folded.ModelOf "You")
-    Assert.Equal(studied.ModelOf "Rival", folded.ModelOf "Rival")
+    Assert.Equal(studied.ModelOf("You", Strategy.HitUntilScore 24u), folded.ModelOf("You", Strategy.HitUntilScore 24u))
+
+    Assert.Equal(
+        studied.ModelOf("Rival", Strategy.HitUntilNumCards 4u),
+        folded.ModelOf("Rival", Strategy.HitUntilNumCards 4u)
+    )
 
 let private teach (strategy: Strategy) (seeds: int list) : Instant list list =
     seeds
@@ -66,7 +77,7 @@ let ``Sage stands when standing wins the game outright`` () =
             hand = [ ValueCard Card.Twelve; ValueCard Card.Eleven; ValueCard Card.Nine ]
         )
 
-    let rival = Player.Make("Rival", Strategy.Random, firmScore = 150u)
+    let rival = Player.Make("Rival", Strategy.HitUntilScore 30u, firmScore = 150u)
     let decks = me.Hand |> List.fold Deck.Decrement Deck.Full, Deck.Empty
 
     Assert.Equal(
@@ -90,7 +101,7 @@ let ``Sage hits when its model shows that standing concedes the game`` () =
         )
 
     let rival =
-        Player.Make("Rival", Strategy.Random, firmScore = 190u, hand = [ ValueCard Card.Twelve ])
+        Player.Make("Rival", Strategy.AlwaysStands, firmScore = 190u, hand = [ ValueCard Card.Twelve ])
 
     let decks = me.Hand @ rival.Hand |> List.fold Deck.Decrement Deck.Full, Deck.Empty
 

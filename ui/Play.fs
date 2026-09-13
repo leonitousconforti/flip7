@@ -621,7 +621,7 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
     | None -> ()
     | Some ai ->
         for name in humanNames do
-            match ai.ModelOf name with
+            match ai.ModelOf(name, Strategy.Custom terminalPrompt) with
             | Some model ->
                 let strategy, probability = List.head model.Posterior
 
