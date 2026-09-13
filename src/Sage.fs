@@ -118,9 +118,21 @@ type public Sage
         let active = player :: others |> List.map restrategize
         let finished = finished |> List.map restrategize
 
+        // The decider has always taken their forced first hit - the engine
+        // only consults a strategy from turn two - even when that hit left
+        // their hand empty (a freeze or deal3 given away), so only other
+        // empty-handed players still await theirs. Without this the rollout
+        // would force an extra draw on the decider before the interceptor
+        // below can apply the candidate action
         let turnsTaken =
             active
-            |> List.map (fun p -> p.Name, (if List.isEmpty p.Hand then 0u else max turn 1u - 1u))
+            |> List.map (fun p ->
+                p.Name,
+                (if p.Name <> player.Name && List.isEmpty p.Hand then
+                     0u
+                 else
+                     max turn 1u - 1u)
+            )
             |> Map.ofList
 
         // The forced action is consumed by the first hit-or-stand ask, which
