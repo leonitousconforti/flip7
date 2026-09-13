@@ -21,11 +21,15 @@ type public Sage
     private (past: Observation list, recorded: Instant list, models: Map<string, PlayerModel>, rollouts: int)
     =
 
-    // Models are keyed by who a player is AND what they declared: a bot named
-    // Alice draws a fresh strategy every session, so her name alone would
-    // blend them all into one model, while a human's Custom label is stable
-    // across sessions and keeps accumulating their decisions
-    static member private Key(name: string, strategy: Strategy) : string = $"{name}|{strategy}"
+    // Models are keyed by what a player declared and, for Custom labels only,
+    // also by who they are: an engine strategy plays identically no matter
+    // who holds it, so those observations pool across players and sessions,
+    // while a Custom strategy is decided externally - a human at the
+    // terminal - and stays personal to its name
+    static member private Key(name: string, strategy: Strategy) : string =
+        match strategy with
+        | Strategy.Custom _ -> $"{name}|{strategy}"
+        | _ -> string strategy
 
     static member private Fit(observations: Observation list) : Map<string, PlayerModel> =
         observations
@@ -179,7 +183,6 @@ type public Sage
     /// </summary>
     member _.Decide(random: System.Random) : Strategy.HitOrStandDecider =
         fun _strategy round turn player others finished decks ->
-            // A derived stream so rollouts do not perturb the game's randomness
             let rng = System.Random(random.Next())
 
             let sampleStrategies () =
