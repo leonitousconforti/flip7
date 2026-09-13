@@ -8,17 +8,30 @@
 // evaluation games. The evaluation seeds are the same for every slice, so the
 // comparison across training sizes is paired.
 //
-// Build the library first, then run from the repo root:
+// Run from anywhere, no build needed - fsi compiles the library sources
+// itself:
 //
-//   dotnet build src/Flip7.fsproj
 //   dotnet fsi benchmark/sage.fsx [evalGames] [rollouts] [maxTraining]
 //
 // Defaults are 10 evaluation games, 50 rollouts per decision, and training
-// slices of 0/1/2/4/8/16 games; expect roughly ten minutes. A quick smoke
-// run: dotnet fsi benchmark/sage.fsx 2 10 1
+// slices of 0/1/2/4/8/16 games; expect a few minutes. A quick smoke run:
+// dotnet fsi benchmark/sage.fsx 2 10 1
 
 #r "nuget: FSharp.Control.AsyncSeq, 4.15.0"
-#r "../src/bin/Debug/net10.0/Flip7.dll"
+
+// Keep in compile order with src/Flip7.fsproj
+#load "../src/ScoreBuckets.fs"
+#load "../src/Card.fs"
+#load "../src/Hand.fs"
+#load "../src/Deck.fs"
+#load "../src/Simulation.fs"
+#load "../src/Player.fs"
+#load "../src/Strategy.fs"
+#load "../src/Timeline.fs"
+#load "../src/Persistence.fs"
+#load "../src/Observation.fs"
+#load "../src/Inference.fs"
+#load "../src/Sage.fs"
 
 open System
 open System.IO
