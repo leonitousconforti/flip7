@@ -21,8 +21,18 @@ type public Sage
     private (past: Observation list, recorded: Instant list, models: Map<string, PlayerModel>, rollouts: int)
     =
 
+    // Models are keyed by who a player is AND what they declared: a bot named
+    // Alice draws a fresh strategy every session, so her name alone would
+    // blend them all into one model, while a human's Custom label is stable
+    // across sessions and keeps accumulating their decisions
+    static member private Key(name: string, strategy: Strategy) : string = $"{name}|{strategy}"
+
     static member private Fit(observations: Observation list) : Map<string, PlayerModel> =
         observations
+        |> List.map (fun observation -> {
+            observation with
+                Name = Sage.Key(observation.Name, observation.Player.Strategy)
+        })
         |> Inference.Fit
         |> List.map (fun model -> model.Name, model)
         |> Map.ofList
@@ -150,10 +160,11 @@ type public Sage
         }
 
     /// <summary>
-    /// The fitted model of a player, or None before any of their decisions
-    /// have been observed.
+    /// The fitted model of a player under the strategy they declared, or None
+    /// before any of their decisions have been observed with it.
     /// </summary>
-    member _.ModelOf(name: string) : PlayerModel option = models |> Map.tryFind name
+    member _.ModelOf(name: string, strategy: Strategy) : PlayerModel option =
+        models |> Map.tryFind (Sage.Key(name, strategy))
 
     /// <summary>
     /// Hit or stand by Monte Carlo best response, shaped as a
@@ -176,7 +187,7 @@ type public Sage
                 :: (others @ finished
                     |> List.map (fun opponent ->
                         let strategy =
-                            match models |> Map.tryFind opponent.Name with
+                            match models |> Map.tryFind (Sage.Key(opponent.Name, opponent.Strategy)) with
                             | Some model -> Inference.SampleWith rng model
                             | None -> Strategy.MaximizesExpectedValue
 
@@ -184,22 +195,45 @@ type public Sage
                     ))
                 |> Map.ofList
 
-            // The rollouts share the derived random, so they run one at a time
-            let estimate (action: Strategy.HitOrStand) : Async<float> = async {
-                let mutable total = 0.0
+            async {
+                // Paired rollouts: each iteration samples one strategy set and
+                // one seed and plays both actions against them, so the shared
+                // luck - the opponents drawn and the order of the cards -
+                // cancels out of the comparison and only the consequence of
+                // the action remains
+                let mutable hit = 0.0
+                let mutable stand = 0.0
 
                 for _ in 1..rollouts do
-                    let! outcome =
-                        Sage.Rollout rng (sampleStrategies ()) action round turn player others finished decks
+                    let strategies = sampleStrategies ()
+                    let seed = rng.Next()
 
-                    total <- total + outcome
+                    let! hitOutcome =
+                        Sage.Rollout
+                            (System.Random seed)
+                            strategies
+                            Strategy.Hit
+                            round
+                            turn
+                            player
+                            others
+                            finished
+                            decks
 
-                return total / float rollouts
-            }
+                    let! standOutcome =
+                        Sage.Rollout
+                            (System.Random seed)
+                            strategies
+                            Strategy.Stand
+                            round
+                            turn
+                            player
+                            others
+                            finished
+                            decks
 
-            async {
-                let! hit = estimate Strategy.Hit
-                let! stand = estimate Strategy.Stand
+                    hit <- hit + hitOutcome
+                    stand <- stand + standOutcome
 
                 if hit > stand then
                     return Strategy.Hit
