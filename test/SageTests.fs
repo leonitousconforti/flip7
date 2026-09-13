@@ -24,6 +24,25 @@ let ``Sage models players from past games`` () =
     Assert.Equal(Strategy.HitUntilScore 24u, Inference.MostLikely (sage.ModelOf "You").Value)
     Assert.Equal(Strategy.HitUntilNumCards 4u, Inference.MostLikely (sage.ModelOf "Rival").Value)
 
+[<Fact>]
+let ``Sage folded over a game models it exactly like history it has studied`` () =
+    let players = [
+        "You", Strategy.HitUntilScore 24u, Targeting.ChoosesRandomly
+        "Rival", Strategy.HitUntilNumCards 4u, Targeting.ChoosesRandomly
+    ]
+
+    let earlier = simulate 1 players
+    let current = simulate 2 players
+
+    let folded =
+        current
+        |> List.fold (fun sage instant -> Sage(instant, sage)) (Sage [ earlier ])
+
+    let studied = Sage [ earlier; current ]
+
+    Assert.Equal(studied.ModelOf "You", folded.ModelOf "You")
+    Assert.Equal(studied.ModelOf "Rival", folded.ModelOf "Rival")
+
 let private teach (strategy: Strategy) (seeds: int list) : Instant list list =
     seeds
     |> List.map (fun seed ->

@@ -11,28 +11,65 @@ open FSharp.Control
 /// so model uncertainty propagates into the estimate), forces the candidate
 /// action, and plays the rest of the game through the real engine via
 /// Timeline.ContinueWith, everyone aiming action cards at random.
+///
+/// A Sage is immutable: Sage(history) starts one that has studied past games,
+/// and Sage(instant, previous) advances one by a single instant of the
+/// current game, so a caller threads the game through it like a fold over
+/// the timeline.
 /// </summary>
-type public Sage(history: Instant list list, ?rollouts: int) =
-    let rollouts = defaultArg rollouts 100
+type public Sage
+    private (past: Observation list, recorded: Instant list, models: Map<string, PlayerModel>, rollouts: int)
+    =
 
-    let past =
-        history
-        |> Seq.map AsyncSeq.ofSeq
-        |> Observation.FromTimelines
-        |> AsyncSeq.toListAsync
-        |> Async.RunSynchronously
+    static member private Fit(observations: Observation list) : Map<string, PlayerModel> =
+        observations
+        |> Inference.Fit
+        |> List.map (fun model -> model.Name, model)
+        |> Map.ofList
 
-    let mutable live: Observation list = []
-    let mutable models: Map<string, PlayerModel> = Map.empty
+    /// <summary>
+    /// Starts a Sage that has studied the given past games, e.g. every
+    /// timeline persisted by earlier sessions.
+    /// </summary>
+    new(history: Instant list list, ?rollouts: int)
+        =
+        let past =
+            history
+            |> Seq.map AsyncSeq.ofSeq
+            |> Observation.FromTimelines
+            |> AsyncSeq.toListAsync
+            |> Async.RunSynchronously
 
-    let fit () =
-        models <-
-            past @ live
-            |> Inference.Fit
-            |> List.map (fun model -> model.Name, model)
-            |> Map.ofList
+        Sage(past, [], Sage.Fit past, defaultArg rollouts 100)
 
-    do fit ()
+    /// <summary>
+    /// The fold step: the previous Sage advanced by the next instant of the
+    /// current game. Recording an instant is cheap; at each round boundary
+    /// the game so far is re-observed and the models of everyone refit.
+    /// </summary>
+    new(instant: Instant, previous: Sage)
+        =
+        let recorded = instant :: previous.Recorded
+
+        let models =
+            match instant.Event with
+            | RoundEnded _ ->
+                let live =
+                    List.rev recorded
+                    |> AsyncSeq.ofSeq
+                    |> Observation.FromTimeline
+                    |> AsyncSeq.toListAsync
+                    |> Async.RunSynchronously
+
+                Sage.Fit(previous.Past @ live)
+            | _ -> previous.Models
+
+        Sage(previous.Past, recorded, models, previous.Rollouts)
+
+    member private _.Past = past
+    member private _.Recorded = recorded
+    member private _.Models = models
+    member private _.Rollouts = rollouts
 
     /// <summary>
     /// One rollout of the rest of the game from a decision point: the
@@ -117,20 +154,6 @@ type public Sage(history: Instant list list, ?rollouts: int) =
     /// have been observed.
     /// </summary>
     member _.ModelOf(name: string) : PlayerModel option = models |> Map.tryFind name
-
-    /// <summary>
-    /// Feeds the current game so far (all instants from the first) and refits
-    /// the models. Cheap enough to call at every round boundary.
-    /// </summary>
-    member _.Learn(gameSoFar: Instant list) : unit =
-        live <-
-            gameSoFar
-            |> AsyncSeq.ofSeq
-            |> Observation.FromTimeline
-            |> AsyncSeq.toListAsync
-            |> Async.RunSynchronously
-
-        fit ()
 
     /// <summary>
     /// Hit or stand by Monte Carlo best response, shaped as a

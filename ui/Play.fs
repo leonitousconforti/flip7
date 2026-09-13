@@ -428,7 +428,7 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
 
     // Sage takes the first free seat, so it only exists (and only pays for
     // reading the persisted games) when at least one seat is open
-    let sage =
+    let mutable sage =
         if List.isEmpty botNames then
             None
         else
@@ -557,18 +557,13 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
     let drive (dispatch: Msg -> unit) : Task<unit> =
         let decide = decider dispatch
 
-        // The game so far, mirroring what is on disk: an edit continues right
-        // behind the instants already written, so the record is append-only.
-        // Sage refits its models of everyone at every round boundary
-        let recorded = ResizeArray<Instant>()
-
+        // Each written instant folds into a new Sage, which refits its models
+        // of everyone at each round boundary. An edit continues right behind
+        // the instants already written, so the fold mirrors the append-only
+        // record on disk
         let record (instant: Instant) : unit =
-            recorded.Add instant
             written <- written + 1
-
-            match sage, instant.Event with
-            | Some ai, RoundEnded _ -> ai.Learn(List.ofSeq recorded)
-            | _ -> ()
+            sage <- sage |> Option.map (fun previous -> Sage(instant, previous))
 
         let rec drain (timeline: Timeline) : Async<unit> = async {
             try
