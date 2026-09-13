@@ -230,57 +230,77 @@ type public Sage
                     opponent.Name, strategy
                 )
 
+            // The samples and seeds are drawn sequentially so the rng stream
+            // is deterministic, then the independent rollout games fan out
+            // across cores; the outcomes do not depend on scheduling, so a
+            // decision is bit-identical to its sequential equivalent
+            let parallel' (games: Async<'a> seq) : Async<'a array> =
+                Async.Parallel(games, maxDegreeOfParallelism = System.Environment.ProcessorCount)
+
             async {
+                let! outcomes =
+                    List.init (max 16 (rollouts / 2)) (fun _ -> sampleOpponents (), rng.Next())
+                    |> List.collect (fun (opponents, seed) ->
+                        selfCandidates
+                        |> List.mapi (fun index candidate -> async {
+                            let strategies = Map.ofList ((player.Name, candidate) :: opponents)
+
+                            let! outcome =
+                                Sage.Rollout
+                                    (System.Random seed)
+                                    strategies
+                                    None
+                                    round
+                                    turn
+                                    player
+                                    others
+                                    finished
+                                    decks
+
+                            return index, outcome
+                        })
+                    )
+                    |> parallel'
+
                 let scores = Array.zeroCreate (List.length selfCandidates)
 
-                for _ in 1 .. max 16 (rollouts / 2) do
-                    let opponents = sampleOpponents ()
-                    let seed = rng.Next()
-
-                    for index in 0 .. scores.Length - 1 do
-                        let strategies =
-                            Map.ofList ((player.Name, List.item index selfCandidates) :: opponents)
-
-                        let! outcome =
-                            Sage.Rollout (System.Random seed) strategies None round turn player others finished decks
-
-                        scores[index] <- scores[index] + outcome
+                for index, outcome in outcomes do
+                    scores[index] <- scores[index] + outcome
 
                 let self =
                     selfCandidates
                     |> List.item (scores |> Array.mapi (fun index score -> index, score) |> Array.maxBy snd |> fst)
 
-                let differences = Array.zeroCreate rollouts
+                let! differences =
+                    List.init rollouts (fun _ -> Map.ofList ((player.Name, self) :: sampleOpponents ()), rng.Next())
+                    |> List.map (fun (strategies, seed) -> async {
+                        let! hitOutcome =
+                            Sage.Rollout
+                                (System.Random seed)
+                                strategies
+                                (Some Strategy.Hit)
+                                round
+                                turn
+                                player
+                                others
+                                finished
+                                decks
 
-                for index in 0 .. rollouts - 1 do
-                    let strategies = Map.ofList ((player.Name, self) :: sampleOpponents ())
-                    let seed = rng.Next()
+                        let! standOutcome =
+                            Sage.Rollout
+                                (System.Random seed)
+                                strategies
+                                (Some Strategy.Stand)
+                                round
+                                turn
+                                player
+                                others
+                                finished
+                                decks
 
-                    let! hitOutcome =
-                        Sage.Rollout
-                            (System.Random seed)
-                            strategies
-                            (Some Strategy.Hit)
-                            round
-                            turn
-                            player
-                            others
-                            finished
-                            decks
-
-                    let! standOutcome =
-                        Sage.Rollout
-                            (System.Random seed)
-                            strategies
-                            (Some Strategy.Stand)
-                            round
-                            turn
-                            player
-                            others
-                            finished
-                            decks
-
-                    differences[index] <- hitOutcome - standOutcome
+                        return hitOutcome - standOutcome
+                    })
+                    |> parallel'
 
                 // Overrule the continuation strategy's own answer only when
                 // the paired evidence is decisive - two standard errors from
