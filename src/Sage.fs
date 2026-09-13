@@ -209,10 +209,11 @@ type public Sage
     /// against the modeled table - policy iteration within the fixed-strategy
     /// class, since rollouts recursing into Sage itself would be
     /// unaffordable. The main stage then forces each action and plays the
-    /// tournament winner as Sage's continuation, taking the better action.
-    /// Both stages are paired - one opponent sample and one seed per
-    /// iteration, shared by everything compared - so the shared luck cancels
-    /// out of the comparisons and only the consequences remain.
+    /// tournament winner as Sage's continuation, and the winner's own answer
+    /// stands unless the rollout evidence overrules it decisively. Both
+    /// stages are paired - one opponent sample and one seed per iteration,
+    /// shared by everything compared - so the shared luck cancels out of the
+    /// comparisons and only the consequences remain.
     /// </summary>
     member _.Decide(random: System.Random) : Strategy.HitOrStandDecider =
         fun _strategy round turn player others finished decks ->
@@ -232,7 +233,7 @@ type public Sage
             async {
                 let scores = Array.zeroCreate (List.length selfCandidates)
 
-                for _ in 1 .. max 8 (rollouts / 8) do
+                for _ in 1 .. max 16 (rollouts / 2) do
                     let opponents = sampleOpponents ()
                     let seed = rng.Next()
 
@@ -249,10 +250,9 @@ type public Sage
                     selfCandidates
                     |> List.item (scores |> Array.mapi (fun index score -> index, score) |> Array.maxBy snd |> fst)
 
-                let mutable hit = 0.0
-                let mutable stand = 0.0
+                let differences = Array.zeroCreate rollouts
 
-                for _ in 1..rollouts do
+                for index in 0 .. rollouts - 1 do
                     let strategies = Map.ofList ((player.Name, self) :: sampleOpponents ())
                     let seed = rng.Next()
 
@@ -280,12 +280,22 @@ type public Sage
                             finished
                             decks
 
-                    hit <- hit + hitOutcome
-                    stand <- stand + standOutcome
+                    differences[index] <- hitOutcome - standOutcome
 
-                if hit > stand then
+                // Overrule the continuation strategy's own answer only when
+                // the paired evidence is decisive - two standard errors from
+                // even - because a noisy argmax around a good policy plays
+                // worse than the policy itself
+                let mean = Array.average differences
+
+                let error =
+                    differences
+                    |> Array.sumBy (fun difference -> (difference - mean) * (difference - mean))
+                    |> fun squares -> sqrt (squares / float (rollouts * (rollouts - 1)))
+
+                if mean - 2.0 * error > 0.0 then
                     return Strategy.Hit
-                elif stand > hit then
+                elif mean + 2.0 * error < 0.0 then
                     return Strategy.Stand
                 else
                     return! Strategy.DecideHitOrStandWith rng self round turn player others finished decks
