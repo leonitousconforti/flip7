@@ -21,6 +21,18 @@ type public Sage
     private (past: Observation list, recorded: Instant list, models: Map<string, PlayerModel>, rollouts: int)
     =
 
+    // The continuation strategies Sage can adopt inside its rollouts: a
+    // conservative-to-aggressive spread of score thresholds, the flip7 chase,
+    // the race to 200, and expected-value play first so it holds ties
+    static let selfCandidates = [
+        Strategy.MaximizesExpectedValue
+        Strategy.HitUntilScore 18u
+        Strategy.HitUntilScore 22u
+        Strategy.HitUntilScore 26u
+        Strategy.ChasesFlip7(22u, 5u)
+        Strategy.HitUntilTotal 200u
+    ]
+
     // Models are keyed by what a player declared and, for Custom labels only,
     // also by who they are: an engine strategy plays identically no matter
     // who holds it, so those observations pool across players and sessions,
@@ -87,17 +99,18 @@ type public Sage
 
     /// <summary>
     /// One rollout of the rest of the game from a decision point: the
-    /// deciding player's first action is forced, then every player follows
-    /// their sampled strategy through the real engine until the game ends.
-    /// Turn counters continue from the decider's, which only matters to
-    /// StandsAfterTurn; a player yet to see a card still gets their forced
-    /// first hit. Returns 1.0 when the decider ends the game with the top
-    /// score, 0.5 for a shared top score, and 0.0 otherwise.
+    /// deciding player's first action is forced when one is given, and every
+    /// player otherwise follows their sampled strategy through the real
+    /// engine until the game ends. Turn counters continue from the decider's,
+    /// which only matters to StandsAfterTurn; a player yet to see a card
+    /// still gets their forced first hit. Returns 1.0 when the decider ends
+    /// the game with the top score, 0.5 for a shared top score, and 0.0
+    /// otherwise.
     /// </summary>
     static member private Rollout
         (random: System.Random)
         (strategies: Map<string, Strategy>)
-        (forced: Strategy.HitOrStand)
+        (forced: Strategy.HitOrStand option)
         (round: uint)
         (turn: uint)
         (player: Player)
@@ -135,10 +148,10 @@ type public Sage
             )
             |> Map.ofList
 
-        // The forced action is consumed by the first hit-or-stand ask, which
-        // belongs to the deciding player at the head of the rotation; every
-        // ask after that plays out the sampled strategies
-        let mutable pending = Some forced
+        // The forced action, when given, is consumed by the first hit-or-stand
+        // ask, which belongs to the deciding player at the head of the
+        // rotation; every ask after that plays out the sampled strategies
+        let mutable pending = forced
         let canonical = Strategy.DecideWith random
 
         let decide = {
@@ -187,47 +200,67 @@ type public Sage
     /// HitOrStandDecider closing over the randomness (like
     /// Strategy.DecideHitOrStandWith) so Sage plugs in wherever the engine
     /// takes a decider. The declared strategy is ignored: Sage's Custom label
-    /// names it rather than describes it. Estimates the probability of ending
-    /// the game with the top score under each action and takes the better
-    /// one. Opponents play strategies sampled from their posteriors
-    /// (expected-value play when unmodeled); Sage's own rollout policy is
-    /// also expected-value play, since it cannot recurse into itself.
+    /// names it rather than describes it.
+    ///
+    /// A decision runs two stages of rollouts against strategies sampled from
+    /// the opponents' posteriors (expected-value play when unmodeled). A
+    /// small tournament first picks the continuation strategy Sage itself
+    /// plays inside the rollouts: the fixed strategy that wins most from here
+    /// against the modeled table - policy iteration within the fixed-strategy
+    /// class, since rollouts recursing into Sage itself would be
+    /// unaffordable. The main stage then forces each action and plays the
+    /// tournament winner as Sage's continuation, taking the better action.
+    /// Both stages are paired - one opponent sample and one seed per
+    /// iteration, shared by everything compared - so the shared luck cancels
+    /// out of the comparisons and only the consequences remain.
     /// </summary>
     member _.Decide(random: System.Random) : Strategy.HitOrStandDecider =
         fun _strategy round turn player others finished decks ->
             let rng = System.Random(random.Next())
 
-            let sampleStrategies () =
-                (player.Name, Strategy.MaximizesExpectedValue)
-                :: (others @ finished
-                    |> List.map (fun opponent ->
-                        let strategy =
-                            match models |> Map.tryFind (Sage.Key(opponent.Name, opponent.Strategy)) with
-                            | Some model -> Inference.SampleWith rng model
-                            | None -> Strategy.MaximizesExpectedValue
+            let sampleOpponents () =
+                others @ finished
+                |> List.map (fun opponent ->
+                    let strategy =
+                        match models |> Map.tryFind (Sage.Key(opponent.Name, opponent.Strategy)) with
+                        | Some model -> Inference.SampleWith rng model
+                        | None -> Strategy.MaximizesExpectedValue
 
-                        opponent.Name, strategy
-                    ))
-                |> Map.ofList
+                    opponent.Name, strategy
+                )
 
             async {
-                // Paired rollouts: each iteration samples one strategy set and
-                // one seed and plays both actions against them, so the shared
-                // luck - the opponents drawn and the order of the cards -
-                // cancels out of the comparison and only the consequence of
-                // the action remains
+                let scores = Array.zeroCreate (List.length selfCandidates)
+
+                for _ in 1 .. max 8 (rollouts / 8) do
+                    let opponents = sampleOpponents ()
+                    let seed = rng.Next()
+
+                    for index in 0 .. scores.Length - 1 do
+                        let strategies =
+                            Map.ofList ((player.Name, List.item index selfCandidates) :: opponents)
+
+                        let! outcome =
+                            Sage.Rollout (System.Random seed) strategies None round turn player others finished decks
+
+                        scores[index] <- scores[index] + outcome
+
+                let self =
+                    selfCandidates
+                    |> List.item (scores |> Array.mapi (fun index score -> index, score) |> Array.maxBy snd |> fst)
+
                 let mutable hit = 0.0
                 let mutable stand = 0.0
 
                 for _ in 1..rollouts do
-                    let strategies = sampleStrategies ()
+                    let strategies = Map.ofList ((player.Name, self) :: sampleOpponents ())
                     let seed = rng.Next()
 
                     let! hitOutcome =
                         Sage.Rollout
                             (System.Random seed)
                             strategies
-                            Strategy.Hit
+                            (Some Strategy.Hit)
                             round
                             turn
                             player
@@ -239,7 +272,7 @@ type public Sage
                         Sage.Rollout
                             (System.Random seed)
                             strategies
-                            Strategy.Stand
+                            (Some Strategy.Stand)
                             round
                             turn
                             player
@@ -255,14 +288,5 @@ type public Sage
                 elif stand > hit then
                     return Strategy.Stand
                 else
-                    return!
-                        Strategy.DecideHitOrStandWith
-                            rng
-                            Strategy.MaximizesExpectedValue
-                            round
-                            turn
-                            player
-                            others
-                            finished
-                            decks
+                    return! Strategy.DecideHitOrStandWith rng self round turn player others finished decks
             }
