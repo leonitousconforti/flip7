@@ -12,13 +12,14 @@
 // edge of a few points resolvable at all. The seeds are ones no tuning has ever
 // been measured against.
 //
-// Sage sits down knowing nothing and learns only from the game in front of it,
-// so the number is what a first sitting looks like. Sharing the lead counts as
-// winning it.
+// Sage plays twice over: once having studied games these same people played
+// before, and once sitting down knowing nothing, which is what a first evening
+// looks like. The gap between those two is what the history is worth. Sharing
+// the lead counts as winning it.
 //
 // Run from anywhere, no build needed - fsi compiles the library sources:
 //
-//   dotnet fsi benchmark/sage.fsx [games] [rolloutCap]
+//   dotnet fsi benchmark/sage.fsx [games] [rolloutCap] [trainingGames]
 //
 // 400 games takes a few minutes and resolves a difference of about five points.
 // A quick check that it still runs: dotnet fsi benchmark/sage.fsx 4 50
@@ -53,6 +54,7 @@ let private argument (index: int) (fallback: int) : int =
 
 let games = argument 0 400
 let cap = argument 1 400
+let trainingGames = argument 2 8
 
 let humans =
     [ "Alice", 12u; "Bob", 19u; "Chloe", 22u; "Dave", 27u ]
@@ -116,6 +118,18 @@ let playExpectedValue (seed: int) : Async<bool> = async {
     return sage.Head.FirmScore >= bestPlayer.FirmScore
 }
 
+// What Sage has watched before it sits down: games these same people played
+// among themselves, on seeds the evaluation never touches
+let history =
+    [ 1..trainingGames ]
+    |> List.map (fun index ->
+        let random = Random(900000 + index)
+
+        Timeline.SimulateWithDecider random (deciderWith random None) humans
+        |> AsyncSeq.toListAsync
+        |> Async.RunSynchronously
+    )
+
 let watch = Diagnostics.Stopwatch.StartNew()
 let played = ref 0
 
@@ -123,10 +137,12 @@ let outcomes =
     [| 1..games |]
     |> Array.map (fun index -> async {
         let seed = 500000 + index
-        let! sage = playSage List.empty seed |> Async.StartChild
+        let! studied = playSage history seed |> Async.StartChild
+        let! fresh = playSage List.empty seed |> Async.StartChild
         let! expected = playExpectedValue seed |> Async.StartChild
 
-        let! sageResult = sage
+        let! studiedResult = studied
+        let! freshResult = fresh
         let! expectedResult = expected
 
         let finished = Interlocked.Increment(&played.contents)
@@ -135,7 +151,7 @@ let outcomes =
         if finished % step = 0 || finished = games then
             printfn $"  %4d{finished}/{games} games, %.1f{watch.Elapsed.TotalMinutes} min"
 
-        return sageResult, expectedResult
+        return studiedResult, freshResult, expectedResult
     })
     |> fun played -> Async.Parallel(played, maxDegreeOfParallelism = 4)
     |> Async.RunSynchronously
@@ -143,33 +159,42 @@ let outcomes =
 let private rateOf (won: bool array) : float =
     won |> Array.averageBy (fun win -> if win then 1.0 else 0.0)
 
-let sageWon = outcomes |> Array.map fst
-let expectedWon = outcomes |> Array.map snd
+let studiedWon = outcomes |> Array.map (fun (studied, _, _) -> studied)
+let freshWon = outcomes |> Array.map (fun (_, fresh, _) -> fresh)
+let expectedWon = outcomes |> Array.map (fun (_, _, expected) -> expected)
 let par = 100.0 / float (List.length humans + 1)
 
 let spread (won: bool array) : float =
     let rate = rateOf won
     2.0 * sqrt (rate * (1.0 - rate) / float won.Length) * 100.0
 
-let differences =
-    Array.map2 (fun sage expected -> (if sage then 1.0 else 0.0) - (if expected then 1.0 else 0.0)) sageWon expectedWon
+let report (label: string) (won: bool array) : unit =
+    let rate = rateOf won * 100.0
+    printfn $"  %-23s{label}: %5.1f{rate}%% +/- %.0f{spread won}   (%.2f{rate / par}x par)"
 
-let mean = Array.average differences
+// Game by game, because every seat met the same deal on a given seed. The
+// difference is far quieter than either rate, which is the whole reason a few
+// points can be told from nothing at this many games
+let against (label: string) (better: bool array) (worse: bool array) : unit =
+    let differences =
+        Array.map2 (fun a b -> (if a then 1.0 else 0.0) - (if b then 1.0 else 0.0)) better worse
 
-let error =
-    differences
-    |> Array.sumBy (fun difference -> (difference - mean) * (difference - mean))
-    |> fun squares -> sqrt (squares / float (differences.Length * (differences.Length - 1)))
+    let mean = Array.average differences
+
+    let error =
+        differences
+        |> Array.sumBy (fun difference -> (difference - mean) * (difference - mean))
+        |> fun squares -> sqrt (squares / float (differences.Length * (differences.Length - 1)))
+
+    printfn
+        $"  %-38s{label}: %+.1f{mean * 100.0} points, standard error %.1f{error * 100.0} (%.2f{abs mean / error} SE)"
 
 printfn ""
-printfn
-    $"  Sage no history        : %5.1f{rateOf sageWon * 100.0}%% +/- %.0f{spread sageWon}   (%.2f{rateOf sageWon * 100.0 / par}x par)"
-
-printfn
-    $"  MaximizesExpectedValue : %5.1f{rateOf expectedWon * 100.0}%% +/- %.0f{spread expectedWon}   (%.2f{rateOf expectedWon * 100.0 / par}x par)"
-
-printfn $"  par                    : %5.1f{par}%%"
+report "Sage, having studied" studiedWon
+report "Sage, knowing nothing" freshWon
+report "MaximizesExpectedValue" expectedWon
+printfn "  %-23s: %5.1f%%" "par" par
 printfn ""
-printfn
-    $"  Sage over expected value: %+.1f{mean * 100.0} points, standard error %.1f{error * 100.0} (%.2f{abs mean / error} SE)"
+against "Sage over expected value" studiedWon expectedWon
+against "what the history is worth" studiedWon freshWon
 printfn $"done in {watch.Elapsed}"
