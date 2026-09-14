@@ -3,6 +3,22 @@ namespace Flip7
 open FSharp.Control
 
 /// <summary>
+/// How far a rollout plays, and what it is worth when it stops. Played to the
+/// end of the game a rollout answers the only question that finally matters,
+/// but most of the answer is rounds that have nothing to do with the decision
+/// being weighed, and that noise buries the decision's own effect: a hit early
+/// on is worth about five points of win probability, which takes the better
+/// part of a thousand rollouts to see through it. Stopped at the end of the
+/// round, a rollout is worth the points it banked against the best of the
+/// table - a smaller question, but a far quieter one - until somebody is close
+/// enough to 200 that who wins is the question, and then the effect is stark
+/// enough to read in a handful of games.
+/// </summary>
+type internal Horizon =
+    | ToEndOfGame
+    | ToEndOfRound
+
+/// <summary>
 /// An adaptive opponent for interactive play: it accumulates evidence about
 /// every player it has seen (persisted games from earlier sessions plus the
 /// current game, one instant at a time) and decides its own hits, stands, and
@@ -46,7 +62,12 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
 
     /// <summary>
     /// Starts a Sage that has studied the given past games, e.g. every
-    /// timeline persisted by earlier sessions.
+    /// timeline persisted by earlier sessions. Rollouts is the most any one
+    /// decision may spend, not what every decision spends: a decision stops
+    /// buying rollouts the moment they have settled it, which for an endgame
+    /// is usually the first batch. The cap is worth being generous with,
+    /// because the decisions that reach it are the ones too close to call any
+    /// other way.
     /// </summary>
     new(history: Instant list list, ?rollouts: int)
         =
@@ -60,7 +81,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
             |> List.map (fun (key, decisions) -> key, Inference.Evidence key decisions)
             |> Map.ofList
 
-        Sage(evidence, Observation.Start, defaultArg rollouts 100)
+        Sage(evidence, Observation.Start, defaultArg rollouts 400)
 
     /// <summary>
     /// The fold step: the previous Sage advanced by the next instant of the
@@ -104,6 +125,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
     /// top score, and 0.0 otherwise.
     /// </summary>
     static member private Score
+        (horizon: Horizon)
         (random: System.Random)
         (name: string)
         (decide: Strategy.Decider)
@@ -114,9 +136,15 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
         (decks: Deck * Deck)
         : Async<float>
         = async {
-        let! last =
+        let played =
             Timeline.ContinueWith random decide round turnsTaken active finished decks
-            |> AsyncSeq.tryLast
+
+        // Stopping at the round's end costs a fraction of playing the game
+        // out, because the search stops pulling the timeline as it lands
+        let! last =
+            match horizon with
+            | ToEndOfGame -> played |> AsyncSeq.tryLast
+            | ToEndOfRound -> played |> AsyncSeq.tryFind (fun instant -> instant.Event.IsRoundEnded)
 
         let finals =
             last
@@ -127,9 +155,15 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
         let best = finals |> Map.remove name |> Map.values |> Seq.fold max 0u
 
         return
-            if mine > best then 1.0
-            elif mine = best then 0.5
-            else 0.0
+            match horizon with
+            | ToEndOfGame ->
+                if mine > best then 1.0
+                elif mine = best then 0.5
+                else 0.0
+            // The margin banked carries the same sign as winning but says how
+            // much by, so a round that changes nothing about who eventually
+            // wins can still report what the decision was worth
+            | ToEndOfRound -> float mine - float best
     }
 
     /// <summary>
@@ -139,6 +173,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
     /// real engine until the game ends.
     /// </summary>
     static member private Rollout
+        (horizon: Horizon)
         (random: System.Random)
         (strategies: Map<string, Strategy>)
         (forced: Strategy.HitOrStand option)
@@ -198,7 +233,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                         | _ -> canonical.HitOrStand strategy round turn current others finished decks
         }
 
-        Sage.Score random player.Name decide round turnsTaken active finished decks
+        Sage.Score horizon random player.Name decide round turnsTaken active finished decks
 
     // Rollouts are seeded from the position rather than from the game's own
     // randomness, so that consulting Sage - or changing how much it consults
@@ -265,6 +300,48 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
             selfCandidates
             |> List.item (scores |> Array.mapi (fun index score -> index, score) |> Array.maxBy snd |> fst)
     }
+
+    // Who wins becomes the question once anyone is within about two rounds of
+    // the finish; before that, a rollout played that far is mostly noise about
+    // rounds this decision cannot reach
+    static member private HorizonFor(players: Player list) : Horizon =
+        if players |> List.exists (fun player -> Player.Showing player >= 150u) then
+            ToEndOfGame
+        else
+            ToEndOfRound
+
+    // Spends rollouts until the comparison is settled instead of spending the
+    // same number everywhere. An endgame difference shows itself in a handful
+    // of games where an early one can take hundreds, so the budget is a cap
+    // rather than a count, and most decisions never reach it
+    static member private Race
+        (cap: int)
+        (draw: unit -> Map<string, Strategy> * int)
+        (compare: Map<string, Strategy> -> int -> Async<float>)
+        : Async<float array>
+        =
+        let rec more (differences: float array) = async {
+            if differences.Length >= cap then
+                return differences
+            else
+                // Drawn before the games start, so that the rollouts stay
+                // independent of how they get scheduled
+                let drawn = List.init (min 32 (cap - differences.Length)) (fun _ -> draw ())
+
+                let! settled =
+                    drawn
+                    |> List.map (fun (strategies, seed) -> compare strategies seed)
+                    |> Sage.Parallel
+
+                let grown = Array.append differences settled
+
+                if Sage.Decisive grown || Sage.Decisive(grown |> Array.map (~-)) then
+                    return grown
+                else
+                    return! more grown
+        }
+
+        more [||]
 
     // Plays every candidate target on the same rollouts and keeps the spiteful
     // rule's pick unless one of them beats it by more than that comparison's
@@ -351,6 +428,8 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                 else
                     Some(Observation.TurnsTaken scan)
 
+            let horizon = Sage.HorizonFor(player :: others @ finished)
+
             // The posteriors of everyone at the table, materialized once per
             // decision from the cached evidence
             let modeled =
@@ -373,45 +452,36 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                 let! self =
                     Sage.Tournament
                         rng
-                        (max 16 (rollouts / 2))
+                        (max 16 (rollouts / 8))
                         player.Name
                         sampleOpponents
                         (fun random strategies ->
-                            Sage.Rollout random strategies None counted round turn player others finished decks
+                            Sage.Rollout horizon random strategies None counted round turn player others finished decks
                         )
 
                 let! differences =
-                    List.init rollouts (fun _ -> Map.ofList ((player.Name, self) :: sampleOpponents ()), rng.Next())
-                    |> List.map (fun (strategies, seed) -> async {
-                        let! hitOutcome =
-                            Sage.Rollout
-                                (System.Random seed)
-                                strategies
-                                (Some Strategy.Hit)
-                                counted
-                                round
-                                turn
-                                player
-                                others
-                                finished
-                                decks
+                    Sage.Race
+                        rollouts
+                        (fun () -> Map.ofList ((player.Name, self) :: sampleOpponents ()), rng.Next())
+                        (fun strategies seed -> async {
+                            let forced (action: Strategy.HitOrStand) =
+                                Sage.Rollout
+                                    horizon
+                                    (System.Random seed)
+                                    strategies
+                                    (Some action)
+                                    counted
+                                    round
+                                    turn
+                                    player
+                                    others
+                                    finished
+                                    decks
 
-                        let! standOutcome =
-                            Sage.Rollout
-                                (System.Random seed)
-                                strategies
-                                (Some Strategy.Stand)
-                                counted
-                                round
-                                turn
-                                player
-                                others
-                                finished
-                                decks
-
-                        return hitOutcome - standOutcome
-                    })
-                    |> Sage.Parallel
+                            let! hitOutcome = forced Strategy.Hit
+                            let! standOutcome = forced Strategy.Stand
+                            return hitOutcome - standOutcome
+                        })
 
                 // Overrule the continuation strategy's own answer only when
                 // the paired evidence is decisive
@@ -460,6 +530,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                 spitefully ()
             else
                 let rng = Sage.SeedFor(ask, chooser, candidates, finished, decks)
+                let horizon = Sage.HorizonFor(candidates @ finished)
                 let round = Observation.RoundOf scan
                 let counted = Observation.TurnsTaken scan
 
@@ -506,6 +577,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                         |> Map.add chooser.Name ((counted |> Map.tryFind chooser.Name |> Option.defaultValue 0u) + 1u)
 
                     Sage.Score
+                        horizon
                         random
                         chooser.Name
                         (Strategy.DecideWith random)
@@ -566,6 +638,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                     }
 
                     Sage.Score
+                        horizon
                         random
                         chooser.Name
                         decide
@@ -605,6 +678,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                             sampleOpponents
                             (fun random strategies ->
                                 Sage.Score
+                                    horizon
                                     random
                                     chooser.Name
                                     (Strategy.DecideWith random)
