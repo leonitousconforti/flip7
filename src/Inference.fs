@@ -11,6 +11,20 @@ type public PlayerModel = {
     Posterior: (Strategy * float) list
 }
 
+/// <summary>
+/// The evidence a set of decisions contributes to a player's posterior:
+/// per-candidate log-likelihood sums plus the counts the model reports.
+/// Log-likelihoods add, so evidence over disjoint decision sets combines
+/// without rescoring: score an archive once, then Combine each new decision
+/// into the total as it happens.
+/// </summary>
+type public PlayerEvidence = {
+    Name: string
+    Observations: int
+    Hits: int
+    LogLikelihoods: (Strategy * float) list
+}
+
 module public Inference =
     /// <summary>
     /// The probability that a strategy hits in the state captured by an
@@ -138,6 +152,74 @@ module public Inference =
         | Strategy.Stand -> 1.0 - probabilityOfHit
 
     /// <summary>
+    /// The evidence a player's decisions carry over the candidate strategies.
+    /// Scoring one decision at a time and folding with Combine produces the
+    /// same sums as scoring them all at once.
+    /// </summary>
+    let public EvidenceWith
+        (epsilon: float)
+        (candidates: Strategy list)
+        (name: string)
+        (decisions: Observation list)
+        : PlayerEvidence = {
+        Name = name
+        Observations = List.length decisions
+        Hits =
+            decisions
+            |> List.filter (fun observation -> observation.Choice = Strategy.Hit)
+            |> List.length
+        LogLikelihoods =
+            candidates
+            |> List.map (fun candidate -> candidate, decisions |> List.sumBy (Likelihood epsilon candidate >> log))
+    }
+
+    /// <summary>
+    /// Evidence with the default candidate grid and a 10% rate of
+    /// out-of-character decisions, matching Fit.
+    /// </summary>
+    let public Evidence (name: string) (decisions: Observation list) : PlayerEvidence =
+        EvidenceWith 0.1 DefaultCandidates name decisions
+
+    /// <summary>
+    /// Adds newer evidence onto accumulated evidence for the same player and
+    /// the same candidate grid.
+    /// </summary>
+    let public Combine (accumulated: PlayerEvidence) (newer: PlayerEvidence) : PlayerEvidence = {
+        Name = accumulated.Name
+        Observations = accumulated.Observations + newer.Observations
+        Hits = accumulated.Hits + newer.Hits
+        LogLikelihoods =
+            List.map2
+                (fun (candidate, accumulated) (_, newer) -> candidate, accumulated + newer)
+                accumulated.LogLikelihoods
+                newer.LogLikelihoods
+    }
+
+    /// <summary>
+    /// The posterior a body of evidence supports, from a uniform prior.
+    /// </summary>
+    let public ModelFrom (evidence: PlayerEvidence) : PlayerModel =
+        // Normalizing exponentiated log-likelihoods yields the posterior
+        // from a uniform prior; subtracting the max first avoids underflow
+        let maxLogLikelihood = evidence.LogLikelihoods |> List.map snd |> List.max
+
+        let weights =
+            evidence.LogLikelihoods
+            |> List.map (fun (candidate, logLikelihood) -> candidate, exp (logLikelihood - maxLogLikelihood))
+
+        let total = weights |> List.sumBy snd
+
+        {
+            Name = evidence.Name
+            Observations = evidence.Observations
+            HitRate = float evidence.Hits / float evidence.Observations
+            Posterior =
+                weights
+                |> List.map (fun (candidate, weight) -> candidate, weight / total)
+                |> List.sortByDescending snd
+        }
+
+    /// <summary>
     /// Fits a posterior over the candidate strategies for every player that
     /// appears in the observations, starting from a uniform prior.
     /// </summary>
@@ -148,37 +230,7 @@ module public Inference =
         : PlayerModel list =
         observations
         |> List.groupBy (fun observation -> observation.Name)
-        |> List.map (fun (name, decisions) ->
-            let logLikelihoods =
-                candidates
-                |> List.map (fun candidate -> candidate, decisions |> List.sumBy (Likelihood epsilon candidate >> log))
-
-            // Normalizing exponentiated log-likelihoods yields the posterior
-            // from a uniform prior; subtracting the max first avoids underflow
-            let maxLogLikelihood = logLikelihoods |> List.map snd |> List.max
-
-            let weights =
-                logLikelihoods
-                |> List.map (fun (candidate, logLikelihood) -> candidate, exp (logLikelihood - maxLogLikelihood))
-
-            let total = weights |> List.sumBy snd
-
-            {
-                Name = name
-                Observations = List.length decisions
-                HitRate =
-                    decisions
-                    |> List.averageBy (fun observation ->
-                        match observation.Choice with
-                        | Strategy.Hit -> 1.0
-                        | Strategy.Stand -> 0.0
-                    )
-                Posterior =
-                    weights
-                    |> List.map (fun (candidate, weight) -> candidate, weight / total)
-                    |> List.sortByDescending snd
-            }
-        )
+        |> List.map (fun (name, decisions) -> EvidenceWith epsilon candidates name decisions |> ModelFrom)
 
     /// <summary>
     /// Fits with the default candidate grid and a 10% rate of out-of-character
