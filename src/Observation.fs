@@ -63,8 +63,7 @@ module public Observation =
             Previous: Instant option
 
     /// <summary>
-    /// The scan before any instant: round one, nobody finished, no turns
-    /// taken.
+    /// The scan before any instant: round one, nobody finished, no turns taken.
     /// </summary>
     let public Start: Scan = Scan(Set.empty, 1u, Map.empty, Map.empty, None)
 
@@ -87,15 +86,14 @@ module public Observation =
     /// <summary>
     /// Advances the scan by one instant, yielding the voluntary hit-or-stand
     /// decision the instant revealed, if any. Each instant is a snapshot
-    /// immediately after its event, so the preceding instant is the exact
-    /// state the actor decided from. A player's first turn of every round is
-    /// a forced hit the engine never asks their strategy about - it is
-    /// dealing, not a decision - and is excluded; the turn is reconstructed
-    /// by counting the player's decision events, which matches the engine's
-    /// count because every turn produces exactly one such event. Froze and
-    /// Dealt3 events that resolve a set-aside card from an earlier deal3 are
-    /// the flipper giving out cards they were dealt, not a voluntary hit, and
-    /// are excluded too.
+    /// immediately after its event, so the preceding instant is the exact state
+    /// the actor decided from. A player's first turn of every round is a forced
+    /// hit the engine never asks their strategy about - it is dealing, not a
+    /// decision - and is excluded; the turn is reconstructed by counting the
+    /// player's decision events, which matches the engine's count because every
+    /// turn produces exactly one such event. Froze and Dealt3 events that
+    /// resolve a set-aside card from an earlier deal3 are the flipper giving
+    /// out cards they were dealt, not a voluntary hit, and are excluded too.
     ///
     /// OtherPlayers contains only the players still in the round, matching what
     /// the hit-or-stand decider receives: busted players are recognized by
@@ -174,8 +172,8 @@ module public Observation =
         Scan(finished', round', turns'', pending'', Some instant), previous |> Option.bind observe
 
     /// <summary>
-    /// Extracts every voluntary hit-or-stand decision from a timeline: the
-    /// scan applied instant by instant, with Observe's semantics.
+    /// Extracts every voluntary hit-or-stand decision from a timeline: the scan
+    /// applied instant by instant, with Observe's semantics.
     ///
     /// Observations are produced asynchronously as instants arrive, so a live
     /// game can be observed while it plays and unbounded timelines work.
