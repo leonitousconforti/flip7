@@ -59,11 +59,11 @@ module public Strategy =
     /// deck. They push on while a hand is small, grow reluctant as it turns
     /// into something worth losing, chase a flip7 once one is close, take more
     /// risk while somebody is running away with the game, and feel safe enough
-    /// to push holding a second chance. Caution is the hand score they start
-    /// to baulk at, and the response to it is soft rather than a threshold,
-    /// because nobody plays the same borderline hand the same way twice.
-    /// Shared with Inference so that a fitted human and a played one cannot
-    /// drift apart.
+    /// to push holding a second chance. Caution is the hand score they start to
+    /// baulk at, and the response to it is soft rather than a threshold,
+    /// because nobody plays the same borderline hand the same way twice. Shared
+    /// with Inference so that a fitted human and a played one cannot drift
+    /// apart.
     /// </summary>
     let public HumanHitProbability
         (caution: uint)
