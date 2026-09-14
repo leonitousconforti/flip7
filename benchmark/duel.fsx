@@ -67,8 +67,6 @@ let deciderWith (random: Random) (sage: Sage ref option) : Strategy.Decider =
         Strategy.Target =
             fun targeting ask chooser candidates finished decks ->
                 match targeting, sage with
-                | Targeting.ChoosesExternally "Adaptive", Some sage ->
-                    sage.Value.Aim random targeting ask chooser candidates finished decks
                 | targeting, _ -> canonical.Target targeting ask chooser candidates finished decks
     }
 

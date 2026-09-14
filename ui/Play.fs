@@ -466,7 +466,7 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
          |> List.map (fun name -> name, Strategy.Custom terminalPrompt, Targeting.ChoosesExternally terminalPrompt))
         @ (botNames
            |> List.filter (fun name -> name = sageName)
-           |> List.map (fun name -> name, Strategy.Custom adaptive, Targeting.ChoosesExternally adaptive))
+           |> List.map (fun name -> name, Strategy.Custom adaptive, Targeting.PlaysSpitefully))
         @ (List.zip naiveNames naive
            |> List.map (fun (name, strategy) -> name, strategy, Targeting.ChoosesRandomly))
         |> List.sortBy (fun _ -> random.Next())
@@ -516,10 +516,6 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
                     // is the only thing the keyboard can answer it with
                     | decision -> return raise (InvalidOperationException $"answered a target ask with {decision}")
                   }
-                | Targeting.ChoosesExternally name when name = adaptive ->
-                    // The engine awaits the freeze rollouts like any other
-                    // decider; the viewer keeps showing the last frame
-                    (Option.get sage).Aim random targeting ask chooser candidates finished decks
                 | targeting -> Strategy.DecideTargetWith random targeting ask chooser candidates finished decks
         HitOrStand =
             fun strategy round turn player others finished decks ->
