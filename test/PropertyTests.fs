@@ -55,6 +55,7 @@ let private genEngineStrategy: Gen<Strategy> =
         Gen.map Strategy.EmboldenedBySecondChance genUint
         Gen.map Strategy.HitWhileBehindLeader genUint
         Gen.map Strategy.StandsAfterTurn genUint
+        Gen.map Strategy.PlaysLikeAHuman genUint
         Gen.constant Strategy.MaximizesExpectedValue
     ]
 

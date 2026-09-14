@@ -84,6 +84,8 @@ module public Inference =
 
             if total < leader + margin then 1.0 else 0.0
         | Strategy.StandsAfterTurn turns -> if observation.Turn <= turns then 1.0 else 0.0
+        | Strategy.PlaysLikeAHuman caution ->
+            Strategy.HumanHitProbability caution observation.Player observation.OtherPlayers observation.FinishedPlayers
         | Strategy.MaximizesExpectedValue ->
             let deck, discards = observation.Deck, observation.Discards
             if Simulation.expectedValueOfHit deck discards observation.Player.Hand > 0.0 then
@@ -119,6 +121,7 @@ module public Inference =
         @ ([ 10u .. 5u .. 30u ] |> List.map Strategy.EmboldenedBySecondChance)
         @ ([ 0u .. 5u .. 20u ] |> List.map Strategy.HitWhileBehindLeader)
         @ ([ 1u .. 6u ] |> List.map Strategy.StandsAfterTurn)
+        @ ([ 12u .. 4u .. 28u ] |> List.map Strategy.PlaysLikeAHuman)
 
     /// <summary>
     /// The probability of the observed choice under a candidate strategy,

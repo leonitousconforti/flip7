@@ -368,3 +368,75 @@ let ``choosing randomly always answers with one of the candidates`` () =
 
     for _ in 1..50 do
         Assert.Contains((aim Targeting.ChoosesRandomly Strategy.Ask.WhoToFreeze player opponents).Name, names)
+
+// PlaysLikeAHuman is probabilistic, so these pin the shape of the curve it
+// draws from rather than the draws themselves
+let private hitChance (caution: uint) (hand: Hand) (others: Player list) (firmScore: uint) : float =
+    Strategy.HumanHitProbability caution { player with Hand = hand; FirmScore = firmScore } others []
+
+[<Fact>]
+let ``A human grows more reluctant as the hand grows into something worth losing`` () =
+    let chances =
+        [
+            [ ValueCard Card.Two ]
+            [ ValueCard Card.Nine ]
+            [ ValueCard Card.Nine; ValueCard Card.Eight ]
+            [ ValueCard Card.Twelve; ValueCard Card.Eleven; ValueCard Card.Ten ]
+        ]
+        |> List.map (fun hand -> hitChance 18u hand [] 0u)
+
+    Assert.Equal<float list>(chances |> List.sortDescending, chances)
+    Assert.True(List.head chances > 0.9, "a small hand is pushed on")
+    Assert.True(List.last chances < 0.1, "a hand worth 33 is not")
+
+[<Fact>]
+let ``A human chases a flip7 once one is close`` () =
+    // Five unique cards worth 38 would otherwise be well past baulking
+    let chasing = [
+        ValueCard Card.Twelve
+        ValueCard Card.Eleven
+        ValueCard Card.Ten
+        ValueCard Card.Three
+        ValueCard Card.Two
+    ]
+
+    Assert.True(hitChance 18u chasing [] 0u > 0.8)
+
+[<Fact>]
+let ``A human takes more risk while somebody is running away with the game`` () =
+    let hand = [ ValueCard Card.Nine; ValueCard Card.Eight ]
+    let level = hitChance 18u hand [ other ] 0u
+    let behind = hitChance 18u hand [ { other with FirmScore = 120u } ] 0u
+
+    Assert.True(behind > level, "being well behind should embolden")
+
+[<Fact>]
+let ``A human feels safer holding a second chance`` () =
+    let hand = [ ValueCard Card.Nine; ValueCard Card.Eight ]
+    let bare = hitChance 18u hand [] 0u
+    let held = hitChance 18u (ActionCard Card.SecondChance :: hand) [] 0u
+
+    Assert.True(held > bare, "a second chance should embolden")
+
+[<Fact>]
+let ``Inference reads a human exactly as the engine plays one`` () =
+    // The two must not drift: the fitted curve is the played curve
+    let observation = {
+        Name = "Alice"
+        Choice = Strategy.Hit
+        Round = 2u
+        Turn = 3u
+        Player = {
+            player with
+                Hand = [ ValueCard Card.Nine; ValueCard Card.Four ]
+        }
+        OtherPlayers = [ { other with FirmScore = 80u } ]
+        FinishedPlayers = []
+        Deck = Deck.Full
+        Discards = Deck.Empty
+    }
+
+    Assert.Equal(
+        Strategy.HumanHitProbability 18u observation.Player observation.OtherPlayers observation.FinishedPlayers,
+        Inference.ProbabilityOfHit (Strategy.PlaysLikeAHuman 18u) observation
+    )

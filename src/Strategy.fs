@@ -55,6 +55,41 @@ module public Strategy =
     let public Random: Strategy = Strategy.RandomWithProbability 0.5
 
     /// <summary>
+    /// How likely a person is to hit in this position. People do not count the
+    /// deck. They push on while a hand is small, grow reluctant as it turns
+    /// into something worth losing, chase a flip7 once one is close, take more
+    /// risk while somebody is running away with the game, and feel safe enough
+    /// to push holding a second chance. Caution is the hand score they start
+    /// to baulk at, and the response to it is soft rather than a threshold,
+    /// because nobody plays the same borderline hand the same way twice.
+    /// Shared with Inference so that a fitted human and a played one cannot
+    /// drift apart.
+    /// </summary>
+    let public HumanHitProbability
+        (caution: uint)
+        (player: Player)
+        (otherPlayers: Player list)
+        (finishedPlayers: Player list)
+        : float =
+        if Hand.UniqueValueCards player.Hand >= 5 then
+            0.9
+        else
+            let leader =
+                otherPlayers @ finishedPlayers |> List.map Player.Showing |> List.fold max 0u
+
+            let showing = Player.Showing player
+            let behind = float (leader - min leader showing)
+
+            let emboldened =
+                if player.Hand |> List.contains (ActionCard Card.SecondChance) then
+                    6.0
+                else
+                    0.0
+
+            let threshold = float caution + min 10.0 (behind / 4.0) + emboldened
+            1.0 / (1.0 + exp ((float (Hand.Score player.Hand) - threshold) / 3.0))
+
+    /// <summary>
     /// Evaluates a strategy using the given source of randomness, given the
     /// current round number, the current turn (how many times play has come
     /// around the table this round, counting from one for the player being
@@ -122,6 +157,10 @@ module public Strategy =
                     otherPlayers @ finishedPlayers |> List.map Player.Showing |> List.fold max 0u
                 if total < leader + margin then Hit else Stand
             | Strategy.StandsAfterTurn turns -> if turn <= turns then Hit else Stand
+            | Strategy.PlaysLikeAHuman caution ->
+                let probability = HumanHitProbability caution player otherPlayers finishedPlayers
+
+                if random.NextDouble() < probability then Hit else Stand
             | Strategy.MaximizesExpectedValue ->
                 let deck, discards = decks
                 if Simulation.expectedValueOfHit deck discards player.Hand > 0.0 then
