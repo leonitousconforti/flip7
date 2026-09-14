@@ -136,16 +136,6 @@ let private undealt =
 // At a hit-or-stand ask every card is in the deck, the discards or a hand
 let private tableDecks = undealt, Deck.Empty
 
-// At a freeze ask the engine is holding the freeze card the chooser drew: it
-// is in neither the deck nor a hand, and giving it out puts it in the
-// target's, which is what the rollout has to reproduce
-let private freezeDecks =
-    Deck.Decrement undealt (ActionCard Card.Freeze), Deck.Empty
-
-// A deal3 card has already gone to the discards by the time the ask is made
-let private deal3Decks =
-    Deck.Decrement undealt (ActionCard Card.Deal3), Deck.Increment Deck.Empty (ActionCard Card.Deal3)
-
 // A Sage that has watched a game, so the rollout paths are the ones taken
 let private watching =
     simulate 5 [
@@ -165,21 +155,6 @@ let ``Deciding draws none of the game's randomness`` () =
             |> ignore
         )
     )
-
-[<Fact>]
-let ``Aiming draws none of the game's randomness`` () =
-    let aim (sage: Sage) (ask: Strategy.Ask) (decks: Deck * Deck) (random: System.Random) =
-        sage.Aim random (Targeting.ChoosesExternally "Adaptive") ask table[0] table [] decks
-        |> Async.RunSynchronously
-        |> ignore
-
-    // Both the rollout paths and the spiteful ones they fall back to
-    Assert.True(inStep (aim watching Strategy.Ask.WhoToFreeze freezeDecks), "freeze by rollout")
-    Assert.True(inStep (aim watching Strategy.Ask.WhoReceivesDeal3 deal3Decks), "deal3 by rollout")
-
-    Assert.True(inStep (aim watching Strategy.Ask.WhoReceivesSecondChance tableDecks), "second chance, spiteful")
-
-    Assert.True(inStep (aim (Sage([], rollouts = 20)) Strategy.Ask.WhoToFreeze freezeDecks), "freeze without a scan")
 
 [<Fact>]
 let ``The same position always gets the same answer`` () =
