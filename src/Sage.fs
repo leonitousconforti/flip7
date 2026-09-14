@@ -236,7 +236,17 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
     // way, and diverge only where it really chose differently, which is what
     // makes one run measurable against another. It also costs nothing in
     // reproducibility: the same position always gets the same rollouts
-    static member private SeedFor(position: 'a) : System.Random = System.Random(hash position)
+    static member private SeedFor(position: string) : System.Random =
+        // Not `hash`: .NET randomises string hashing per process, so hashing a
+        // position that mentions anybody by name would hand Sage different
+        // rollouts on every run and leave a played game impossible to replay.
+        // FNV-1a is stable for as long as the text is
+        let mutable hash = 2166136261u
+
+        for character in position do
+            hash <- (hash ^^^ uint character) * 16777619u
+
+        System.Random(int hash)
 
     // The independent rollout games fan out across cores. Their opponent
     // samples and seeds are always drawn before they start, so outcomes never
@@ -413,7 +423,13 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                 | ToEndOfRound -> return decided ()
                 | ToEndOfGame ->
 
-                let rng = Sage.SeedFor(round, turn, player, others, finished, decks)
+                let held (player: Player) =
+                    Hand.Serialize player.Hand |> String.concat "-"
+
+                let mine = held player
+                let table = others |> List.map held |> String.concat "/"
+                let rng =
+                    Sage.SeedFor $"{round}:{turn}:{player.Name}:{player.FirmScore}:{mine}:{table}"
 
                 let counted =
                     if scan = Observation.Start then
@@ -523,7 +539,13 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
             if not aimable then
                 spitefully ()
             else
-                let rng = Sage.SeedFor(ask, chooser, candidates, finished, decks)
+                let holding = Hand.Serialize chooser.Hand |> String.concat "-"
+                let aiming = Observation.RoundOf scan
+
+                let table =
+                    candidates |> List.map (fun candidate -> candidate.Name) |> String.concat "/"
+
+                let rng = Sage.SeedFor $"{ask}:{aiming}:{chooser.Name}:{holding}:{table}"
                 let horizon = Sage.HorizonFor(candidates @ finished)
                 let round = Observation.RoundOf scan
                 let counted = Observation.TurnsTaken scan
