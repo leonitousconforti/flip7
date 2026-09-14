@@ -200,6 +200,63 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
 
         Sage.Score random player.Name decide round turnsTaken active finished decks
 
+    // The independent rollout games fan out across cores. Their opponent
+    // samples and seeds are always drawn before they start, so outcomes never
+    // depend on scheduling and a decision stays bit-identical to its
+    // sequential equivalent
+    static member private Parallel(games: Async<'a> seq) : Async<'a array> =
+        Async.Parallel(games, maxDegreeOfParallelism = System.Environment.ProcessorCount)
+
+    // Whether paired differences are decisively positive: their mean sits two
+    // standard errors clear of even. A noisy argmax around a sound rule plays
+    // worse than the rule itself, so a comparison closer than its own noise is
+    // left to the rule rather than acted on
+    static member private Decisive(differences: float array) : bool =
+        let mean = Array.average differences
+
+        let error =
+            differences
+            |> Array.sumBy (fun difference -> (difference - mean) * (difference - mean))
+            |> fun squares -> sqrt (squares / float (differences.Length * (differences.Length - 1)))
+
+        mean - 2.0 * error > 0.0
+
+    // The continuation strategy Sage plays as itself inside its own rollouts:
+    // the fixed strategy that wins most from here against the modeled table.
+    // That is policy iteration within the fixed-strategy class, since rollouts
+    // recursing into Sage itself would be unaffordable. Paired - one opponent
+    // sample and one seed per iteration, shared by every candidate - so the
+    // shared luck cancels out of the comparison
+    static member private Tournament
+        (rng: System.Random)
+        (iterations: int)
+        (name: string)
+        (sampleOpponents: unit -> (string * Strategy) list)
+        (play: System.Random -> Map<string, Strategy> -> Async<float>)
+        : Async<Strategy>
+        = async {
+        let! outcomes =
+            List.init iterations (fun _ -> sampleOpponents (), rng.Next())
+            |> List.collect (fun (opponents, seed) ->
+                selfCandidates
+                |> List.mapi (fun index candidate -> async {
+                    let! outcome =
+                        play (System.Random seed) (Map.ofList ((name, candidate) :: opponents))
+                    return index, outcome
+                })
+            )
+            |> Sage.Parallel
+
+        let scores = Array.zeroCreate (List.length selfCandidates)
+
+        for index, outcome in outcomes do
+            scores[index] <- scores[index] + outcome
+
+        return
+            selfCandidates
+            |> List.item (scores |> Array.mapi (fun index score -> index, score) |> Array.maxBy snd |> fst)
+    }
+
     /// <summary>
     /// The fitted model of a player under the strategy they declared, or None
     /// before any of their decisions have been observed with it.
@@ -254,47 +311,16 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                     opponent.Name, strategy
                 )
 
-            // The samples and seeds are drawn sequentially so the rng stream
-            // is deterministic, then the independent rollout games fan out
-            // across cores; the outcomes do not depend on scheduling, so a
-            // decision is bit-identical to its sequential equivalent
-            let parallel' (games: Async<'a> seq) : Async<'a array> =
-                Async.Parallel(games, maxDegreeOfParallelism = System.Environment.ProcessorCount)
-
             async {
-                let! outcomes =
-                    List.init (max 16 (rollouts / 2)) (fun _ -> sampleOpponents (), rng.Next())
-                    |> List.collect (fun (opponents, seed) ->
-                        selfCandidates
-                        |> List.mapi (fun index candidate -> async {
-                            let strategies = Map.ofList ((player.Name, candidate) :: opponents)
-
-                            let! outcome =
-                                Sage.Rollout
-                                    (System.Random seed)
-                                    strategies
-                                    None
-                                    counted
-                                    round
-                                    turn
-                                    player
-                                    others
-                                    finished
-                                    decks
-
-                            return index, outcome
-                        })
-                    )
-                    |> parallel'
-
-                let scores = Array.zeroCreate (List.length selfCandidates)
-
-                for index, outcome in outcomes do
-                    scores[index] <- scores[index] + outcome
-
-                let self =
-                    selfCandidates
-                    |> List.item (scores |> Array.mapi (fun index score -> index, score) |> Array.maxBy snd |> fst)
+                let! self =
+                    Sage.Tournament
+                        rng
+                        (max 16 (rollouts / 2))
+                        player.Name
+                        sampleOpponents
+                        (fun random strategies ->
+                            Sage.Rollout random strategies None counted round turn player others finished decks
+                        )
 
                 let! differences =
                     List.init rollouts (fun _ -> Map.ofList ((player.Name, self) :: sampleOpponents ()), rng.Next())
@@ -327,22 +353,13 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
 
                         return hitOutcome - standOutcome
                     })
-                    |> parallel'
+                    |> Sage.Parallel
 
                 // Overrule the continuation strategy's own answer only when
-                // the paired evidence is decisive - two standard errors from
-                // even - because a noisy argmax around a good policy plays
-                // worse than the policy itself
-                let mean = Array.average differences
-
-                let error =
-                    differences
-                    |> Array.sumBy (fun difference -> (difference - mean) * (difference - mean))
-                    |> fun squares -> sqrt (squares / float (rollouts * (rollouts - 1)))
-
-                if mean - 2.0 * error > 0.0 then
+                // the paired evidence is decisive
+                if Sage.Decisive differences then
                     return Strategy.Hit
-                elif mean + 2.0 * error < 0.0 then
+                elif Sage.Decisive(differences |> Array.map (~-)) then
                     return Strategy.Stand
                 else
                     return! Strategy.DecideHitOrStandWith rng self round turn player others finished decks
@@ -352,40 +369,44 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
     /// Who to give an action card to, shaped as a TargetDecider like
     /// Strategy.DecideTargetWith. Freezes are aimed by paired Monte Carlo:
     /// every candidate is frozen out in turn and the rest of the game plays
-    /// through the real engine from the scan's round and turn counters,
-    /// keeping the target whose removal wins Sage the game most often. A
-    /// deal3 or a second chance resolves mid-card, in state a targeting ask
-    /// alone cannot reconstruct, so those aim like Targeting.PlaysSpitefully.
-    /// The freeze rollouts need Sage to have watched the current game (a
-    /// targeting ask is not told the round or the turns taken); without that
-    /// it aims spitefully too.
+    /// through the real engine from the scan's round and turn counters, with
+    /// Sage playing the continuation its tournament picked, chosen once before
+    /// the freeze so that every target is compared under the same policy.
+    /// Freezing whoever is showing the most - the spiteful pick - is the
+    /// answer unless a candidate beats it by more than the rollouts' own
+    /// noise. A deal3 or a second chance resolves mid-card, in state a
+    /// targeting ask alone cannot reconstruct, so those aim like
+    /// Targeting.PlaysSpitefully. The freeze rollouts need Sage to have
+    /// watched the current game (a targeting ask is not told the round or the
+    /// turns taken); without that it aims spitefully too.
     /// </summary>
     member this.Aim(random: System.Random) : Strategy.TargetDecider =
         fun _targeting ask chooser candidates finished decks ->
+            let spitefully () =
+                Strategy.DecideTargetWith random Targeting.PlaysSpitefully ask chooser candidates finished decks
+
             match ask with
             | Strategy.Ask.WhoToFreeze when scan <> Observation.Start && List.length candidates > 1 ->
                 let rng = System.Random(random.Next())
 
+                let opponents =
+                    candidates @ finished |> List.filter (fun player -> player.Name <> chooser.Name)
+
                 let modeled =
-                    candidates @ finished
-                    |> List.filter (fun player -> player.Name <> chooser.Name)
+                    opponents
                     |> List.map (fun player -> player.Name, this.ModelFor(Sage.Key(player.Name, player.Strategy)))
                     |> Map.ofList
 
-                let sample () =
-                    candidates @ finished
+                let sampleOpponents () =
+                    opponents
                     |> List.map (fun player ->
                         let strategy =
-                            if player.Name = chooser.Name then
-                                Strategy.MaximizesExpectedValue
-                            else
-                                match Map.find player.Name modeled with
-                                | Some model -> Inference.SampleWith rng model
-                                | None -> Strategy.MaximizesExpectedValue
+                            match Map.find player.Name modeled with
+                            | Some model -> Inference.SampleWith rng model
+                            | None -> Strategy.MaximizesExpectedValue
 
                         player.Name, strategy
                     )
-                    |> Map.ofList
 
                 // The chooser's turn is being consumed by this freeze, but the
                 // scan has not seen the Froze event yet, so count it by hand
@@ -396,60 +417,82 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
 
                 let round = Observation.RoundOf scan
 
-                // Freezing a candidate removes them from the rotation with the
-                // freeze card parked in their hand, exactly as the engine
-                // resolves it, so every card stays accounted for
-                let freeze (strategies: Map<string, Strategy>) (target: Player) =
-                    let restrategize (p: Player) : Player = {
-                        p with
-                            Strategy = strategies |> Map.find p.Name
-                            Targeting = Targeting.ChoosesRandomly
-                    }
+                let restrategize (strategies: Map<string, Strategy>) (player: Player) : Player = {
+                    player with
+                        Strategy = strategies |> Map.find player.Name
+                        Targeting = Targeting.ChoosesRandomly
+                }
 
+                // Freezing a candidate removes them from the rotation with the
+                // freeze card parked in their hand, the way the engine resolves
+                // it, so every card stays accounted for
+                let freeze (strategies: Map<string, Strategy>) (target: Player) =
                     let active =
                         candidates
                         |> List.filter (fun candidate -> candidate.Name <> target.Name)
-                        |> List.map restrategize
+                        |> List.map (restrategize strategies)
 
-                    let iced = restrategize { target with Hand = ActionCard Card.Freeze :: target.Hand }
+                    let iced =
+                        restrategize strategies { target with Hand = ActionCard Card.Freeze :: target.Hand }
 
-                    active, iced :: (finished |> List.map restrategize)
+                    active, iced :: (finished |> List.map (restrategize strategies))
 
-                let parallel' (games: Async<'a> seq) : Async<'a array> =
-                    Async.Parallel(games, maxDegreeOfParallelism = System.Environment.ProcessorCount)
+                let play (random: System.Random) (active: Player list, finished: Player list) =
+                    Sage.Score random chooser.Name (Strategy.DecideWith random) round counts active finished decks
 
                 async {
+                    let! self =
+                        Sage.Tournament
+                            rng
+                            (max 16 (rollouts / 2))
+                            chooser.Name
+                            sampleOpponents
+                            (fun random strategies ->
+                                play
+                                    random
+                                    (candidates |> List.map (restrategize strategies),
+                                     finished |> List.map (restrategize strategies))
+                            )
+
                     let! outcomes =
-                        List.init rollouts (fun _ -> sample (), rng.Next())
-                        |> List.collect (fun (strategies, seed) ->
+                        List.init
+                            rollouts
+                            (fun iteration ->
+                                iteration, Map.ofList ((chooser.Name, self) :: sampleOpponents ()), rng.Next()
+                            )
+                        |> List.collect (fun (iteration, strategies, seed) ->
                             candidates
                             |> List.mapi (fun index target -> async {
-                                let random = System.Random seed
-                                let active, finished = freeze strategies target
-
-                                let! outcome =
-                                    Sage.Score
-                                        random
-                                        chooser.Name
-                                        (Strategy.DecideWith random)
-                                        round
-                                        counts
-                                        active
-                                        finished
-                                        decks
-
-                                return index, outcome
+                                let! outcome = play (System.Random seed) (freeze strategies target)
+                                return iteration, index, outcome
                             })
                         )
-                        |> parallel'
+                        |> Sage.Parallel
 
-                    let scores = Array.zeroCreate (List.length candidates)
+                    let table = Array2D.zeroCreate rollouts (List.length candidates)
 
-                    for index, outcome in outcomes do
-                        scores[index] <- scores[index] + outcome
+                    for iteration, index, outcome in outcomes do
+                        table[iteration, index] <- outcome
 
-                    return
-                        candidates
-                        |> List.item (scores |> Array.mapi (fun index score -> index, score) |> Array.maxBy snd |> fst)
+                    let! spiteful = spitefully ()
+
+                    let fallback =
+                        candidates |> List.findIndex (fun candidate -> candidate.Name = spiteful.Name)
+
+                    // Every candidate is measured against the spiteful pick on
+                    // the same rollouts, so what is compared is the difference
+                    // freezing them instead would have made
+                    let improvement (index: int) : (int * float) option =
+                        let differences =
+                            Array.init rollouts (fun iteration -> table[iteration, index] - table[iteration, fallback])
+
+                        if index <> fallback && Sage.Decisive differences then
+                            Some(index, Array.average differences)
+                        else
+                            None
+
+                    match List.init (List.length candidates) improvement |> List.choose id with
+                    | [] -> return spiteful
+                    | improvements -> return candidates |> List.item (improvements |> List.maxBy snd |> fst)
                 }
-            | _ -> Strategy.DecideTargetWith random Targeting.PlaysSpitefully ask chooser candidates finished decks
+            | _ -> spitefully ()
