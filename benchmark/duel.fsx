@@ -94,8 +94,7 @@ let playSage (history: Instant list list) (seed: int) : float =
     Timeline.SimulateWithDecider
         random
         (deciderWith random (Some sage))
-        ((seat, Strategy.Custom "Adaptive", Targeting.ChoosesExternally "Adaptive")
-         :: humans)
+        ((seat, Strategy.Custom "Adaptive", Targeting.PlaysSpitefully) :: humans)
     |> AsyncSeq.map (fun instant ->
         sage.Value <- Sage(instant, sage.Value)
         instant
