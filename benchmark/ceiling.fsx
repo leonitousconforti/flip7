@@ -59,8 +59,15 @@ let weaklings =
     [ "Alice"; "Bob"; "Chloe" ]
     |> List.map (fun name -> name, Strategy.AlwaysHits, Targeting.ChoosesRandomly)
 
-// Routes the regulars' hidden strategies, Sage's asks, and the clairvoyant
-// seat that stands whenever hitting could bust it
+// The field that actually matters: people. Caution varies a little the way it
+// does around a real table, and they aim spitefully, because everyone can see
+// who is winning
+let humans =
+    [ "Alice", 16u; "Bob", 19u; "Chloe", 22u ]
+    |> List.map (fun (name, caution) -> name, Strategy.PlaysLikeAHuman caution, Targeting.PlaysSpitefully)
+
+// Routes the regulars' hidden strategies and Sage's asks; every other seat
+// is decided the ordinary way
 let deciderWith (random: Random) (sage: Sage ref option) : Strategy.Decider =
     let canonical = Strategy.DecideWith random
 
@@ -98,10 +105,15 @@ let score (final: Instant option) : float =
         elif mine = best then 0.5
         else 0.0
 
-let playFixed (strategy: Strategy) (targeting: Targeting) (seed: int) : float =
+let playFixedAgainst
+    (field: list<string * Strategy * Targeting>)
+    (strategy: Strategy)
+    (targeting: Targeting)
+    (seed: int)
+    : float =
     let random = Random seed
 
-    Timeline.SimulateWithDecider random (deciderWith random None) ((seat, strategy, targeting) :: opponents)
+    Timeline.SimulateWithDecider random (deciderWith random None) ((seat, strategy, targeting) :: field)
     |> AsyncSeq.tryLast
     |> Async.RunSynchronously
     |> score
@@ -131,6 +143,9 @@ let playSageAgainst
 let playSage (history: Instant list list) (rollouts: int) (seed: int) : float =
     playSageAgainst opponents history rollouts seed
 
+let playFixed (strategy: Strategy) (targeting: Targeting) (seed: int) : float =
+    playFixedAgainst opponents strategy targeting seed
+
 let report (label: string) (outcomes: float list) : unit =
     let rate = List.sum outcomes / float outcomes.Length * 100.0
     // Two standard errors on a win rate, so a row's noise is visible
@@ -140,9 +155,9 @@ let report (label: string) (outcomes: float list) : unit =
 
 let root = Path.Join(Path.GetTempPath(), $"flip7-ceiling-{Guid.NewGuid():N}")
 
-let train (seed: int) (directory: string) : Instant list =
+let trainAgainst (field: list<string * Strategy * Targeting>) (seed: int) (directory: string) : Instant list =
     let random = Random seed
-    Timeline.SimulateWithDecider random (deciderWith random None) opponents
+    Timeline.SimulateWithDecider random (deciderWith random None) field
     |> Persistence.WriteTimelineEager directory
     |> AsyncSeq.iter ignore
     |> Async.RunSynchronously
@@ -184,7 +199,15 @@ try
     printfn $"Sage as its rollout budget grows, trained on 8 games ({sageGames} games)"
 
     let history =
-        [ 1..8 ] |> List.map (fun index -> train index (Path.Join(root, string index)))
+        [ 1..8 ]
+        |> List.map (fun index -> trainAgainst opponents index (Path.Join(root, string index)))
+
+    // Sage is only modelling the people if it watched the people: the human
+    // row gets games between the humans to study, not games between the
+    // regulars, whose strategies key differently
+    let humanHistory =
+        [ 1..8 ]
+        |> List.map (fun index -> trainAgainst humans index (Path.Join(root, $"human{index}")))
 
     for rollouts in [ 50; 150; 400 ] do
         sageSeeds
@@ -192,10 +215,19 @@ try
         |> report $"Sage at {rollouts} rollouts"
 
     printfn ""
-    printfn $"the same Sage against a field that plays badly ({sageGames} games)"
+    printfn $"how much of a win rate is the field rather than the player ({sageGames} games)"
+
     sageSeeds
     |> List.map (playSageAgainst weaklings history 150)
-    |> report "vs three AlwaysHits"
+    |> report "Sage vs three AlwaysHits"
+
+    sageSeeds
+    |> List.map (playSageAgainst humans humanHistory 150)
+    |> report "Sage vs three average humans"
+
+    sageSeeds
+    |> List.map (playFixedAgainst humans Strategy.MaximizesExpectedValue Targeting.PlaysSpitefully)
+    |> report "expected value vs those humans"
 
     printfn ""
     printfn $"done in {watch.Elapsed}"
