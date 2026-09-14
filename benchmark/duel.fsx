@@ -7,7 +7,7 @@
 // rather than rate against rate, which is what makes an edge of a few points
 // resolvable at all. The seeds are deliberately ones no tuning has ever seen.
 //
-//   dotnet fsi benchmark/duel.fsx [games] [rolloutCap]
+//   dotnet fsi benchmark/duel.fsx [games] [rolloutCap] [opponents]
 
 #r "nuget: FSharp.Control.AsyncSeq, 4.15.0"
 
@@ -38,10 +38,20 @@ let private argument (index: int) (fallback: int) : int =
 
 let games = argument 0 800
 let cap = argument 1 400
+let opponents = argument 2 3
 let seat = "Sage"
 
+// Caution spread around the same middle however many are sitting down
 let humans =
-    [ "Alice", 16u; "Bob", 19u; "Chloe", 22u ]
+    [
+        "Alice", 16u
+        "Bob", 19u
+        "Chloe", 22u
+        "Dave", 14u
+        "Eve", 24u
+        "Frank", 17u
+    ]
+    |> List.truncate opponents
     |> List.map (fun (name, caution) -> name, Strategy.PlaysLikeAHuman caution, Targeting.PlaysSpitefully)
 
 let deciderWith (random: Random) (sage: Sage ref option) : Strategy.Decider =
@@ -128,7 +138,10 @@ try
             |> Async.RunSynchronously
         )
 
-    printfn $"{games} games each, rollout cap {cap}, seeds no tuning has seen"
+    let par = 100.0 / float (opponents + 1)
+
+    printfn
+        $"{games} games each against {opponents} humans, rollout cap {cap}, seeds no tuning has seen (par is %.1f{par}%%)"
 
     let outcomes =
         [| 1..games |]
@@ -158,8 +171,8 @@ try
         |> fun squares -> sqrt (squares / float (differences.Length * (differences.Length - 1)))
 
     printfn ""
-    printfn $"  Sage                  : %.1f{sageRate}%%"
-    printfn $"  MaximizesExpectedValue: %.1f{expectedRate}%%"
+    printfn $"  Sage                  : %.1f{sageRate}%%  (%.2f{sageRate / par}x par)"
+    printfn $"  MaximizesExpectedValue: %.1f{expectedRate}%%  (%.2f{expectedRate / par}x par)"
     printfn ""
     printfn $"  difference            : %+.1f{mean * 100.0} points, standard error %.1f{error * 100.0}"
     printfn $"  that is %.2f{abs mean / error} standard errors"
