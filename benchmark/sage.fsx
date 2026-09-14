@@ -79,7 +79,12 @@ let deciderWith (random: Random) (sage: Sage ref option) : Strategy.Decider =
                 | Strategy.Custom name, _ when Map.containsKey name hidden ->
                     canonical.HitOrStand (Map.find name hidden) round turn player others finished decks
                 | strategy, _ -> canonical.HitOrStand strategy round turn player others finished decks
-        Strategy.Target = canonical.Target
+        Strategy.Target =
+            fun targeting ask chooser candidates finished decks ->
+                match targeting, sage with
+                | Targeting.ChoosesExternally "Adaptive", Some sage ->
+                    sage.Value.Aim random targeting ask chooser candidates finished decks
+                | targeting, _ -> canonical.Target targeting ask chooser candidates finished decks
     }
 
 // 1.0 for an outright win by Sage's seat, 0.5 for a shared top score
@@ -111,7 +116,8 @@ let evaluate (history: Instant list list) (seed: int) : float =
     let random = Random seed
     let sage = ref (Sage(history, rollouts = rolloutsPerDecision))
     let lineup =
-        ("Sage", Strategy.Custom "Adaptive", Targeting.PlaysSpitefully) :: opponents
+        ("Sage", Strategy.Custom "Adaptive", Targeting.ChoosesExternally "Adaptive")
+        :: opponents
 
     Timeline.SimulateWithDecider random (deciderWith random (Some sage)) lineup
     |> AsyncSeq.map (fun instant ->
