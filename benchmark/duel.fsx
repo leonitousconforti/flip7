@@ -67,6 +67,8 @@ let deciderWith (random: Random) (sage: Sage ref option) : Strategy.Decider =
         Strategy.Target =
             fun targeting ask chooser candidates finished decks ->
                 match targeting, sage with
+                | Targeting.ChoosesExternally "Adaptive", Some sage ->
+                    sage.Value.Aim random targeting ask chooser candidates finished decks
                 | targeting, _ -> canonical.Target targeting ask chooser candidates finished decks
     }
 
@@ -94,7 +96,8 @@ let playSage (history: Instant list list) (seed: int) : float =
     Timeline.SimulateWithDecider
         random
         (deciderWith random (Some sage))
-        ((seat, Strategy.Custom "Adaptive", Targeting.PlaysSpitefully) :: humans)
+        ((seat, Strategy.Custom "Adaptive", Targeting.ChoosesExternally "Adaptive")
+         :: humans)
     |> AsyncSeq.map (fun instant ->
         sage.Value <- Sage(instant, sage.Value)
         instant
