@@ -200,6 +200,15 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
 
         Sage.Score random player.Name decide round turnsTaken active finished decks
 
+    // Rollouts are seeded from the position rather than from the game's own
+    // randomness, so that consulting Sage - or changing how much it consults
+    // itself - cannot shift a single card the engine goes on to deal. Two runs
+    // of the same game then deal identically wherever Sage decides the same
+    // way, and diverge only where it really chose differently, which is what
+    // makes one run measurable against another. It also costs nothing in
+    // reproducibility: the same position always gets the same rollouts
+    static member private SeedFor(position: 'a) : System.Random = System.Random(hash position)
+
     // The independent rollout games fan out across cores. Their opponent
     // samples and seeds are always drawn before they start, so outcomes never
     // depend on scheduling and a decision stays bit-identical to its
@@ -312,10 +321,12 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
 
     /// <summary>
     /// Hit or stand by Monte Carlo best response, shaped as a
-    /// HitOrStandDecider closing over the randomness (like
-    /// Strategy.DecideHitOrStandWith) so Sage plugs in wherever the engine
-    /// takes a decider. The declared strategy is ignored: Sage's Custom label
-    /// names it rather than describes it.
+    /// HitOrStandDecider (like Strategy.DecideHitOrStandWith) so Sage plugs in
+    /// wherever the engine takes a decider. The declared strategy is ignored:
+    /// Sage's Custom label names it rather than describes it. So is the
+    /// randomness it is handed - Sage draws none of the game's own, seeding
+    /// its rollouts from the position instead - but it is still taken, so that
+    /// Sage reads as the decider factory it is.
     ///
     /// A decision runs two stages of rollouts against strategies sampled from
     /// the opponents' posteriors (expected-value play when unmodeled). A
@@ -330,9 +341,9 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
     /// shared by everything compared - so the shared luck cancels out of the
     /// comparisons and only the consequences remain.
     /// </summary>
-    member this.Decide(random: System.Random) : Strategy.HitOrStandDecider =
+    member this.Decide(_random: System.Random) : Strategy.HitOrStandDecider =
         fun _strategy round turn player others finished decks ->
-            let rng = System.Random(random.Next())
+            let rng = Sage.SeedFor(round, turn, player, others, finished, decks)
 
             let counted =
                 if scan = Observation.Start then
@@ -448,7 +459,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
             if not aimable then
                 spitefully ()
             else
-                let rng = System.Random(random.Next())
+                let rng = Sage.SeedFor(ask, chooser, candidates, finished, decks)
                 let round = Observation.RoundOf scan
                 let counted = Observation.TurnsTaken scan
 
@@ -569,6 +580,20 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                     | Strategy.Ask.WhoReceivesDeal3 -> deal3
                     | _ -> freeze
 
+                // A freeze ask is made while the engine still holds the card
+                // the chooser drew, so it is in neither the deck nor a hand and
+                // the table is one card short. Giving it out is what puts it in
+                // the target's hand, which every candidate rollout does; the
+                // tournament plays no freeze at all, so it sends the card to
+                // the discards instead and keeps the count whole. A deal3 is
+                // discarded before its own ask and needs nothing
+                let counting =
+                    match ask with
+                    | Strategy.Ask.WhoToFreeze ->
+                        let deck, discards = decks
+                        deck, Deck.Increment discards (ActionCard Card.Freeze)
+                    | _ -> decks
+
                 async {
                     // The continuation Sage plays as itself, picked from the
                     // position as it stands, before the card is given
@@ -587,7 +612,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                                     counted
                                     (candidates |> List.map (restrategize strategies))
                                     (finished |> List.map (restrategize strategies))
-                                    decks
+                                    counting
                             )
 
                     let rounds =
