@@ -113,8 +113,8 @@ module public Inference =
             )
 
     /// <summary>
-    /// The default candidate grid: every strategy DecideWith can evaluate -
-    /// all but Custom, which is decided externally - at a spread of parameter
+    /// The default candidate grid: every strategy DecideWith can evaluate - all
+    /// but Custom, which is decided externally - at a spread of parameter
     /// values. Anything sampled from a posterior over this grid can be fed
     /// straight back into Timeline.SimulateWith as an opponent model.
     /// </summary>
@@ -199,8 +199,8 @@ module public Inference =
     /// The posterior a body of evidence supports, from a uniform prior.
     /// </summary>
     let public ModelFrom (evidence: PlayerEvidence) : PlayerModel =
-        // Normalizing exponentiated log-likelihoods yields the posterior
-        // from a uniform prior; subtracting the max first avoids underflow
+        // Normalizing exponentiated log-likelihoods yields the posterior from a
+        // uniform prior; subtracting the max first avoids underflow
         let maxLogLikelihood = evidence.LogLikelihoods |> List.map snd |> List.max
 
         let weights =
