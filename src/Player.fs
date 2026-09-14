@@ -21,6 +21,7 @@ type public Strategy =
     | EmboldenedBySecondChance of uint
     | HitWhileBehindLeader of uint
     | StandsAfterTurn of uint
+    | PlaysLikeAHuman of Caution: uint
     | MaximizesExpectedValue
     | Custom of string
 
@@ -43,6 +44,7 @@ type public Strategy =
         | EmboldenedBySecondChance threshold -> $"EmboldenedBySecondChance {threshold}"
         | HitWhileBehindLeader margin -> $"HitWhileBehindLeader {margin}"
         | StandsAfterTurn turns -> $"StandsAfterTurn {turns}"
+        | PlaysLikeAHuman caution -> $"PlaysLikeAHuman {caution}"
         | MaximizesExpectedValue -> "MaximizesExpectedValue"
         | Custom name -> $"Custom {name}"
 
@@ -71,6 +73,7 @@ type public Strategy =
             | [| "EmboldenedBySecondChance"; threshold |] -> EmboldenedBySecondChance(readUint threshold)
             | [| "HitWhileBehindLeader"; margin |] -> HitWhileBehindLeader(readUint margin)
             | [| "StandsAfterTurn"; turns |] -> StandsAfterTurn(readUint turns)
+            | [| "PlaysLikeAHuman"; caution |] -> PlaysLikeAHuman(readUint caution)
             | [| "MaximizesExpectedValue" |] -> MaximizesExpectedValue
             | _ -> raise (System.FormatException $"Invalid strategy string: {string}")
 
