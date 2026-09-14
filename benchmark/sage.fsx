@@ -118,14 +118,13 @@ let playExpectedValue (seed: int) : Async<bool> = async {
     return sage.Head.FirmScore >= bestPlayer.FirmScore
 }
 
-// What Sage has watched before it sits down: games these same people played
-// among themselves, on seeds the evaluation never touches
 let history =
     [ 1..trainingGames ]
     |> List.map (fun index ->
         let random = Random(900000 + index)
+        let decide = deciderWith random None
 
-        Timeline.SimulateWithDecider random (deciderWith random None) humans
+        Timeline.SimulateWithDecider random decide humans
         |> AsyncSeq.toListAsync
         |> Async.RunSynchronously
     )
@@ -156,13 +155,13 @@ let outcomes =
     |> fun played -> Async.Parallel(played, maxDegreeOfParallelism = 4)
     |> Async.RunSynchronously
 
-let private rateOf (won: bool array) : float =
-    won |> Array.averageBy (fun win -> if win then 1.0 else 0.0)
-
 let studiedWon = outcomes |> Array.map (fun (studied, _, _) -> studied)
 let freshWon = outcomes |> Array.map (fun (_, fresh, _) -> fresh)
 let expectedWon = outcomes |> Array.map (fun (_, _, expected) -> expected)
 let par = 100.0 / float (List.length humans + 1)
+
+let rateOf (won: bool array) : float =
+    won |> Array.averageBy (fun win -> if win then 1.0 else 0.0)
 
 let spread (won: bool array) : float =
     let rate = rateOf won
@@ -187,7 +186,7 @@ let against (label: string) (better: bool array) (worse: bool array) : unit =
         |> fun squares -> sqrt (squares / float (differences.Length * (differences.Length - 1)))
 
     printfn
-        $"  %-38s{label}: %+.1f{mean * 100.0} points, standard error %.1f{error * 100.0} (%.2f{abs mean / error} SE)"
+        $"  %-28s{label}: %+.1f{mean * 100.0} points, standard error %.1f{error * 100.0} (%.2f{abs mean / error} SE)"
 
 printfn ""
 report "Sage, having studied" studiedWon
