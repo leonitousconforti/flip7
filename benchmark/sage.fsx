@@ -127,11 +127,13 @@ let evaluate (history: Instant list list) (seed: int) : float =
     |> Async.RunSynchronously
     |> score
 
-// The same seat playing plain expected value, as the no-modeling reference
+// The same seat playing plain expected value, as the no-modeling reference.
+// It aims spitefully because Sage does: leaving it on random targeting cost it
+// about ten points and flattered every Sage row measured against it
 let baseline (seed: int) : float =
     let random = Random seed
     let lineup =
-        ("Sage", Strategy.MaximizesExpectedValue, Targeting.ChoosesRandomly)
+        ("Sage", Strategy.MaximizesExpectedValue, Targeting.PlaysSpitefully)
         :: opponents
 
     Timeline.SimulateWithDecider random (deciderWith random None) lineup
