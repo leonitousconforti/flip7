@@ -251,11 +251,11 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
     static member private Parallel(games: Async<'a> seq) : Async<'a array> =
         Async.Parallel(games, maxDegreeOfParallelism = System.Environment.ProcessorCount)
 
-    // Whether paired differences are decisively positive: their mean sits two
-    // standard errors clear of even. A noisy argmax around a sound rule plays
-    // worse than the rule itself, so a comparison closer than its own noise is
-    // left to the rule rather than acted on
-    static member private Decisive(differences: float array) : bool =
+    // Whether paired differences are decisively positive: their mean sits
+    // clear of even by the given number of standard errors. A noisy argmax
+    // around a sound rule plays worse than the rule itself, so a comparison
+    // closer than its own noise is left to the rule rather than acted on
+    static member private DecisiveAt (bound: float) (differences: float array) : bool =
         let mean = Array.average differences
 
         let error =
@@ -263,7 +263,11 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
             |> Array.sumBy (fun difference -> (difference - mean) * (difference - mean))
             |> fun squares -> sqrt (squares / float (differences.Length * (differences.Length - 1)))
 
-        mean - 2.0 * error > 0.0
+        mean - bound * error > 0.0
+
+    // Two standard errors is the bound for looking once, which is what a
+    // finished comparison is
+    static member private Decisive(differences: float array) : bool = Sage.DecisiveAt 2.0 differences
 
     // The continuation strategy Sage plays as itself inside its own rollouts:
     // the fixed strategy that wins most from here against the modeled table.
@@ -320,6 +324,13 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
         (compare: Map<string, Strategy> -> int -> Async<float>)
         : Async<float array>
         =
+        // Stopping early means asking after every batch whether the answer is
+        // in, and a bound set for asking once lets noise through when it is
+        // asked a dozen times: at two standard errors this race called a
+        // difference on pure noise one time in five. Three holds the rate
+        // below what a single look at the full budget would give, and the
+        // differences worth stopping early for - an endgame is worth ten
+        // standard errors by the second batch - clear it just as fast
         let rec more (differences: float array) = async {
             if differences.Length >= cap then
                 return differences
@@ -335,7 +346,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
 
                 let grown = Array.append differences settled
 
-                if Sage.Decisive grown || Sage.Decisive(grown |> Array.map (~-)) then
+                if Sage.DecisiveAt 3.0 grown || Sage.DecisiveAt 3.0 (grown |> Array.map (~-)) then
                     return grown
                 else
                     return! more grown
