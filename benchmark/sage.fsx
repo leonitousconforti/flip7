@@ -65,20 +65,25 @@ let opponents =
     |> List.map (fun (name, _) -> name, Strategy.Custom name, Targeting.ChoosesRandomly)
 
 // Routes each regular's Custom label to their hidden strategy, and Adaptive
-// to Sage when one is seated
+// asks (hits and aims alike) to Sage when one is seated
 let deciderWith (random: Random) (sage: Sage ref option) : Strategy.Decider =
     let canonical = Strategy.DecideWith random
 
     {
-        canonical with
-            Strategy.HitOrStand =
-                fun strategy round turn player others finished decks ->
-                    match strategy, sage with
-                    | Strategy.Custom "Adaptive", Some sage ->
-                        sage.Value.Decide random strategy round turn player others finished decks
-                    | Strategy.Custom name, _ when Map.containsKey name hidden ->
-                        canonical.HitOrStand (Map.find name hidden) round turn player others finished decks
-                    | strategy, _ -> canonical.HitOrStand strategy round turn player others finished decks
+        Strategy.HitOrStand =
+            fun strategy round turn player others finished decks ->
+                match strategy, sage with
+                | Strategy.Custom "Adaptive", Some sage ->
+                    sage.Value.Decide random strategy round turn player others finished decks
+                | Strategy.Custom name, _ when Map.containsKey name hidden ->
+                    canonical.HitOrStand (Map.find name hidden) round turn player others finished decks
+                | strategy, _ -> canonical.HitOrStand strategy round turn player others finished decks
+        Strategy.Target =
+            fun targeting ask chooser candidates finished decks ->
+                match targeting, sage with
+                | Targeting.ChoosesExternally "Adaptive", Some sage ->
+                    sage.Value.Aim random targeting ask chooser candidates finished decks
+                | targeting, _ -> canonical.Target targeting ask chooser candidates finished decks
     }
 
 // 1.0 for an outright win by Sage's seat, 0.5 for a shared top score
@@ -110,7 +115,8 @@ let evaluate (history: Instant list list) (seed: int) : float =
     let random = Random seed
     let sage = ref (Sage(history, rollouts = rolloutsPerDecision))
     let lineup =
-        ("Sage", Strategy.Custom "Adaptive", Targeting.ChoosesRandomly) :: opponents
+        ("Sage", Strategy.Custom "Adaptive", Targeting.ChoosesExternally "Adaptive")
+        :: opponents
 
     Timeline.SimulateWithDecider random (deciderWith random (Some sage)) lineup
     |> AsyncSeq.map (fun instant ->
