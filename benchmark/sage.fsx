@@ -1,21 +1,23 @@
-// Measures how much persisted history Sage needs before it reliably wins.
+// Sage's win rate at a table of people.
 //
-// Three regulars play fixed strategies hidden behind Custom labels, so Sage
-// has to infer them from observations exactly as it does for humans. Training
-// games between the regulars are simulated and persisted to a temp directory
-// through the real persistence layer, Sage is started from ever larger slices
-// of that history, and its win rate is measured over a fixed set of
-// evaluation games. The evaluation seeds are the same for every slice, so the
-// comparison across training sizes is paired.
+// Five seats: Sage and four PlaysLikeAHuman opponents, everyone aiming their
+// action cards spitefully, which is what anyone does once they can see who is
+// winning. Par is a fifth of the games, so that is what a seat wins by
+// turning up; anything above it is the seat playing better than the table.
 //
-// Run from anywhere, no build needed - fsi compiles the library sources
-// itself:
+// The same seeds are played twice, once with Sage in the seat and once with
+// MaximizesExpectedValue, and the two are compared game by game rather than
+// rate against rate. Both arms meet the same deal on a given seed, so what is
+// left in the difference is the seat's play, and that pairing is what makes an
+// edge of a few points resolvable at all. The seeds are ones no tuning has
+// ever been measured against.
 //
-//   dotnet fsi benchmark/sage.fsx [evalGames] [rollouts] [maxTraining]
+// Run from anywhere, no build needed - fsi compiles the library sources:
 //
-// Defaults are 10 evaluation games, 50 rollouts per decision, and training
-// slices of 0/1/2/4/8/16 games; expect a few minutes. A quick smoke run:
-// dotnet fsi benchmark/sage.fsx 2 10 1
+//   dotnet fsi benchmark/sage.fsx [games] [rolloutCap]
+//
+// 400 games takes a few minutes and resolves a difference of about five
+// points. A quick check that it still runs: dotnet fsi benchmark/sage.fsx 4 50
 
 #r "nuget: FSharp.Control.AsyncSeq, 4.15.0"
 
@@ -45,28 +47,18 @@ let private argument (index: int) (fallback: int) : int =
     |> Option.map int
     |> Option.defaultValue fallback
 
-let evaluationGames = argument 0 10
-let rolloutsPerDecision = argument 1 50
-let maxTraining = argument 2 16
-let trainingSizes =
-    [ 0; 1; 2; 4; 8; 16 ] |> List.filter (fun size -> size <= maxTraining)
+let games = argument 0 400
+let cap = argument 1 400
+let seat = "Sage"
 
-// The table Sage sits at: regulars whose true strategies hide behind Custom
-// labels, so Sage must model them from data rather than read their labels
-let hidden =
-    Map [
-        "Alice", Strategy.HitUntilScore 22u
-        "Bob", Strategy.ChasesFlip7(24u, 6u)
-        "Chloe", Strategy.EmboldenedBySecondChance 26u
-    ]
+// Caution is the hand score each starts to baulk at, spread the way a real
+// table is: someone always banks early and someone always pushes on
+let humans =
+    [ "Alice", 16u; "Bob", 19u; "Chloe", 22u; "Dave", 25u ]
+    |> List.map (fun (name, caution) -> name, Strategy.PlaysLikeAHuman caution, Targeting.PlaysSpitefully)
 
-let opponents =
-    hidden
-    |> Map.toList
-    |> List.map (fun (name, _) -> name, Strategy.Custom name, Targeting.ChoosesRandomly)
+let par = 100.0 / float (List.length humans + 1)
 
-// Routes each regular's Custom label to their hidden strategy, and Adaptive
-// asks (hits and aims alike) to Sage when one is seated
 let deciderWith (random: Random) (sage: Sage ref option) : Strategy.Decider =
     let canonical = Strategy.DecideWith random
 
@@ -76,8 +68,6 @@ let deciderWith (random: Random) (sage: Sage ref option) : Strategy.Decider =
                 match strategy, sage with
                 | Strategy.Custom "Adaptive", Some sage ->
                     sage.Value.Decide random strategy round turn player others finished decks
-                | Strategy.Custom name, _ when Map.containsKey name hidden ->
-                    canonical.HitOrStand (Map.find name hidden) round turn player others finished decks
                 | strategy, _ -> canonical.HitOrStand strategy round turn player others finished decks
         Strategy.Target =
             fun targeting ask chooser candidates finished decks ->
@@ -87,39 +77,34 @@ let deciderWith (random: Random) (sage: Sage ref option) : Strategy.Decider =
                 | targeting, _ -> canonical.Target targeting ask chooser candidates finished decks
     }
 
-// 1.0 for an outright win by Sage's seat, 0.5 for a shared top score
+// 1.0 for an outright win by the seat, 0.5 for a shared top score
 let score (final: Instant option) : float =
     match final with
     | None -> 0.0
     | Some instant ->
         let mine =
             instant.Players
-            |> List.pick (fun player -> if player.Name = "Sage" then Some player.FirmScore else None)
+            |> List.pick (fun player -> if player.Name = seat then Some player.FirmScore else None)
 
         let best =
             instant.Players
-            |> List.choose (fun player ->
-                if player.Name <> "Sage" then
-                    Some player.FirmScore
-                else
-                    None
-            )
+            |> List.choose (fun player -> if player.Name <> seat then Some player.FirmScore else None)
             |> List.max
 
         if mine > best then 1.0
         elif mine = best then 0.5
         else 0.0
 
-// One evaluation game: Sage, trained on the given history, seated against the
-// regulars, folding every instant as it streams by like interactive play does
-let evaluate (history: Instant list list) (seed: int) : float =
+// Sage folds every instant as it arrives, the way interactive play does
+let playSage (history: Instant list list) (seed: int) : float =
     let random = Random seed
-    let sage = ref (Sage(history, rollouts = rolloutsPerDecision))
-    let lineup =
-        ("Sage", Strategy.Custom "Adaptive", Targeting.ChoosesExternally "Adaptive")
-        :: opponents
+    let sage = ref (Sage(history, rollouts = cap))
 
-    Timeline.SimulateWithDecider random (deciderWith random (Some sage)) lineup
+    Timeline.SimulateWithDecider
+        random
+        (deciderWith random (Some sage))
+        ((seat, Strategy.Custom "Adaptive", Targeting.ChoosesExternally "Adaptive")
+         :: humans)
     |> AsyncSeq.map (fun instant ->
         sage.Value <- Sage(instant, sage.Value)
         instant
@@ -128,62 +113,80 @@ let evaluate (history: Instant list list) (seed: int) : float =
     |> Async.RunSynchronously
     |> score
 
-// The same seat playing plain expected value, as the no-modeling reference.
-// It aims spitefully because Sage does: leaving it on random targeting cost it
-// about ten points and flattered every Sage row measured against it
-let baseline (seed: int) : float =
+let playExpectedValue (seed: int) : float =
     let random = Random seed
-    let lineup =
-        ("Sage", Strategy.MaximizesExpectedValue, Targeting.PlaysSpitefully)
-        :: opponents
 
-    Timeline.SimulateWithDecider random (deciderWith random None) lineup
+    Timeline.SimulateWithDecider
+        random
+        (deciderWith random None)
+        ((seat, Strategy.MaximizesExpectedValue, Targeting.PlaysSpitefully) :: humans)
     |> AsyncSeq.tryLast
     |> Async.RunSynchronously
     |> score
 
-let root = Path.Join(Path.GetTempPath(), $"flip7-sage-bench-{Guid.NewGuid():N}")
-
-let train (seed: int) (directory: string) : Instant list =
-    let random = Random seed
-
-    Timeline.SimulateWithDecider random (deciderWith random None) opponents
-    |> Persistence.WriteTimelineEager directory
-    |> AsyncSeq.iter ignore
-    |> Async.RunSynchronously
-
-    Persistence.ReadTimeline directory
-    |> AsyncSeq.toListAsync
-    |> Async.RunSynchronously
-
-let report (label: string) (outcomes: float list) : unit =
-    let wins = outcomes |> List.filter ((=) 1.0) |> List.length
-    let ties = outcomes |> List.filter ((=) 0.5) |> List.length
-    let losses = outcomes.Length - wins - ties
-    let rate = List.sum outcomes / float outcomes.Length * 100.0
-    printfn $"  %25s{label}: %5.1f{rate}%%  ({wins} wins, {ties} ties, {losses} losses)"
-
+let root = Path.Join(Path.GetTempPath(), $"flip7-sage-{Guid.NewGuid():N}")
 let watch = Diagnostics.Stopwatch.StartNew()
-
 Directory.CreateDirectory root |> ignore
 
 try
-    printfn $"persisting {maxTraining} training games under {root}"
-
+    // Sage studies games between the humans first, as it would from timelines/
     let history =
-        [ 1..maxTraining ]
-        |> List.map (fun index -> train index (Path.Join(root, string index)))
+        [ 1..8 ]
+        |> List.map (fun index ->
+            let directory = Path.Join(root, string index)
+            let random = Random index
 
-    let seeds = [ 1001 .. 1000 + evaluationGames ]
+            Timeline.SimulateWithDecider random (deciderWith random None) humans
+            |> Persistence.WriteTimelineEager directory
+            |> AsyncSeq.iter ignore
+            |> Async.RunSynchronously
 
-    printfn $"evaluating over {evaluationGames} games, {rolloutsPerDecision} rollouts per decision"
-    seeds |> List.map baseline |> report "MaximizesExpectedValue"
+            Persistence.ReadTimeline directory
+            |> AsyncSeq.toListAsync
+            |> Async.RunSynchronously
+        )
 
-    for size in trainingSizes do
-        seeds
-        |> List.map (evaluate (List.take size history))
-        |> report $"Sage after {size} games"
+    printfn $"{games} games against {List.length humans} people, rollout cap {cap}"
 
+    let outcomes =
+        [| 1..games |]
+        |> Array.map (fun index ->
+            let seed = 500000 + index
+            let sage = playSage history seed
+            let expected = playExpectedValue seed
+
+            if index % 100 = 0 then
+                printfn $"  {index} games in, {watch.Elapsed.TotalMinutes:F1} min"
+
+            sage, expected
+        )
+
+    let rate (values: float array) = Array.average values * 100.0
+    let sageRate = rate (Array.map fst outcomes)
+    let expectedRate = rate (Array.map snd outcomes)
+    let spread (values: float array) =
+        2.0
+        * sqrt (Array.average values * (1.0 - Array.average values) / float values.Length)
+        * 100.0
+
+    // Game by game, because both arms met the same deal
+    let differences = outcomes |> Array.map (fun (s, e) -> s - e)
+    let mean = Array.average differences
+
+    let error =
+        differences
+        |> Array.sumBy (fun d -> (d - mean) * (d - mean))
+        |> fun squares -> sqrt (squares / float (differences.Length * (differences.Length - 1)))
+
+    printfn ""
+    printfn
+        $"  Sage                  : %.1f{sageRate}%% +/- %.0f{spread (Array.map fst outcomes)}   (%.2f{sageRate / par}x par)"
+    printfn
+        $"  MaximizesExpectedValue: %.1f{expectedRate}%% +/- %.0f{spread (Array.map snd outcomes)}   (%.2f{expectedRate / par}x par)"
+    printfn $"  par                   : %.1f{par}%%"
+    printfn ""
+    printfn
+        $"  Sage over expected value: %+.1f{mean * 100.0} points, standard error %.1f{error * 100.0} (%.2f{abs mean / error} SE)"
     printfn $"done in {watch.Elapsed}"
 finally
     Directory.Delete(root, true)
