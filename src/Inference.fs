@@ -32,7 +32,7 @@ module public Inference =
     /// probability of hitting instead of sampling a decision so likelihoods are
     /// exact; probabilistic strategies return their actual curve value.
     /// </summary>
-    let public ProbabilityOfHit (strategy: Strategy) (observation: Observation) : float =
+    let internal ProbabilityOfHit (strategy: Strategy) (observation: Observation) : float =
         match strategy with
         | Strategy.AlwaysHits -> 1.0
         | Strategy.AlwaysStands -> 0.0
