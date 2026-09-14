@@ -437,41 +437,16 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
     /// </summary>
     member this.Decide(_random: System.Random) : Strategy.HitOrStandDecider =
         fun _strategy round turn player others finished decks ->
-            let rng = Sage.SeedFor(round, turn, player, others, finished, decks)
-
-            let counted =
-                if scan = Observation.Start then
-                    None
-                else
-                    Some(Observation.TurnsTaken scan)
-
-            let horizon = Sage.HorizonFor(player :: others @ finished)
-
-            // The posteriors of everyone at the table, materialized once per
-            // decision from the cached evidence
-            let modeled =
-                others @ finished
-                |> List.map (fun opponent -> opponent.Name, this.ModelFor(Sage.Key(opponent.Name, opponent.Strategy)))
-                |> Map.ofList
-
-            let sampleOpponents () =
-                others @ finished
-                |> List.map (fun opponent ->
-                    let strategy =
-                        match Map.find opponent.Name modeled with
-                        | Some model -> Inference.SampleWith rng model
-                        | None -> Strategy.MaximizesExpectedValue
-
-                    opponent.Name, strategy
-                )
-
             // Before anyone is in reach of 200 the question is what the hand
             // is worth, and that is not a question to sample: the deck is a
             // known multiset, so the answer can be computed outright by
             // playing the hand against every card that could come. One card
             // of sight is what MaximizesExpectedValue already has, so three
             // knows strictly more and knows it exactly - there is no estimate
-            // here to be uncertain about, and nothing for a threshold to do
+            // here to be uncertain about, nothing for a threshold to do, and
+            // no reason to ask who anyone else is. Two thirds of the hands
+            // Sage plays are decided here, and none of what follows is built
+            // for them
             let decided () =
                 let deck, discards = decks
                 let drawable = if Deck.IsEmpty deck then discards else deck
@@ -482,9 +457,37 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                     Strategy.Stand
 
             async {
-                match horizon with
+                match Sage.HorizonFor(player :: others @ finished) with
                 | ToEndOfRound -> return decided ()
                 | ToEndOfGame ->
+
+                let rng = Sage.SeedFor(round, turn, player, others, finished, decks)
+
+                let counted =
+                    if scan = Observation.Start then
+                        None
+                    else
+                        Some(Observation.TurnsTaken scan)
+
+                // The posteriors of everyone at the table, materialized from
+                // the cached evidence only now that they are wanted
+                let modeled =
+                    others @ finished
+                    |> List.map (fun opponent ->
+                        opponent.Name, this.ModelFor(Sage.Key(opponent.Name, opponent.Strategy))
+                    )
+                    |> Map.ofList
+
+                let sampleOpponents () =
+                    others @ finished
+                    |> List.map (fun opponent ->
+                        let strategy =
+                            match Map.find opponent.Name modeled with
+                            | Some model -> Inference.SampleWith rng model
+                            | None -> Strategy.MaximizesExpectedValue
+
+                        opponent.Name, strategy
+                    )
 
                 let! self =
                     Sage.Tournament
@@ -493,7 +496,18 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                         player.Name
                         sampleOpponents
                         (fun random strategies ->
-                            Sage.Rollout horizon random strategies None counted round turn player others finished decks
+                            Sage.Rollout
+                                ToEndOfGame
+                                random
+                                strategies
+                                None
+                                counted
+                                round
+                                turn
+                                player
+                                others
+                                finished
+                                decks
                         )
 
                 let! differences =
@@ -503,7 +517,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                         (fun strategies seed -> async {
                             let forced (action: Strategy.HitOrStand) =
                                 Sage.Rollout
-                                    horizon
+                                    ToEndOfGame
                                     (System.Random seed)
                                     strategies
                                     (Some action)
