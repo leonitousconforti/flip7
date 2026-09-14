@@ -38,6 +38,12 @@ type internal Horizon =
 /// </summary>
 type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observation.Scan, rollouts: int) =
 
+    // How many cards ahead the within-round search looks. Each card of sight
+    // multiplies the work by the number of cards the deck can turn up, so
+    // three is where it stops paying: a decision costs about eight
+    // milliseconds there against a hundred and twenty at four
+    static let lookahead = 3
+
     // The continuation strategies Sage can adopt inside its rollouts: a
     // conservative-to-aggressive spread of score thresholds, the flip7 chase,
     // the race to 200, and expected-value play first so it holds ties
@@ -459,7 +465,27 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                     opponent.Name, strategy
                 )
 
+            // Before anyone is in reach of 200 the question is what the hand
+            // is worth, and that is not a question to sample: the deck is a
+            // known multiset, so the answer can be computed outright by
+            // playing the hand against every card that could come. One card
+            // of sight is what MaximizesExpectedValue already has, so three
+            // knows strictly more and knows it exactly - there is no estimate
+            // here to be uncertain about, and nothing for a threshold to do
+            let decided () =
+                let deck, discards = decks
+                let drawable = if Deck.IsEmpty deck then discards else deck
+
+                if Lookahead.GainFromHitting lookahead drawable player.Hand > 0.0 then
+                    Strategy.Hit
+                else
+                    Strategy.Stand
+
             async {
+                match horizon with
+                | ToEndOfRound -> return decided ()
+                | ToEndOfGame ->
+
                 let! self =
                     Sage.Tournament
                         rng
