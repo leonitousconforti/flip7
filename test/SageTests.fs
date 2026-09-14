@@ -110,3 +110,89 @@ let ``Sage hits when its model shows that standing concedes the game`` () =
         sage.Decide (System.Random 1) (Strategy.Custom "Adaptive") 5u 3u me [ rival ] [] decks
         |> Async.RunSynchronously
     )
+
+// The property the benchmark rests on: Sage seeds its rollouts from the
+// position, so however much it consults itself, the engine goes on dealing
+// exactly the cards it would have dealt anyway. Two Randoms started alike stay
+// in step across a decision, which is what lets one run be measured against
+// another
+let private inStep (consult: System.Random -> unit) : bool =
+    let used = System.Random 7
+    let untouched = System.Random 7
+    consult used
+    List.init 8 (fun _ -> used.Next()) = List.init 8 (fun _ -> untouched.Next())
+
+let private table = [
+    Player.Make("Sage", Strategy.Custom "Adaptive", firmScore = 100u, hand = [ ValueCard Card.Five ])
+    Player.Make("Rival", Strategy.HitUntilScore 20u, firmScore = 150u, hand = [ ValueCard Card.Nine ])
+    Player.Make("Foil", Strategy.HitUntilScore 18u, firmScore = 40u, hand = [ ValueCard Card.Two ])
+]
+
+let private undealt =
+    table
+    |> List.collect (fun player -> player.Hand)
+    |> List.fold Deck.Decrement Deck.Full
+
+// At a hit-or-stand ask every card is in the deck, the discards or a hand
+let private tableDecks = undealt, Deck.Empty
+
+// At a freeze ask the engine is holding the freeze card the chooser drew: it
+// is in neither the deck nor a hand, and giving it out puts it in the
+// target's, which is what the rollout has to reproduce
+let private freezeDecks =
+    Deck.Decrement undealt (ActionCard Card.Freeze), Deck.Empty
+
+// A deal3 card has already gone to the discards by the time the ask is made
+let private deal3Decks =
+    Deck.Decrement undealt (ActionCard Card.Deal3), Deck.Increment Deck.Empty (ActionCard Card.Deal3)
+
+// A Sage that has watched a game, so the rollout paths are the ones taken
+let private watching =
+    simulate 5 [
+        "Sage", Strategy.HitUntilScore 20u, Targeting.ChoosesRandomly
+        "Rival", Strategy.HitUntilScore 24u, Targeting.ChoosesRandomly
+        "Foil", Strategy.HitUntilScore 18u, Targeting.ChoosesRandomly
+    ]
+    |> List.takeWhile (fun instant -> not instant.Event.IsRoundEnded)
+    |> List.fold (fun sage instant -> Sage(instant, sage)) (Sage([], rollouts = 20))
+
+[<Fact>]
+let ``Deciding draws none of the game's randomness`` () =
+    Assert.True(
+        inStep (fun random ->
+            watching.Decide random (Strategy.Custom "Adaptive") 3u 2u table[0] [ table[1]; table[2] ] [] tableDecks
+            |> Async.RunSynchronously
+            |> ignore
+        )
+    )
+
+[<Fact>]
+let ``Aiming draws none of the game's randomness`` () =
+    let aim (sage: Sage) (ask: Strategy.Ask) (decks: Deck * Deck) (random: System.Random) =
+        sage.Aim random (Targeting.ChoosesExternally "Adaptive") ask table[0] table [] decks
+        |> Async.RunSynchronously
+        |> ignore
+
+    // Both the rollout paths and the spiteful ones they fall back to
+    Assert.True(inStep (aim watching Strategy.Ask.WhoToFreeze freezeDecks), "freeze by rollout")
+    Assert.True(inStep (aim watching Strategy.Ask.WhoReceivesDeal3 deal3Decks), "deal3 by rollout")
+
+    Assert.True(inStep (aim watching Strategy.Ask.WhoReceivesSecondChance tableDecks), "second chance, spiteful")
+
+    Assert.True(inStep (aim (Sage([], rollouts = 20)) Strategy.Ask.WhoToFreeze freezeDecks), "freeze without a scan")
+
+[<Fact>]
+let ``The same position always gets the same answer`` () =
+    let decide () =
+        watching.Decide
+            (System.Random 1)
+            (Strategy.Custom "Adaptive")
+            3u
+            2u
+            table[0]
+            [ table[1]; table[2] ]
+            []
+            tableDecks
+        |> Async.RunSynchronously
+
+    Assert.Equal(decide (), decide ())
