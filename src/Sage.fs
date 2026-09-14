@@ -44,18 +44,6 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
     // milliseconds there against a hundred and twenty at four
     static let lookahead = 3
 
-    // The continuation strategies Sage can adopt inside its rollouts: a
-    // conservative-to-aggressive spread of score thresholds, the flip7 chase,
-    // the race to 200, and expected-value play first so it holds ties
-    static let selfCandidates = [
-        Strategy.MaximizesExpectedValue
-        Strategy.HitUntilScore 18u
-        Strategy.HitUntilScore 22u
-        Strategy.HitUntilScore 26u
-        Strategy.ChasesFlip7(22u, 5u)
-        Strategy.HitUntilTotal 200u
-    ]
-
     // Models are keyed by what a player declared and, for Custom labels only,
     // also by who they are: an engine strategy plays identically no matter
     // who holds it, so those observations pool across players and sessions,
@@ -275,42 +263,6 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
     // finished comparison is
     static member private Decisive(differences: float array) : bool = Sage.DecisiveAt 2.0 differences
 
-    // The continuation strategy Sage plays as itself inside its own rollouts:
-    // the fixed strategy that wins most from here against the modeled table.
-    // That is policy iteration within the fixed-strategy class, since rollouts
-    // recursing into Sage itself would be unaffordable. Paired - one opponent
-    // sample and one seed per iteration, shared by every candidate - so the
-    // shared luck cancels out of the comparison
-    static member private Tournament
-        (rng: System.Random)
-        (iterations: int)
-        (name: string)
-        (sampleOpponents: unit -> (string * Strategy) list)
-        (play: System.Random -> Map<string, Strategy> -> Async<float>)
-        : Async<Strategy>
-        = async {
-        let! outcomes =
-            List.init iterations (fun _ -> sampleOpponents (), rng.Next())
-            |> List.collect (fun (opponents, seed) ->
-                selfCandidates
-                |> List.mapi (fun index candidate -> async {
-                    let! outcome =
-                        play (System.Random seed) (Map.ofList ((name, candidate) :: opponents))
-                    return index, outcome
-                })
-            )
-            |> Sage.Parallel
-
-        let scores = Array.zeroCreate (List.length selfCandidates)
-
-        for index, outcome in outcomes do
-            scores[index] <- scores[index] + outcome
-
-        return
-            selfCandidates
-            |> List.item (scores |> Array.mapi (fun index score -> index, score) |> Array.maxBy snd |> fst)
-    }
-
     // Who wins becomes the question once anyone is within about two rounds of
     // the finish; before that, a rollout played that far is mostly noise about
     // rounds this decision cannot reach
@@ -489,31 +441,22 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                         opponent.Name, strategy
                     )
 
-                let! self =
-                    Sage.Tournament
-                        rng
-                        (max 16 (rollouts / 8))
-                        player.Name
-                        sampleOpponents
-                        (fun random strategies ->
-                            Sage.Rollout
-                                ToEndOfGame
-                                random
-                                strategies
-                                None
-                                counted
-                                round
-                                turn
-                                player
-                                others
-                                finished
-                                decks
-                        )
-
+                // Sage plays expected value as itself inside its own
+                // rollouts. It used to hold a small tournament here to pick
+                // something better, which was worth a great deal when rollouts
+                // decided every hand - but an endgame hit is worth some
+                // thirty-eight points of win probability against a stand, and
+                // next to nothing about that turns on which fixed strategy the
+                // rollout assumes afterwards. Taking the tournament out left
+                // the win rate exactly where it was and the decision a quarter
+                // quicker
                 let! differences =
                     Sage.Race
                         rollouts
-                        (fun () -> Map.ofList ((player.Name, self) :: sampleOpponents ()), rng.Next())
+                        (fun () ->
+                            Map.ofList ((player.Name, Strategy.MaximizesExpectedValue) :: sampleOpponents ()),
+                            rng.Next()
+                        )
                         (fun strategies seed -> async {
                             let forced (action: Strategy.HitOrStand) =
                                 Sage.Rollout
@@ -534,14 +477,14 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                             return hitOutcome - standOutcome
                         })
 
-                // Overrule the continuation strategy's own answer only when
-                // the paired evidence is decisive
+                // Overrule the search's own answer only when the paired
+                // evidence is decisive
                 if Sage.Decisive differences then
                     return Strategy.Hit
                 elif Sage.Decisive(differences |> Array.map (~-)) then
                     return Strategy.Stand
                 else
-                    return! Strategy.DecideHitOrStandWith rng self round turn player others finished decks
+                    return decided ()
             }
 
     /// <summary>
@@ -721,24 +664,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                 async {
                     // The continuation Sage plays as itself, picked from the
                     // position as it stands, before the card is given
-                    let! self =
-                        Sage.Tournament
-                            rng
-                            (max 16 (rollouts / 2))
-                            chooser.Name
-                            sampleOpponents
-                            (fun random strategies ->
-                                Sage.Score
-                                    horizon
-                                    random
-                                    chooser.Name
-                                    (Strategy.DecideWith random)
-                                    round
-                                    counted
-                                    (candidates |> List.map (restrategize strategies))
-                                    (finished |> List.map (restrategize strategies))
-                                    counting
-                            )
+                    let self = Strategy.MaximizesExpectedValue
 
                     let rounds =
                         Array.init
