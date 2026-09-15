@@ -97,21 +97,22 @@ module private Lookahead =
 
 /// <summary>
 /// An adaptive opponent for interactive play: it accumulates evidence about
-/// every player it has seen (persisted games from earlier sessions plus the
-/// current game, one instant at a time) and decides its own hits, stands, and
-/// freeze targets by Monte Carlo best response. Each rollout samples one
-/// strategy per opponent from their posterior (fixed within the rollout,
-/// resampled across rollouts, so model uncertainty propagates into the
-/// estimate) and plays the rest of the game through the real engine via
-/// Timeline.ContinueWith.
+/// every player it has seen (the current game, one instant at a time) and
+/// decides its own hits, stands, and freeze targets by Monte Carlo best
+/// response. Each rollout samples one strategy per opponent from their
+/// posterior (fixed within the rollout, resampled across rollouts, so model
+/// uncertainty propagates into the estimate) and plays the rest of the game
+/// through the real engine via Timeline.ContinueWith.
 ///
-/// A Sage is immutable: Sage(history) starts one that has studied past games,
-/// and Sage(instant, previous) advances one by a single instant of the
+/// A Sage is immutable: Sage() starts one knowing nothing, and
+/// Sage(instant, previous) advances one by a single instant of the
 /// current game, so a caller threads the game through it like a fold over
 /// the timeline. Each instant advances the observation scan and, when it
 /// holds a decision, adds that decision onto the decider's cached
 /// log-likelihood sums; posteriors materialize from the sums only when read,
-/// so nothing is ever refit and no archive is ever rescored.
+/// so nothing is ever refit. It studies no past games: measured at a table
+/// of humans, everything a history was worth arrives again within the first
+/// rounds of watching the same people play.
 /// </summary>
 type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observation.Scan, rollouts: int) =
 
@@ -132,27 +133,14 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
         | _ -> string strategy
 
     /// <summary>
-    /// Starts a Sage that has studied the given past games, e.g. every
-    /// timeline persisted by earlier sessions. Rollouts is the most any one
+    /// Starts a Sage that knows nothing yet. Rollouts is the most any one
     /// decision may spend, not what every decision spends: a decision stops
     /// buying rollouts the moment they have settled it, which for an endgame
     /// is usually the first batch. The cap is worth being generous with,
     /// because the decisions that reach it are the ones too close to call any
     /// other way.
     /// </summary>
-    new(history: Instant list list, ?rollouts: int)
-        =
-        let evidence =
-            history
-            |> Seq.map AsyncSeq.ofSeq
-            |> Observation.FromTimelines
-            |> AsyncSeq.toListAsync
-            |> Async.RunSynchronously
-            |> List.groupBy (fun observation -> Sage.Key(observation.Name, observation.Player.Strategy))
-            |> List.map (fun (key, decisions) -> key, Inference.Evidence key decisions)
-            |> Map.ofList
-
-        Sage(evidence, Observation.Start, defaultArg rollouts 400)
+    new(?rollouts: int) = Sage(Map.empty, Observation.Start, defaultArg rollouts 400)
 
     /// <summary>
     /// The fold step: the previous Sage advanced by the next instant of the

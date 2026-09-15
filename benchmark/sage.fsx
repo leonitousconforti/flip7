@@ -10,16 +10,11 @@
 // rate against rate. Both arms meet the same deal on a given seed, so what is
 // left in the difference is the seat's play, and that pairing is what makes an
 // edge of a few points resolvable at all. The seeds are ones no tuning has ever
-// been measured against.
-//
-// Sage plays twice over: once having studied games these same people played
-// before, and once sitting down knowing nothing, which is what a first evening
-// looks like. The gap between those two is what the history is worth. Sharing
-// the lead counts as winning it.
+// been measured against. Sharing the lead counts as winning it.
 //
 // Run from anywhere, no build needed - fsi compiles the library sources:
 //
-//   dotnet fsi benchmark/sage.fsx [games] [rolloutCap] [trainingGames]
+//   dotnet fsi benchmark/sage.fsx [games] [rolloutCap]
 //
 // 400 games takes a few minutes and resolves a difference of about five points.
 // A quick check that it still runs: dotnet fsi benchmark/sage.fsx 4 50
@@ -53,7 +48,6 @@ let private argument (index: int) (fallback: int) : int =
 
 let games = argument 0 400
 let cap = argument 1 400
-let trainingGames = argument 2 8
 
 // A real table is not four copies of the same sensible player: it runs from
 // somebody who banks every dozen points to somebody who rides hands well past
@@ -81,9 +75,9 @@ let deciderWith (random: Random) (sage: Sage ref option) : Strategy.Decider =
                 | targeting, _ -> canonical.Target targeting ask chooser candidates finished decks
     }
 
-let playSage (history: Instant list list) (seed: int) : Async<bool> = async {
+let playSage (seed: int) : Async<bool> = async {
     let random = Random seed
-    let sage = ref (Sage(history, rollouts = cap))
+    let sage = ref (Sage(rollouts = cap))
     let decide = deciderWith random (Some sage)
     let players =
         ("Sage", Strategy.Custom "Adaptive", Targeting.ChoosesExternally "Adaptive")
@@ -121,17 +115,6 @@ let playExpectedValue (seed: int) : Async<bool> = async {
     return sage.Head.FirmScore >= bestPlayer.FirmScore
 }
 
-let history =
-    [ 1..trainingGames ]
-    |> List.map (fun index ->
-        let random = Random(900000 + index)
-        let decide = deciderWith random None
-
-        Timeline.SimulateWithDecider random decide humans
-        |> AsyncSeq.toListAsync
-        |> Async.RunSynchronously
-    )
-
 let watch = Diagnostics.Stopwatch.StartNew()
 let played = ref 0
 
@@ -139,12 +122,10 @@ let outcomes =
     [| 1..games |]
     |> Array.map (fun index -> async {
         let seed = 500000 + index
-        let! studied = playSage history seed |> Async.StartChild
-        let! fresh = playSage List.empty seed |> Async.StartChild
+        let! sage = playSage seed |> Async.StartChild
         let! expected = playExpectedValue seed |> Async.StartChild
 
-        let! studiedResult = studied
-        let! freshResult = fresh
+        let! sageResult = sage
         let! expectedResult = expected
 
         let finished = Interlocked.Increment(&played.contents)
@@ -153,14 +134,13 @@ let outcomes =
         if finished % step = 0 || finished = games then
             printfn $"  %4d{finished}/{games} games, %.1f{watch.Elapsed.TotalMinutes} min"
 
-        return studiedResult, freshResult, expectedResult
+        return sageResult, expectedResult
     })
     |> fun played -> Async.Parallel(played, maxDegreeOfParallelism = 4)
     |> Async.RunSynchronously
 
-let studiedWon = outcomes |> Array.map (fun (studied, _, _) -> studied)
-let freshWon = outcomes |> Array.map (fun (_, fresh, _) -> fresh)
-let expectedWon = outcomes |> Array.map (fun (_, _, expected) -> expected)
+let sageWon = outcomes |> Array.map fst
+let expectedWon = outcomes |> Array.map snd
 let par = 100.0 / float (List.length humans + 1)
 
 let rateOf (won: bool array) : float =
@@ -192,11 +172,9 @@ let against (label: string) (better: bool array) (worse: bool array) : unit =
         $"  %-28s{label}: %+.1f{mean * 100.0} points, standard error %.1f{error * 100.0} (%.2f{abs mean / error} SE)"
 
 printfn ""
-report "Sage, having studied" studiedWon
-report "Sage, knowing nothing" freshWon
+report "Sage" sageWon
 report "MaximizesExpectedValue" expectedWon
 printfn "  %-23s: %5.1f%%" "par" par
 printfn ""
-against "Sage over expected value" studiedWon expectedWon
-against "what the history is worth" studiedWon freshWon
+against "Sage over expected value" sageWon expectedWon
 printfn $"done in {watch.Elapsed}"
