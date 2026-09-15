@@ -55,8 +55,12 @@ let games = argument 0 400
 let cap = argument 1 400
 let trainingGames = argument 2 8
 
+// A real table is not four copies of the same sensible player: it runs from
+// somebody who banks every dozen points to somebody who rides hands well past
+// thirty. The wide spread of caution is what makes the seats worth telling
+// apart, and telling them apart is the thing Sage is being measured on
 let humans =
-    [ "Alice", 12u; "Bob", 19u; "Chloe", 22u; "Dave", 27u ]
+    [ "Alice", 8u; "Bob", 16u; "Chloe", 24u; "Dave", 32u ]
     |> List.map (fun (name, caution) -> name, Strategy.PlaysLikeAHuman caution, Targeting.PlaysSpitefully)
 
 let deciderWith (random: Random) (sage: Sage ref option) : Strategy.Decider =
