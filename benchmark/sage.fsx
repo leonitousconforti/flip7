@@ -32,7 +32,6 @@
 #load "../src/Hand.fs"
 #load "../src/Deck.fs"
 #load "../src/Simulation.fs"
-#load "../src/Lookahead.fs"
 #load "../src/Player.fs"
 #load "../src/Strategy.fs"
 #load "../src/Timeline.fs"
