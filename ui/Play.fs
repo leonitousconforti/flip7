@@ -408,8 +408,7 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
 
     // Sage takes the first free seat, so it only exists when at least one
     // seat is open
-    let mutable sage =
-        if List.isEmpty botNames then None else Some(Sage())
+    let mutable sage = if List.isEmpty botNames then None else Some(Sage())
 
     let random =
         match seed with
