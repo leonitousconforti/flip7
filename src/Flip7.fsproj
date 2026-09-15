@@ -26,6 +26,7 @@
     <Compile Include="Persistence.fs" />
     <Compile Include="Observation.fs" />
     <Compile Include="Inference.fs" />
+    <Compile Include="Sage.fs" />
   </ItemGroup>
 
   <ItemGroup>
