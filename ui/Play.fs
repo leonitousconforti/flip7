@@ -20,26 +20,6 @@ let private timelinesRoot = "timelines"
 type private QuitException() =
     inherit Exception()
 
-// Every previously persisted game is training data: Sage starts each session
-// already knowing how its regulars play. A directory that does not read back
-// (a session killed mid-write, say) is skipped rather than fatal
-let private LoadHistory () : Instant list list =
-    if not (Directory.Exists timelinesRoot) then
-        []
-    else
-        Directory.GetDirectories timelinesRoot
-        |> Array.sort
-        |> Array.toList
-        |> List.choose (fun directory ->
-            try
-                Persistence.ReadTimeline directory
-                |> AsyncSeq.toListAsync
-                |> Async.RunSynchronously
-                |> Some
-            with _ ->
-                None
-        )
-
 type private Prompt = {
     Round: uint
     Turn: uint
@@ -426,13 +406,10 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
     | Some taken -> raise (ArgumentException $"{taken} is taken by one of the AIs, please pick another name.")
     | None -> ()
 
-    // Sage takes the first free seat, so it only exists (and only pays for
-    // reading the persisted games) when at least one seat is open
+    // Sage takes the first free seat, so it only exists when at least one
+    // seat is open
     let mutable sage =
-        if List.isEmpty botNames then
-            None
-        else
-            Some(Sage(LoadHistory()))
+        if List.isEmpty botNames then None else Some(Sage())
 
     let random =
         match seed with
