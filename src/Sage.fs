@@ -39,10 +39,10 @@ type internal Horizon =
 /// </summary>
 type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observation.Scan, rollouts: int) =
 
-    // How many cards ahead the within-round search looks. Each card of sight
-    // multiplies the work by the number of cards the deck can turn up, so
-    // three is where it stops paying: a decision costs about eight
-    // milliseconds there against a hundred and twenty at four
+    // How many cards ahead the within-round search looks. The searcher
+    // remembers worths by deck, so an extra card of sight now costs a few
+    // times the last rather than the twentyfold it once did; three predates
+    // that, and stays until deeper is shown to decide anything better
     static let lookahead = 3
 
     // Models are keyed by what a player declared and, for Custom labels only,
@@ -397,18 +397,24 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
             // no reason to ask who anyone else is. Two thirds of the hands
             // Sage plays are decided here, and none of what follows is built
             // for them
-            let decided () =
+            let decided = async {
                 let deck, discards = decks
                 let drawable = if Deck.IsEmpty deck then discards else deck
 
-                if Lookahead.GainFromHitting lookahead drawable player.Hand > 0.0 then
-                    Strategy.Hit
-                else
-                    Strategy.Stand
+                // The searcher prices a hand against the deck it was dealt
+                // from, missing exactly that hand: dealt from, here, means
+                // the drawable cards plus the hand itself
+                let dealtFrom = player.Hand |> List.fold Deck.Increment drawable
+                use searcher = new Lookahead(lookahead, [ player.Hand ], deck = dealtFrom)
+
+                match! searcher.GainFromHitting player.Hand with
+                | Ok gain -> return (if gain > 0.0 then Strategy.Hit else Strategy.Stand)
+                | Error error -> return failwith $"%A{error}"
+            }
 
             async {
                 match Sage.HorizonFor(player :: others @ finished) with
-                | ToEndOfRound -> return decided ()
+                | ToEndOfRound -> return! decided
                 | ToEndOfGame ->
 
                 let held (player: Player) =
@@ -488,7 +494,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                 elif Sage.Decisive(differences |> Array.map (~-)) then
                     return Strategy.Stand
                 else
-                    return decided ()
+                    return! decided
             }
 
     /// <summary>
