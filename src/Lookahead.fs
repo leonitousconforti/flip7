@@ -15,7 +15,10 @@ namespace Flip7
 module public Lookahead =
     // Standing banks what the hand is worth, and a bust hand banks nothing
     let private Banked (hand: Hand) : float =
-        if Hand.IsBust hand then 0.0 else float (Hand.Score hand)
+        if Hand.IsBust hand then
+            0.0
+        else
+            hand |> Hand.Score |> float
 
     // The cards the deck could turn up, with the chance of each
     let private Chances (deck: Deck) : (Card * float) list =
@@ -30,8 +33,8 @@ module public Lookahead =
     /// <summary>
     /// What playing on is worth: the average over every card that could come,
     /// each one played out as well as it can be from there. A bust banks
-    /// nothing, and flipping seven ends the round with the bonus already in
-    /// the score.
+    /// nothing, and flipping seven ends the round with the bonus already in the
+    /// score.
     /// </summary>
     let rec public AfterHitting (depth: int) (deck: Deck) (hand: Hand) : float =
         match Chances deck with
@@ -57,7 +60,6 @@ module public Lookahead =
     /// </summary>
     and public Worth (depth: int) (deck: Deck) (hand: Hand) : float =
         let banked = Banked hand
-
         if depth <= 0 || Hand.HasFlip7Bonus hand then
             banked
         else
@@ -70,8 +72,6 @@ module public Lookahead =
     /// than it does.
     /// </summary>
     let public GainFromHitting (depth: int) (deck: Deck) (hand: Hand) : float =
-        // Seven distinct cards ends the round where it stands, so there is no
-        // draw left to price
         if Hand.HasFlip7Bonus hand then
             0.0
         else
