@@ -1,16 +1,14 @@
-// Hunts the real deck for hands where one card of sight says stand and more
-// say hit: MaximizesExpectedValue's answer is wrong and Lookahead's is right.
-// Every hand of distinct value cards (with and without the x2) is priced
-// against a fresh deck missing exactly those cards, and the sharpest
-// disagreements are broken down draw by draw to show where the extra worth
-// lives.
+// Hunts the real deck for hands where one card of sight says stand and more say
+// hit: MaximizesExpectedValue's answer is wrong and Lookahead's is right. Every
+// hand of distinct value cards (with and without the x2) is priced against a
+// fresh deck missing exactly those cards, and the sharpest disagreements are
+// broken down draw by draw to show where the extra worth lives.
 //
 //   dotnet fsi benchmark/disagree.fsx [depth]
 //
-// Beware the depth: the search has no memoization, so its cost multiplies by
-// the near-twenty distinct cards of the deck for every extra card of sight.
-// The default three prices every hand in seconds; seven does not finish even
-// a single two-card hand in ten minutes.
+// The pricing lives in Lookahead: one searcher prices every hand from the
+// moment it is constructed, and this script only asks it questions and prints
+// what it hears.
 
 // Keep in compile order with src/Flip7.fsproj
 #load "../src/ScoreBuckets.fs"
@@ -28,22 +26,21 @@ let depth =
     |> Option.map int
     |> Option.defaultValue 3
 
-let values =
-    [
-        Card.Zero
-        Card.One
-        Card.Two
-        Card.Three
-        Card.Four
-        Card.Five
-        Card.Six
-        Card.Seven
-        Card.Eight
-        Card.Nine
-        Card.Ten
-        Card.Eleven
-        Card.Twelve
-    ]
+let values = [
+    Card.Zero
+    Card.One
+    Card.Two
+    Card.Three
+    Card.Four
+    Card.Five
+    Card.Six
+    Card.Seven
+    Card.Eight
+    Card.Nine
+    Card.Ten
+    Card.Eleven
+    Card.Twelve
+]
 
 // Every hand of 2..5 distinct value cards, optionally doubled
 let hands = seq {
@@ -65,37 +62,31 @@ let hands = seq {
             yield ModifierCard Card.Double :: hand
 }
 
-// Progress on stderr, so redirected stdout stays clean: the bar remembers how
-// long the priced hands took and guesses the rest from it. The guess starts
-// pessimistic, because the two-card hands come first and carry the deepest
-// live trees
 let all = hands |> Seq.toArray
-let watch = System.Diagnostics.Stopwatch.StartNew()
 
-let progress (finished: int) =
-    let width = 40
-    let filled = finished * width / all.Length
-    let bar = String.replicate filled "#" + String.replicate (width - filled) "-"
-    let elapsed = watch.Elapsed.TotalSeconds
+// Progress on stderr, so redirected stdout stays clean
+let searcher = Lookahead(depth, all, progress = fun line -> eprintfn $"  {line}")
 
-    let remaining =
-        if finished = 0 then
-            ""
-        else
-            $", ~%.0f{elapsed / float finished * float (all.Length - finished)}s left"
+// Every hand here was given to the searcher, so an Error is a bug
+let priced (result: Result<float, LookaheadError>) : float =
+    match result with
+    | Ok worth -> worth
+    | Error error -> failwith $"%A{error}"
 
-    eprintf $"\r  [{bar}] {finished}/{all.Length} hands, %.0f{elapsed}s{remaining}"
-
-    if finished = all.Length then
-        eprintfn ""
+let gains =
+    all
+    |> Array.map (fun hand -> async {
+        let! gain = searcher.GainFromHitting hand
+        return priced gain
+    })
+    |> Async.Parallel
+    |> Async.RunSynchronously
 
 let disagreements =
-    all
-    |> Array.mapi (fun index hand ->
-        progress index
+    Array.zip all gains
+    |> Array.Parallel.map (fun (hand, deeper) ->
         let deck = hand |> List.fold Deck.Decrement Deck.Full
         let oneCard = Simulation.expectedValueOfHit deck Deck.Empty hand
-        let deeper = Lookahead.GainFromHitting depth deck hand
 
         if oneCard <= 0.0 && deeper > 0.0 then
             Some(hand, oneCard, deeper)
@@ -106,23 +97,24 @@ let disagreements =
     |> Array.sortByDescending (fun (_, _, deeper) -> deeper)
     |> Array.toList
 
-progress all.Length
-
 printfn $"{List.length disagreements} hands where one card of sight stands and {depth} hit\n"
 
 for hand, oneCard, deeper in disagreements |> List.truncate 12 do
     let shown = hand |> List.map string |> String.concat " "
     printfn $"  [{shown}] = {Hand.Score hand} points: one card %+.2f{oneCard}, {depth} cards %+.2f{deeper}"
 
-// The sharpest disagreement, opened up draw by draw: for every card that
-// could come, its chance, the hand it leaves, and what that hand is worth
-// banked against played on (one card of sight spent)
+// The sharpest disagreement, opened up draw by draw: for every card that could
+// come, its chance, the hand it leaves, and what that hand is worth banked
+// against played on (one card of sight spent)
 match disagreements with
 | [] -> printfn "no disagreements found"
 | (hand, oneCard, deeper) :: _ ->
     let deck = hand |> List.fold Deck.Decrement Deck.Full
     let shown = hand |> List.map string |> String.concat " "
     let banked = float (Hand.Score hand)
+
+    let worthAfter (card: Card) : float =
+        searcher.WorthAfter(hand, card) |> Async.RunSynchronously |> priced
 
     printfn $"\nthe sharpest: [{shown}], {Hand.Score hand} points banked"
     printfn $"  one card of sight:  %+.3f{oneCard} (stand)"
@@ -138,7 +130,7 @@ match disagreements with
         let isBust, reduced, _ = Hand.Reduce(card :: hand)
 
         let bankedThere = if isBust then 0.0 else float (Hand.Score reduced)
-        let playedOn = if isBust then 0.0 else Lookahead.Worth (depth - 1) (Deck.Decrement deck card) reduced
+        let playedOn = if isBust then 0.0 else worthAfter card
 
         card, chance, isBust, bankedThere, playedOn
     )
@@ -172,12 +164,9 @@ match disagreements with
         |> Map.toList
         |> List.sumBy (fun (card, count) ->
             let chance = float count / total
-            let isBust, reduced, _ = Hand.Reduce(card :: hand)
+            let isBust, _, _ = Hand.Reduce(card :: hand)
 
-            if isBust then
-                0.0
-            else
-                chance * Lookahead.Worth (depth - 1) (Deck.Decrement deck card) reduced
+            if isBust then 0.0 else chance * worthAfter card
         )
 
     printfn $"\n  hit and bank whatever comes: %.3f{mev} vs {banked} banked now"
