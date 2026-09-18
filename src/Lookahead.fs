@@ -3,7 +3,7 @@ namespace Flip7
 open System.Collections.Generic
 
 /// <summary>
-/// The ways a question can miss a searcher's table: a hand no deck could ever
+/// The ways a question can miss a searcher's table: a hand its deck could never
 /// have dealt, a hand the searcher was not given at construction, or a card the
 /// deck has no copies of left to turn up.
 /// </summary>
@@ -50,21 +50,35 @@ module private Word =
         cards |> Array.map (fun (card, _) -> int card.Value.ModifierPoints)
     let doubleIndex = indexOf[ModifierCard Card.Double]
     let secondChanceIndex = indexOf[ActionCard Card.SecondChance]
-    let deckSize = Array.sum fullCounts
+
+    // The deck a search draws from: a count per card in word order, and the
+    // total. Any deck within the full one packs the same way; one that outgrows
+    // it does not fit the words
+    type Universe = { Counts: int[]; Size: int }
+
+    let universeOf (deck: Deck) : Universe option =
+        let counts =
+            cards
+            |> Array.map (fun (card, _) -> deck |> Map.tryFind card |> Option.defaultValue 0u |> int)
+
+        if Array.forall2 (<=) counts fullCounts then
+            Some { Counts = counts; Size = Array.sum counts }
+        else
+            None
 
     let missingOf (state: uint64) (index: int) : int =
         int ((state >>> offsets[index]) &&& masks[index])
 
     let drawn (state: uint64) (index: int) : uint64 = state + deltas[index]
 
-    // A hand fits a word only when the full deck holds every copy it claims
-    let tryEncode (hand: Hand) : uint64 option =
+    // A hand fits a word only when its universe holds every copy it claims
+    let tryEncode (universe: Universe) (hand: Hand) : uint64 option =
         (Some 0UL, hand)
         ||> List.fold (fun state card ->
             let index = indexOf[card]
 
             state
-            |> Option.filter (fun state -> missingOf state index < fullCounts[index])
+            |> Option.filter (fun state -> missingOf state index < universe.Counts[index])
             |> Option.map (fun state -> drawn state index)
         )
 
@@ -75,7 +89,7 @@ module private Word =
     // modifiers and the flip7 bonus on top, exactly as Hand.Score counts), the
     // distinct values held, the second chances left after cancelling dups, and
     // how many cards the deck still holds
-    let facts (state: uint64) : struct (float * int * int * int) =
+    let facts (universe: Universe) (state: uint64) : struct (float * int * int * int) =
         let mutable points = 0
         let mutable modifiers = 0
         let mutable distinct = 0
@@ -96,20 +110,20 @@ module private Word =
         let bonus = if distinct >= 7 then 15 else 0
         let banked = float (points * multiplier + modifiers + bonus)
         let spare = missingOf state secondChanceIndex - dups
-        struct (banked, distinct, spare, deckSize - missing)
+        struct (banked, distinct, spare, universe.Size - missing)
 
     // Which draws a state lives through, one bit per card: a card with copies
     // left that is new to the hand or covered by a spare second chance. A hand
     // that has flipped seven has stopped drawing and lives through nothing
-    let liveMask (state: uint64) : uint32 =
-        let struct (_, distinct, spare, _) = facts state
+    let liveMask (universe: Universe) (state: uint64) : uint32 =
+        let struct (_, distinct, spare, _) = facts universe state
         let mutable mask = 0u
 
         if distinct < 7 then
             for index in 0 .. cards.Length - 1 do
                 let m = missingOf state index
 
-                if m < fullCounts[index] && (spare > 0 || not (isValue[index] && m > 0)) then
+                if m < universe.Counts[index] && (spare > 0 || not (isValue[index] && m > 0)) then
                     mask <- mask ||| (1u <<< index)
 
         mask
@@ -120,11 +134,16 @@ module private Word =
     // produces the next generation already sorted: no hashing, and no memory
     // beyond the output itself. The output key space is split at sampled
     // quantiles so the partitions can merge in parallel
-    let expand (token: System.Threading.CancellationToken) (frontier: uint64[]) : uint64[] =
+    let expand (token: System.Threading.CancellationToken) (universe: Universe) (frontier: uint64[]) : uint64[] =
         let options = System.Threading.Tasks.ParallelOptions(CancellationToken = token)
         let live = Array.zeroCreate frontier.Length
 
-        System.Threading.Tasks.Parallel.For(0, frontier.Length, options, (fun at -> live[at] <- liveMask frontier[at]))
+        System.Threading.Tasks.Parallel.For(
+            0,
+            frontier.Length,
+            options,
+            (fun at -> live[at] <- liveMask universe frontier[at])
+        )
         |> ignore
 
         // Sampled children, for boundaries that balance the partitions
@@ -250,6 +269,7 @@ module private Word =
     // What playing on is worth against the next generation's worths: the
     // average over every card that could come, a bust worth nothing
     let afterHitting
+        (universe: Universe)
         (nextStates: uint64[])
         (nextWorths: float[])
         (state: uint64)
@@ -260,7 +280,7 @@ module private Word =
 
         for index in 0 .. cards.Length - 1 do
             let m = missingOf state index
-            let count = fullCounts[index] - m
+            let count = universe.Counts[index] - m
 
             if count > 0 && (spare > 0 || not (isValue[index] && m > 0)) then
                 let child = System.Array.BinarySearch(nextStates, drawn state index)
@@ -271,16 +291,16 @@ module private Word =
     // What a state is worth held: the better of banking now and playing on. A
     // hand that has flipped seven banks whatever the sight, because the round
     // ends there
-    let worthOf (nextStates: uint64[]) (nextWorths: float[]) (state: uint64) : float =
-        let struct (banked, distinct, spare, remaining) = facts state
+    let worthOf (universe: Universe) (nextStates: uint64[]) (nextWorths: float[]) (state: uint64) : float =
+        let struct (banked, distinct, spare, remaining) = facts universe state
 
         if distinct >= 7 then
             banked
         else
-            max banked (afterHitting nextStates nextWorths state spare remaining)
+            max banked (afterHitting universe nextStates nextWorths state spare remaining)
 
-    let bankedOf (state: uint64) : float =
-        let struct (banked, _, _, _) = facts state
+    let bankedOf (universe: Universe) (state: uint64) : float =
+        let struct (banked, _, _, _) = facts universe state
         banked
 
 /// <summary>
@@ -291,15 +311,17 @@ module private Word =
 /// nothing here needs a threshold to decide whether it has seen enough.
 ///
 /// A searcher prices every hand it is given at construction, depth cards of
-/// sight each, against a fresh deck missing exactly that hand. The work starts
-/// on the thread pool the moment the searcher is made and runs bottom up: a
-/// forward sweep collects every state reachable within the depth, one
-/// generation a draw deeper than the last, and a backward pass prices each
-/// generation against the one after it. No generation is kept for later: the
-/// backward pass re-sweeps forward to each level it descends to, keeping the
-/// one just before its target so every other descent costs nothing, and never
-/// holds more than a rolling pair of generations. The members await the table,
-/// so they may be called before it is done.
+/// sight each, against its deck missing exactly that hand - the full deck
+/// unless one is given, so a mid-game hand is priced by handing over the
+/// drawable cards plus the hand itself. The work starts on the thread pool the
+/// moment the searcher is made and runs bottom up: a forward sweep collects
+/// every state reachable within the depth, one generation a draw deeper than
+/// the last, and a backward pass prices each generation against the one after
+/// it. No generation is kept for later: the backward pass re-sweeps forward to
+/// each level it descends to, keeping the one just before its target so every
+/// other descent costs nothing, and never holds more than a rolling pair of
+/// generations. The members await the table, so they may be called before it is
+/// done.
 ///
 /// The searcher answers only for the hands it was given: a state is named by
 /// what the full deck is missing, and the missing cards name the hand they
@@ -310,11 +332,22 @@ module private Word =
 /// the usual OperationCanceledException.
 /// </summary>
 type public Lookahead
-    (depth: int, hands: Hand seq, ?progress: string -> unit, ?cancellation: System.Threading.CancellationToken)
+    (
+        depth: int,
+        hands: Hand seq,
+        ?deck: Deck,
+        ?progress: string -> unit,
+        ?cancellation: System.Threading.CancellationToken
+    )
     =
     do
         if depth < 1 then
             invalidArg (nameof depth) "the search needs at least one card of sight"
+
+    let universe =
+        match Word.universeOf (defaultArg deck Deck.Full) with
+        | Some universe -> universe
+        | None -> invalidArg (nameof deck) "the deck holds more copies of a card than the full deck ever had"
 
     let report = defaultArg progress ignore
 
@@ -333,9 +366,9 @@ type public Lookahead
             if Hand.IsBust hand then
                 invalidArg (nameof hands) $"[{Word.shown hand}] is already bust"
 
-            match Word.tryEncode hand with
+            match Word.tryEncode universe hand with
             | Some state -> state
-            | None -> invalidArg (nameof hands) $"[{Word.shown hand}] holds more copies than the full deck"
+            | None -> invalidArg (nameof hands) $"[{Word.shown hand}] holds more copies than its deck"
         )
         |> Seq.toArray
 
@@ -343,12 +376,6 @@ type public Lookahead
     let table =
         async {
             let watch = System.Diagnostics.Stopwatch.StartNew()
-
-            // The managed heap right now: the search's memory is its arrays,
-            // and asking costs nothing next to pricing a generation
-            let heap () =
-                let bytesPerMegabyte = 1024.0 * 1024.0
-                $"%.0f{float (System.GC.GetTotalMemory false) / bytesPerMegabyte}MB"
 
             // The sweep needs its generations sorted, and the hands arrive in
             // whatever order the caller grew them
@@ -364,9 +391,8 @@ type public Lookahead
 
                 for step in 1..level do
                     previous <- current
-                    current <- Word.expand token current
-                    report
-                        $"sweep {step}/{level}: {current.Length} states, {heap ()}, %.0f{watch.Elapsed.TotalSeconds}s"
+                    current <- Word.expand token universe current
+                    report $"sweep {step}/{level}: {current.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
 
                 previous, current
 
@@ -389,9 +415,9 @@ type public Lookahead
             let penultimate, deepest = sweepTo depth
             let mutable held = Some penultimate
             let mutable aboveStates = deepest
-            let mutable aboveWorths = deepest |> priceBy Word.bankedOf
+            let mutable aboveWorths = deepest |> priceBy (Word.bankedOf universe)
 
-            report $"price {depth}/{depth}: {deepest.Length} states, {heap ()}, %.0f{watch.Elapsed.TotalSeconds}s"
+            report $"price {depth}/{depth}: {deepest.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
 
             for level in depth - 1 .. -1 .. 1 do
                 let states =
@@ -406,10 +432,10 @@ type public Lookahead
 
                 let nextStates = aboveStates
                 let nextWorths = aboveWorths
-                let worths = states |> priceBy (Word.worthOf nextStates nextWorths)
+                let worths = states |> priceBy (Word.worthOf universe nextStates nextWorths)
                 aboveStates <- states
                 aboveWorths <- worths
-                report $"price {level}/{depth}: {states.Length} states, {heap ()}, %.0f{watch.Elapsed.TotalSeconds}s"
+                report $"price {level}/{depth}: {states.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
 
             // The generation one draw in stays alive: the hands are priced
             // against it, and the draw-by-draw questions read from it too
@@ -417,13 +443,14 @@ type public Lookahead
             let gains = Dictionary<uint64, float>()
 
             for state in roots do
-                let struct (banked, distinct, spare, remaining) = Word.facts state
+                let struct (banked, distinct, spare, remaining) = Word.facts universe state
 
                 gains[state] <-
                     if distinct >= 7 then
                         0.0
                     else
-                        Word.afterHitting childStates childWorths state spare remaining - banked
+                        Word.afterHitting universe childStates childWorths state spare remaining
+                        - banked
 
             return gains, childStates, childWorths
         }
@@ -437,7 +464,7 @@ type public Lookahead
     member _.GainFromHitting(hand: Hand) : Async<Result<float, LookaheadError>> = async {
         let! gains, _, _ = Async.AwaitTask table
 
-        match Word.tryEncode hand with
+        match Word.tryEncode universe hand with
         | None -> return Error(ImpossibleHand hand)
         | Some state ->
             match gains.TryGetValue state with
@@ -454,17 +481,17 @@ type public Lookahead
     member _.WorthAfter(hand: Hand, card: Card) : Async<Result<float, LookaheadError>> = async {
         let! gains, childStates, childWorths = Async.AwaitTask table
 
-        match Word.tryEncode hand with
+        match Word.tryEncode universe hand with
         | None -> return Error(ImpossibleHand hand)
         | Some state when not (gains.ContainsKey state) -> return Error(UnpricedHand hand)
         | Some state ->
             let index = Word.indexOf[card]
             let m = Word.missingOf state index
 
-            if m >= Word.fullCounts[index] then
+            if m >= universe.Counts[index] then
                 return Error(NoCopiesLeft card)
             else
-                let struct (_, _, spare, _) = Word.facts state
+                let struct (_, _, spare, _) = Word.facts universe state
 
                 if Word.isValue[index] && m > 0 && spare <= 0 then
                     return Ok 0.0 // the draw busts, and a bust banks nothing
