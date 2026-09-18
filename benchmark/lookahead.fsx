@@ -4,7 +4,7 @@
 // fresh deck missing exactly those cards, and the sharpest disagreements are
 // broken down draw by draw to show where the extra worth lives.
 //
-//   dotnet fsi benchmark/disagree.fsx [depth]
+//   dotnet fsi benchmark/lookahead.fsx [depth]
 //
 // The pricing lives in Lookahead: one searcher prices every hand from the
 // moment it is constructed, and this script only asks it questions and prints
@@ -55,7 +55,7 @@ let hands = seq {
             yield! choose count tail
     }
 
-    for size in 2..5 do
+    for size in 1..6 do
         for combination in choose size values do
             let hand = combination |> List.map ValueCard
             yield hand

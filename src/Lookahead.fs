@@ -37,6 +37,7 @@ module private Word =
 
     let offsets = Array.scan (+) 0 widths |> Array.take cards.Length
     let masks = widths |> Array.map (fun width -> (1UL <<< width) - 1UL)
+    let deltas = offsets |> Array.map (fun offset -> 1UL <<< offset)
 
     do
         if Array.sum widths > 64 then
@@ -54,7 +55,7 @@ module private Word =
     let missingOf (state: uint64) (index: int) : int =
         int ((state >>> offsets[index]) &&& masks[index])
 
-    let drawn (state: uint64) (index: int) : uint64 = state + (1UL <<< offsets[index])
+    let drawn (state: uint64) (index: int) : uint64 = state + deltas[index]
 
     // A hand fits a word only when the full deck holds every copy it claims
     let tryEncode (hand: Hand) : uint64 option =
@@ -97,27 +98,143 @@ module private Word =
         let spare = missingOf state secondChanceIndex - dups
         struct (banked, distinct, spare, deckSize - missing)
 
-    // The forward sweep: the states one draw deeper than a generation. A draw
-    // is live when the card is new to the hand or a second chance remains to
-    // cancel it, and a hand that has flipped seven stops drawing
+    // Which draws a state lives through, one bit per card: a card with copies
+    // left that is new to the hand or covered by a spare second chance. A hand
+    // that has flipped seven has stopped drawing and lives through nothing
+    let liveMask (state: uint64) : uint32 =
+        let struct (_, distinct, spare, _) = facts state
+        let mutable mask = 0u
+
+        if distinct < 7 then
+            for index in 0 .. cards.Length - 1 do
+                let m = missingOf state index
+
+                if m < fullCounts[index] && (spare > 0 || not (isValue[index] && m > 0)) then
+                    mask <- mask ||| (1u <<< index)
+
+        mask
+
+    // The forward sweep: the states one draw deeper than a generation. Adding a
+    // card's delta to every state of a sorted generation keeps it sorted, so
+    // the children arrive as twenty-one sorted streams and one merge with dedup
+    // produces the next generation already sorted: no hashing, and no memory
+    // beyond the output itself. The output key space is split at sampled
+    // quantiles so the partitions can merge in parallel
     let expand (frontier: uint64[]) : uint64[] =
-        let next = System.Collections.Concurrent.ConcurrentDictionary<uint64, byte>()
+        let live = frontier |> Array.Parallel.map liveMask
 
-        frontier
-        |> Array.Parallel.iter (fun state ->
-            let struct (_, distinct, spare, _) = facts state
+        // Sampled children, for boundaries that balance the partitions
+        let sample = ResizeArray<uint64>()
+        let stride = max 1 (frontier.Length / 1024)
 
-            if distinct < 7 then
+        for at in 0..stride .. frontier.Length - 1 do
+            for index in 0 .. cards.Length - 1 do
+                if live[at] &&& (1u <<< index) <> 0u then
+                    sample.Add(frontier[at] + deltas[index])
+
+        sample.Sort()
+
+        let partitions =
+            if sample.Count < 64 then
+                1
+            else
+                min (System.Environment.ProcessorCount * 4) (sample.Count / 16)
+
+        let bounds =
+            Array.init
+                (partitions + 1)
+                (fun partition ->
+                    if partition = 0 then 0UL
+                    elif partition = partitions then System.UInt64.MaxValue
+                    else sample[partition * sample.Count / partitions]
+                )
+
+        let lowerBound (value: uint64) : int =
+            let found = System.Array.BinarySearch(frontier, value)
+            if found >= 0 then found else ~~~found
+
+        let buffers = Array.init partitions (fun _ -> ResizeArray<uint64>())
+
+        System.Threading.Tasks.Parallel.For(
+            0,
+            partitions,
+            fun partition ->
+                let low = bounds[partition]
+                let high = bounds[partition + 1]
+
+                // One cursor per card, walking the parents whose child for that
+                // card lands inside this partition's slice of key space
+                let position = Array.zeroCreate cards.Length
+                let finish = Array.zeroCreate cards.Length
+                let current = Array.create cards.Length System.UInt64.MaxValue
+
                 for index in 0 .. cards.Length - 1 do
-                    let m = missingOf state index
+                    let delta = deltas[index]
+                    let bit = 1u <<< index
+                    let finishAt = if delta >= high then 0 else lowerBound (high - delta)
 
-                    if m < fullCounts[index] && (spare > 0 || not (isValue[index] && m > 0)) then
-                        next.TryAdd(drawn state index, 0uy) |> ignore
+                    let mutable at =
+                        if delta >= low then
+                            0
+                        else
+                            min finishAt (lowerBound (low - delta))
+
+                    while at < finishAt && live[at] &&& bit = 0u do
+                        at <- at + 1
+
+                    position[index] <- at
+                    finish[index] <- finishAt
+
+                    current[index] <-
+                        if at < finishAt then
+                            frontier[at] + delta
+                        else
+                            System.UInt64.MaxValue
+
+                // The merge: emit the smallest child not yet emitted, advance
+                // its cursor to the next parent that lives through the card
+                let output = buffers[partition]
+                let mutable emitted = System.UInt64.MaxValue
+                let mutable draining = true
+
+                while draining do
+                    let mutable best = 0
+
+                    for index in 1 .. cards.Length - 1 do
+                        if current[index] < current[best] then
+                            best <- index
+
+                    if current[best] = System.UInt64.MaxValue then
+                        draining <- false
+                    else
+                        if current[best] <> emitted then
+                            emitted <- current[best]
+                            output.Add emitted
+
+                        let bit = 1u <<< best
+                        let finishAt = finish[best]
+                        let mutable at = position[best] + 1
+
+                        while at < finishAt && live[at] &&& bit = 0u do
+                            at <- at + 1
+
+                        position[best] <- at
+
+                        current[best] <-
+                            if at < finishAt then
+                                frontier[at] + deltas[best]
+                            else
+                                System.UInt64.MaxValue
         )
+        |> ignore
 
-        let states = Array.zeroCreate next.Count
-        next.Keys.CopyTo(states, 0)
-        Array.sortInPlace states
+        let states = Array.zeroCreate (buffers |> Array.sumBy (fun buffer -> buffer.Count))
+        let mutable at = 0
+
+        for buffer in buffers do
+            buffer.CopyTo(states, at)
+            at <- at + buffer.Count
+
         states
 
     // What playing on is worth against the next generation's worths: the
@@ -168,9 +285,11 @@ module private Word =
 /// on the thread pool the moment the searcher is made and runs bottom up: a
 /// forward sweep collects every state reachable within the depth, one
 /// generation a draw deeper than the last, and a backward pass prices each
-/// generation against the one after it, letting the deeper go as soon as it has
-/// served, so no more than two generations of worths are ever held. The members
-/// await the table, so they may be called before it is done.
+/// generation against the one after it. No generation is kept for later: the
+/// backward pass re-sweeps forward to each level it descends to, keeping the
+/// one just before its target so every other descent costs nothing, and never
+/// holds more than a rolling pair of generations. The members await the table,
+/// so they may be called before it is done.
 ///
 /// The searcher answers only for the hands it was given: a state is named by
 /// what the full deck is missing, and the missing cards name the hand they
@@ -200,32 +319,55 @@ type public Lookahead(depth: int, hands: Hand seq, ?progress: string -> unit) =
         async {
             let watch = System.Diagnostics.Stopwatch.StartNew()
 
-            // frontiers[k] holds every state reachable in exactly k draws
-            let frontiers: uint64[][] = Array.zeroCreate (depth + 1)
-            frontiers[0] <- Array.distinct roots
+            // The sweep needs its generations sorted, and the hands arrive in
+            // whatever order the caller grew them
+            let start = Array.sort (Array.distinct roots)
 
-            for level in 1..depth do
-                frontiers[level] <- Word.expand frontiers[level - 1]
-                report $"sweep {level}/{depth}: {frontiers[level].Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
+            // Sweep from the hands to a generation, returning it and the one
+            // just before it. Nothing else survives the sweep: the backward
+            // pass re-sweeps as it descends, trading a little repeated sweeping
+            // for never holding more than a rolling pair
+            let sweepTo (level: int) : uint64[] * uint64[] =
+                let mutable previous = [||]
+                let mutable current = start
+
+                for step in 1..level do
+                    previous <- current
+                    current <- Word.expand current
+                    report $"sweep {step}/{level}: {current.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
+
+                previous, current
 
             // The backward pass: the deepest generation banks - its sight is
             // spent - and each earlier one is priced against the one after it
-            let mutable above =
-                frontiers[depth], frontiers[depth] |> Array.Parallel.map Word.bankedOf
+            let penultimate, deepest = sweepTo depth
+            let mutable held = Some penultimate
+            let mutable aboveStates = deepest
+            let mutable aboveWorths = deepest |> Array.Parallel.map Word.bankedOf
 
-            report $"price {depth}/{depth}: {frontiers[depth].Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
+            report $"price {depth}/{depth}: {deepest.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
 
             for level in depth - 1 .. -1 .. 1 do
-                let nextStates, nextWorths = above
-                let states = frontiers[level]
+                let states =
+                    match held with
+                    | Some states ->
+                        held <- None
+                        states
+                    | None ->
+                        let previous, states = sweepTo level
+                        held <- Some previous
+                        states
+
+                let nextStates = aboveStates
+                let nextWorths = aboveWorths
                 let worths = states |> Array.Parallel.map (Word.worthOf nextStates nextWorths)
-                frontiers[level + 1] <- [||]
-                above <- states, worths
+                aboveStates <- states
+                aboveWorths <- worths
                 report $"price {level}/{depth}: {states.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
 
             // The generation one draw in stays alive: the hands are priced
             // against it, and the draw-by-draw questions read from it too
-            let childStates, childWorths = above
+            let childStates, childWorths = aboveStates, aboveWorths
             let gains = Dictionary<uint64, float>()
 
             for state in roots do
