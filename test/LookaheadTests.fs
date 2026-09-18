@@ -90,6 +90,32 @@ let ``A draw that busts is worth nothing played on`` () =
     )
 
 [<Fact>]
+let ``A mid-game deck asks the same question expected value answers`` () =
+    let hand = [ ValueCard Card.Seven; ValueCard Card.Ten ]
+
+    // A live drawable deck: the hand is out of it, and so is a spread of
+    // cards held by other players or discarded
+    let elsewhere = [
+        ValueCard Card.Twelve
+        ValueCard Card.Twelve
+        ValueCard Card.Eleven
+        ValueCard Card.Nine
+        ValueCard Card.Five
+        ValueCard Card.Two
+        ActionCard Card.Freeze
+        ActionCard Card.SecondChance
+        ModifierCard Card.Plus10
+    ]
+
+    let drawable = List.fold Deck.Decrement Deck.Full (hand @ elsewhere)
+    let dealtFrom = hand |> List.fold Deck.Increment drawable
+
+    use searcher = new Lookahead(1, [ hand ], deck = dealtFrom)
+    let gain = searcher.GainFromHitting hand |> Async.RunSynchronously |> priced
+
+    Assert.Equal(Simulation.expectedValueOfHit drawable Deck.Empty hand, gain, 10)
+
+[<Fact>]
 let ``A hand that cannot survive a card is worth standing on`` () =
     // Dealt from a deck of one One and two Twos, this hand leaves a single
     // drawable card, and it always busts: hitting throws the hand away
