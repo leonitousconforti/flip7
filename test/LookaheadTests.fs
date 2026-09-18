@@ -20,7 +20,7 @@ let ``One card of sight is exactly what expected value already sees`` () =
         [ ActionCard Card.SecondChance; ValueCard Card.Seven ]
     ]
 
-    let searcher = Lookahead(1, hands)
+    use searcher = new Lookahead(1, hands)
 
     for hand in hands do
         let deck = hand |> List.fold Deck.Decrement Deck.Full
@@ -34,9 +34,8 @@ let ``Sight is worth something, and a hand already past seven is worth banking``
     let byDepth =
         [ 1..4 ]
         |> List.map (fun depth ->
-            Lookahead(depth, [ hand ]).GainFromHitting hand
-            |> Async.RunSynchronously
-            |> priced
+            use searcher = new Lookahead(depth, [ hand ])
+            searcher.GainFromHitting hand |> Async.RunSynchronously |> priced
         )
 
     // Seeing further can only find more worth in a hand that may be played on,
@@ -49,17 +48,14 @@ let ``Sight is worth something, and a hand already past seven is worth banking``
         [ Card.One; Card.Two; Card.Three; Card.Four; Card.Five; Card.Six; Card.Seven ]
         |> List.map ValueCard
 
-    let gain =
-        Lookahead(3, [ flipped ]).GainFromHitting flipped
-        |> Async.RunSynchronously
-        |> priced
-
+    use searcher = new Lookahead(3, [ flipped ])
+    let gain = searcher.GainFromHitting flipped |> Async.RunSynchronously |> priced
     Assert.Equal(0.0, gain)
 
 [<Fact>]
 let ``The searcher only answers for the hands it was given`` () =
     let hand = [ ValueCard Card.One; ValueCard Card.Two ]
-    let searcher = Lookahead(2, [ hand ])
+    use searcher = new Lookahead(2, [ hand ])
 
     Assert.True(searcher.GainFromHitting hand |> Async.RunSynchronously |> Result.isOk)
 
@@ -79,7 +75,7 @@ let ``The searcher only answers for the hands it was given`` () =
 [<Fact>]
 let ``A draw that busts is worth nothing played on`` () =
     let hand = [ ValueCard Card.One; ValueCard Card.Two ]
-    let searcher = Lookahead(2, [ hand ])
+    use searcher = new Lookahead(2, [ hand ])
 
     // The deck still holds a second Two, and drawing it busts a hand with no
     // second chance; the only One is already in the hand, so it cannot come
@@ -92,3 +88,19 @@ let ``A draw that busts is worth nothing played on`` () =
         Error(NoCopiesLeft(ValueCard Card.One)),
         searcher.WorthAfter(hand, ValueCard Card.One) |> Async.RunSynchronously
     )
+
+[<Fact>]
+let ``A cancelled searcher stops answering`` () =
+    let hand = [ ValueCard Card.Five ]
+
+    // A token already cancelled means the table never prices at all, so the
+    // outcome does not race the (fast) search
+    use source = new System.Threading.CancellationTokenSource()
+    source.Cancel()
+
+    use searcher = new Lookahead(3, [ hand ], cancellation = source.Token)
+
+    Assert.ThrowsAny<System.OperationCanceledException>(fun () ->
+        searcher.GainFromHitting hand |> Async.RunSynchronously |> ignore
+    )
+    |> ignore

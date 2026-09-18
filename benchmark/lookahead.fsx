@@ -1,8 +1,8 @@
 // Hunts the real deck for hands where one card of sight says stand and more say
 // hit: MaximizesExpectedValue's answer is wrong and Lookahead's is right. Every
-// hand of distinct value cards (with and without the x2) is priced against a
-// fresh deck missing exactly those cards, and the sharpest disagreements are
-// broken down draw by draw to show where the extra worth lives.
+// legal hand of one to six cards is priced against a fresh deck missing exactly
+// those cards, and the sharpest disagreements are broken down draw by draw to
+// show where the extra worth lives.
 //
 //   dotnet fsi benchmark/lookahead.fsx [depth]
 //
@@ -26,46 +26,40 @@ let depth =
     |> Option.map int
     |> Option.defaultValue 3
 
-let values = [
-    Card.Zero
-    Card.One
-    Card.Two
-    Card.Three
-    Card.Four
-    Card.Five
-    Card.Six
-    Card.Seven
-    Card.Eight
-    Card.Nine
-    Card.Ten
-    Card.Eleven
-    Card.Twelve
-]
-
-// Every hand of 2..5 distinct value cards, optionally doubled
+// Every legal hand of 1..6 cards: a dup and the second chance covering it
+// cancel the moment they meet, so a lasting hand holds each value at most once,
+// each modifier at most once, and up to the deck's three of each action
 let hands = seq {
-    let rec choose (count: int) (from: Card.ValueCard list) : Card.ValueCard list seq = seq {
-        match count, from with
+    let limits =
+        Deck.Full
+        |> Map.toList
+        |> List.map (fun (card, count) -> card, if card.IsValueCard then 1 else int count)
+
+    let rec choose (size: int) (from: (Card * int) list) : Hand seq = seq {
+        match size, from with
         | 0, _ -> yield []
         | _, [] -> ()
-        | count, head :: tail ->
-            for rest in choose (count - 1) tail do
-                yield head :: rest
-
-            yield! choose count tail
+        | size, (card, limit) :: rest ->
+            for copies in min size limit .. -1 .. 0 do
+                for tail in choose (size - copies) rest do
+                    yield List.replicate copies card @ tail
     }
 
     for size in 1..6 do
-        for combination in choose size values do
-            let hand = combination |> List.map ValueCard
-            yield hand
-            yield ModifierCard Card.Double :: hand
+        yield! choose size limits
 }
 
 let all = hands |> Seq.toArray
 
+let canceller = new System.Threading.CancellationTokenSource()
+System.Console.CancelKeyPress.Add(fun press ->
+    press.Cancel <- true
+    canceller.Cancel()
+)
+
 // Progress on stderr, so redirected stdout stays clean
-let searcher = Lookahead(depth, all, progress = fun line -> eprintfn $"  {line}")
+let searcher =
+    new Lookahead(depth, all, progress = (fun line -> eprintfn $"  {line}"), cancellation = canceller.Token)
 
 // Every hand here was given to the searcher, so an Error is a bug
 let priced (result: Result<float, LookaheadError>) : float =
@@ -74,13 +68,17 @@ let priced (result: Result<float, LookaheadError>) : float =
     | Error error -> failwith $"%A{error}"
 
 let gains =
-    all
-    |> Array.map (fun hand -> async {
-        let! gain = searcher.GainFromHitting hand
-        return priced gain
-    })
-    |> Async.Parallel
-    |> Async.RunSynchronously
+    try
+        all
+        |> Array.map (fun hand -> async {
+            let! gain = searcher.GainFromHitting hand
+            return priced gain
+        })
+        |> Async.Parallel
+        |> fun work -> Async.RunSynchronously(work, cancellationToken = canceller.Token)
+    with _ when canceller.IsCancellationRequested ->
+        eprintfn "  cancelled"
+        exit 130
 
 let disagreements =
     Array.zip all gains

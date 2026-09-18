@@ -120,8 +120,12 @@ module private Word =
     // produces the next generation already sorted: no hashing, and no memory
     // beyond the output itself. The output key space is split at sampled
     // quantiles so the partitions can merge in parallel
-    let expand (frontier: uint64[]) : uint64[] =
-        let live = frontier |> Array.Parallel.map liveMask
+    let expand (token: System.Threading.CancellationToken) (frontier: uint64[]) : uint64[] =
+        let options = System.Threading.Tasks.ParallelOptions(CancellationToken = token)
+        let live = Array.zeroCreate frontier.Length
+
+        System.Threading.Tasks.Parallel.For(0, frontier.Length, options, (fun at -> live[at] <- liveMask frontier[at]))
+        |> ignore
 
         // Sampled children, for boundaries that balance the partitions
         let sample = ResizeArray<uint64>()
@@ -158,6 +162,7 @@ module private Word =
         System.Threading.Tasks.Parallel.For(
             0,
             partitions,
+            options,
             fun partition ->
                 let low = bounds[partition]
                 let high = bounds[partition + 1]
@@ -210,6 +215,11 @@ module private Word =
                         if current[best] <> emitted then
                             emitted <- current[best]
                             output.Add emitted
+
+                            // A partition can drain for a long while, and the
+                            // options only guard between partitions
+                            if output.Count &&& 0xFFFF = 0 then
+                                token.ThrowIfCancellationRequested()
 
                         let bit = 1u <<< best
                         let finishAt = finish[best]
@@ -294,13 +304,28 @@ module private Word =
 /// The searcher answers only for the hands it was given: a state is named by
 /// what the full deck is missing, and the missing cards name the hand they
 /// built, so a hand it never swept from is a question it never priced.
+///
+/// Disposing the searcher cancels whatever work remains, as does the
+/// cancellation token it may be given; members awaiting a cancelled table raise
+/// the usual OperationCanceledException.
 /// </summary>
-type public Lookahead(depth: int, hands: Hand seq, ?progress: string -> unit) =
+type public Lookahead
+    (depth: int, hands: Hand seq, ?progress: string -> unit, ?cancellation: System.Threading.CancellationToken)
+    =
     do
         if depth < 1 then
             invalidArg (nameof depth) "the search needs at least one card of sight"
 
     let report = defaultArg progress ignore
+
+    let canceller =
+        match cancellation with
+        | Some token -> System.Threading.CancellationTokenSource.CreateLinkedTokenSource token
+        | None -> new System.Threading.CancellationTokenSource()
+
+    let token = canceller.Token
+    let options = System.Threading.Tasks.ParallelOptions(CancellationToken = token)
+    let mutable disposed = false
 
     let roots =
         hands
@@ -333,17 +358,31 @@ type public Lookahead(depth: int, hands: Hand seq, ?progress: string -> unit) =
 
                 for step in 1..level do
                     previous <- current
-                    current <- Word.expand current
+                    current <- Word.expand token current
                     report $"sweep {step}/{level}: {current.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
 
                 previous, current
+
+            // Price a generation in parallel, under the cancellation token
+            let priceBy (price: uint64 -> float) (states: uint64[]) : float[] =
+                let worths = Array.zeroCreate states.Length
+
+                System.Threading.Tasks.Parallel.For(
+                    0,
+                    states.Length,
+                    options,
+                    (fun at -> worths[at] <- price states[at])
+                )
+                |> ignore
+
+                worths
 
             // The backward pass: the deepest generation banks - its sight is
             // spent - and each earlier one is priced against the one after it
             let penultimate, deepest = sweepTo depth
             let mutable held = Some penultimate
             let mutable aboveStates = deepest
-            let mutable aboveWorths = deepest |> Array.Parallel.map Word.bankedOf
+            let mutable aboveWorths = deepest |> priceBy Word.bankedOf
 
             report $"price {depth}/{depth}: {deepest.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
 
@@ -360,7 +399,7 @@ type public Lookahead(depth: int, hands: Hand seq, ?progress: string -> unit) =
 
                 let nextStates = aboveStates
                 let nextWorths = aboveWorths
-                let worths = states |> Array.Parallel.map (Word.worthOf nextStates nextWorths)
+                let worths = states |> priceBy (Word.worthOf nextStates nextWorths)
                 aboveStates <- states
                 aboveWorths <- worths
                 report $"price {level}/{depth}: {states.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
@@ -381,7 +420,7 @@ type public Lookahead(depth: int, hands: Hand seq, ?progress: string -> unit) =
 
             return gains, childStates, childWorths
         }
-        |> Async.StartAsTask
+        |> fun work -> Async.StartAsTask(work, cancellationToken = token)
 
     /// <summary>
     /// What hitting is worth over standing, in points of expected round score,
@@ -426,3 +465,10 @@ type public Lookahead(depth: int, hands: Hand seq, ?progress: string -> unit) =
                     let child = System.Array.BinarySearch(childStates, Word.drawn state index)
                     return Ok childWorths[child]
     }
+
+    interface System.IDisposable with
+        member _.Dispose() =
+            if not disposed then
+                disposed <- true
+                canceller.Cancel()
+                canceller.Dispose()
