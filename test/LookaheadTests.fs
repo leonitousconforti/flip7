@@ -90,6 +90,22 @@ let ``A draw that busts is worth nothing played on`` () =
     )
 
 [<Fact>]
+let ``A hand that cannot survive a card is worth standing on`` () =
+    // Dealt from a deck of one One and two Twos, this hand leaves a single
+    // drawable card, and it always busts: hitting throws the hand away
+    let hand = [ ValueCard Card.One; ValueCard Card.Two ]
+
+    let dealtFrom =
+        Deck.Empty
+        |> fun deck -> Deck.Increment deck (ValueCard Card.One)
+        |> fun deck -> Deck.Increment deck (ValueCard Card.Two)
+        |> fun deck -> Deck.Increment deck (ValueCard Card.Two)
+
+    use searcher = new Lookahead(3, [ hand ], deck = dealtFrom)
+
+    Assert.Equal<Result<float, LookaheadError>>(Ok(-3.0), searcher.GainFromHitting hand |> Async.RunSynchronously)
+
+[<Fact>]
 let ``A cancelled searcher stops answering`` () =
     let hand = [ ValueCard Card.Five ]
 
