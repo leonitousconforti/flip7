@@ -344,6 +344,12 @@ type public Lookahead
         async {
             let watch = System.Diagnostics.Stopwatch.StartNew()
 
+            // The managed heap right now: the search's memory is its arrays,
+            // and asking costs nothing next to pricing a generation
+            let heap () =
+                let bytesPerMegabyte = 1024.0 * 1024.0
+                $"%.0f{float (System.GC.GetTotalMemory false) / bytesPerMegabyte}MB"
+
             // The sweep needs its generations sorted, and the hands arrive in
             // whatever order the caller grew them
             let start = Array.sort (Array.distinct roots)
@@ -359,7 +365,8 @@ type public Lookahead
                 for step in 1..level do
                     previous <- current
                     current <- Word.expand token current
-                    report $"sweep {step}/{level}: {current.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
+                    report
+                        $"sweep {step}/{level}: {current.Length} states, {heap ()}, %.0f{watch.Elapsed.TotalSeconds}s"
 
                 previous, current
 
@@ -384,7 +391,7 @@ type public Lookahead
             let mutable aboveStates = deepest
             let mutable aboveWorths = deepest |> priceBy Word.bankedOf
 
-            report $"price {depth}/{depth}: {deepest.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
+            report $"price {depth}/{depth}: {deepest.Length} states, {heap ()}, %.0f{watch.Elapsed.TotalSeconds}s"
 
             for level in depth - 1 .. -1 .. 1 do
                 let states =
@@ -402,7 +409,7 @@ type public Lookahead
                 let worths = states |> priceBy (Word.worthOf nextStates nextWorths)
                 aboveStates <- states
                 aboveWorths <- worths
-                report $"price {level}/{depth}: {states.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
+                report $"price {level}/{depth}: {states.Length} states, {heap ()}, %.0f{watch.Elapsed.TotalSeconds}s"
 
             // The generation one draw in stays alive: the hands are priced
             // against it, and the draw-by-draw questions read from it too
