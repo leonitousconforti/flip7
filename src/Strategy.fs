@@ -159,7 +159,6 @@ module public Strategy =
             | Strategy.StandsAfterTurn turns -> if turn <= turns then Hit else Stand
             | Strategy.PlaysLikeAHuman caution ->
                 let probability = HumanHitProbability caution player otherPlayers finishedPlayers
-
                 if random.NextDouble() < probability then Hit else Stand
             | Strategy.MaximizesExpectedValue ->
                 let deck, discards = decks
