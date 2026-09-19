@@ -37,13 +37,8 @@ type internal Horizon =
 /// of humans, everything a history was worth arrives again within the first
 /// rounds of watching the same people play.
 /// </summary>
-type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observation.Scan, rollouts: int) =
-
-    // How many cards ahead the within-round search looks. The searcher
-    // remembers worths by deck, so an extra card of sight now costs a few
-    // times the last rather than the twentyfold it once did; three predates
-    // that, and stays until deeper is shown to decide anything better
-    static let lookahead = 3
+type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observation.Scan, rollouts: int, lookahead: int)
+    =
 
     // Models are keyed by what a player declared and, for Custom labels only,
     // also by who they are: an engine strategy plays identically no matter
@@ -63,7 +58,9 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
     /// because the decisions that reach it are the ones too close to call any
     /// other way.
     /// </summary>
-    new(?rollouts: int) = Sage(Map.empty, Observation.Start, defaultArg rollouts 400)
+    new(?rollouts: int, ?lookahead: int)
+        =
+        Sage(Map.empty, Observation.Start, defaultArg rollouts 400, defaultArg lookahead 3)
 
     /// <summary>
     /// The fold step: the previous Sage advanced by the next instant of the
@@ -90,16 +87,38 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                     | None -> Some single
                     )
 
-        Sage(evidence, scan, previous.Rollouts)
+        Sage(evidence, scan, previous.Rollouts, previous.Lookahead)
 
     member private _.Evidence = evidence
     member private _.Scan = scan
     member private _.Rollouts = rollouts
+    member private _.Lookahead = lookahead
 
     // A model materializes from the cached evidence only when read, so only
     // the players actually consulted are ever fit
     member private _.ModelFor(key: string) : PlayerModel option =
         evidence |> Map.tryFind key |> Option.map Inference.ModelFrom
+
+    // The table's strategies as a rollout samples them: each opponent's
+    // posterior materializes once, only now that it is wanted, and every call
+    // draws one strategy per opponent from it - expected-value play for
+    // anyone never observed
+    member private this.SamplerFor(rng: System.Random, opponents: Player list) : unit -> (string * Strategy) list =
+        let modeled =
+            opponents
+            |> List.map (fun opponent -> opponent.Name, this.ModelFor(Sage.Key(opponent.Name, opponent.Strategy)))
+            |> Map.ofList
+
+        fun () ->
+            opponents
+            |> List.map (fun opponent ->
+                let strategy =
+                    match Map.find opponent.Name modeled with
+                    | Some model -> Inference.SampleWith rng model
+                    | None -> Strategy.MaximizesExpectedValue
+
+                opponent.Name, strategy
+            )
 
     /// <summary>
     /// Plays the rest of the game through the real engine and scores it for
@@ -148,6 +167,15 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
             | ToEndOfRound -> float mine - float best
     }
 
+    // The declared strategies are replaced by the sampled ones inside a
+    // rollout (a human's Custom label has no meaning there), and everyone
+    // aims their action cards at random
+    static member private Restrategize (strategies: Map<string, Strategy>) (player: Player) : Player = {
+        player with
+            Strategy = strategies |> Map.find player.Name
+            Targeting = Targeting.ChoosesRandomly
+    }
+
     /// <summary>
     /// One rollout of the rest of the game from a hit-or-stand decision
     /// point: the deciding player's first action is forced when one is given,
@@ -168,17 +196,8 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
         (decks: Deck * Deck)
         : Async<float>
         =
-        // The declared strategies are replaced by the sampled ones (a human's
-        // Custom label has no meaning inside a rollout), and everyone aims
-        // their action cards at random
-        let restrategize (p: Player) : Player = {
-            p with
-                Strategy = strategies |> Map.find p.Name
-                Targeting = Targeting.ChoosesRandomly
-        }
-
-        let active = player :: others |> List.map restrategize
-        let finished = finished |> List.map restrategize
+        let active = player :: others |> List.map (Sage.Restrategize strategies)
+        let finished = finished |> List.map (Sage.Restrategize strategies)
 
         // Turn counters: the decider's own is exact, since the engine derived
         // the turn it passed from its counter, and the scan supplies the other
@@ -372,18 +391,14 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
     /// its rollouts from the position instead - but it is still taken, so that
     /// Sage reads as the decider factory it is.
     ///
-    /// A decision runs two stages of rollouts against strategies sampled from
-    /// the opponents' posteriors (expected-value play when unmodeled). A
-    /// small tournament first picks the continuation strategy Sage itself
-    /// plays inside the rollouts: the fixed strategy that wins most from here
-    /// against the modeled table - policy iteration within the fixed-strategy
-    /// class, since rollouts recursing into Sage itself would be
-    /// unaffordable. The main stage then forces each action and plays the
-    /// tournament winner as Sage's continuation, and the winner's own answer
-    /// stands unless the rollout evidence overrules it decisively. Both
-    /// stages are paired - one opponent sample and one seed per iteration,
-    /// shared by everything compared - so the shared luck cancels out of the
-    /// comparisons and only the consequences remain.
+    /// A decision races rollouts against strategies sampled from the
+    /// opponents' posteriors (expected-value play when unmodeled): each
+    /// rollout forces one action and plays expected value as Sage's own
+    /// continuation, and the exact search's answer stands unless the rollout
+    /// evidence overrules it decisively. The rollouts are paired - one
+    /// opponent sample and one seed per iteration, shared by both actions -
+    /// so the shared luck cancels out of the comparison and only the
+    /// consequences remain.
     /// </summary>
     member this.Decide(_random: System.Random) : Strategy.HitOrStandDecider =
         fun _strategy round turn player others finished decks ->
@@ -431,25 +446,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                     else
                         Some(Observation.TurnsTaken scan)
 
-                // The posteriors of everyone at the table, materialized from
-                // the cached evidence only now that they are wanted
-                let modeled =
-                    others @ finished
-                    |> List.map (fun opponent ->
-                        opponent.Name, this.ModelFor(Sage.Key(opponent.Name, opponent.Strategy))
-                    )
-                    |> Map.ofList
-
-                let sampleOpponents () =
-                    others @ finished
-                    |> List.map (fun opponent ->
-                        let strategy =
-                            match Map.find opponent.Name modeled with
-                            | Some model -> Inference.SampleWith rng model
-                            | None -> Strategy.MaximizesExpectedValue
-
-                        opponent.Name, strategy
-                    )
+                let sampleOpponents = this.SamplerFor(rng, others @ finished)
 
                 // Sage plays expected value as itself inside its own
                 // rollouts. It used to hold a small tournament here to pick
@@ -500,10 +497,10 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
     /// <summary>
     /// Who to give an action card to, shaped as a TargetDecider like
     /// Strategy.DecideTargetWith. Freezes and deal3s are aimed by paired Monte
-    /// Carlo, with Sage playing the continuation its tournament picked, chosen
-    /// once before the card is given so that every candidate is compared under
-    /// the same policy. Aiming at whoever the spiteful rule picks stands
-    /// unless a candidate beats it by more than the rollouts' own noise.
+    /// Carlo, with Sage playing expected value as its own continuation, so
+    /// every candidate is compared under the same policy. Aiming at whoever
+    /// the spiteful rule picks stands unless a candidate beats it by more than
+    /// the rollouts' own noise.
     ///
     /// A second chance is aimed spitefully: the engine narrows those
     /// candidates to the players who can accept one, so the ask does not carry
@@ -547,27 +544,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                 let opponents =
                     candidates @ finished |> List.filter (fun player -> player.Name <> chooser.Name)
 
-                let modeled =
-                    opponents
-                    |> List.map (fun player -> player.Name, this.ModelFor(Sage.Key(player.Name, player.Strategy)))
-                    |> Map.ofList
-
-                let sampleOpponents () =
-                    opponents
-                    |> List.map (fun player ->
-                        let strategy =
-                            match Map.find player.Name modeled with
-                            | Some model -> Inference.SampleWith rng model
-                            | None -> Strategy.MaximizesExpectedValue
-
-                        player.Name, strategy
-                    )
-
-                let restrategize (strategies: Map<string, Strategy>) (player: Player) : Player = {
-                    player with
-                        Strategy = strategies |> Map.find player.Name
-                        Targeting = Targeting.ChoosesRandomly
-                }
+                let sampleOpponents = this.SamplerFor(rng, opponents)
 
                 // Freezing a candidate removes them from the rotation with the
                 // freeze card parked in their hand, the way the engine resolves
@@ -577,10 +554,10 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                     let active =
                         candidates
                         |> List.filter (fun candidate -> candidate.Name <> target.Name)
-                        |> List.map (restrategize strategies)
+                        |> List.map (Sage.Restrategize strategies)
 
                     let iced =
-                        restrategize strategies { target with Hand = ActionCard Card.Freeze :: target.Hand }
+                        Sage.Restrategize strategies { target with Hand = ActionCard Card.Freeze :: target.Hand }
 
                     let spent =
                         counted
@@ -594,7 +571,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                         round
                         spent
                         active
-                        (iced :: (finished |> List.map (restrategize strategies)))
+                        (iced :: (finished |> List.map (Sage.Restrategize strategies)))
                         decks
 
                 // A deal3 is replayed rather than modelled: the engine is
@@ -619,7 +596,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                     let active =
                         chooser
                         :: (candidates |> List.filter (fun candidate -> candidate.Name <> chooser.Name))
-                        |> List.map (restrategize strategies)
+                        |> List.map (Sage.Restrategize strategies)
 
                     let canonical = Strategy.DecideWith random
                     let mutable forcing = true
@@ -655,7 +632,7 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                         round
                         counted
                         active
-                        (finished |> List.map (restrategize strategies))
+                        (finished |> List.map (Sage.Restrategize strategies))
                         rigged
 
                 let play =
@@ -678,14 +655,13 @@ type public Sage private (evidence: Map<string, PlayerEvidence>, scan: Observati
                     | _ -> decks
 
                 async {
-                    // The continuation Sage plays as itself, picked from the
-                    // position as it stands, before the card is given
-                    let self = Strategy.MaximizesExpectedValue
-
                     let rounds =
                         Array.init
                             rollouts
-                            (fun _ -> Map.ofList ((chooser.Name, self) :: sampleOpponents ()), rng.Next())
+                            (fun _ ->
+                                Map.ofList ((chooser.Name, Strategy.MaximizesExpectedValue) :: sampleOpponents ()),
+                                rng.Next()
+                            )
 
                     let! spiteful = spitefully ()
                     return! Sage.BestOf candidates spiteful rounds play
