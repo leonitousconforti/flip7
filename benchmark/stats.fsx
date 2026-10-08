@@ -132,18 +132,12 @@ module TimelineStats =
 
     let private updateRoundEnded (stats: Stats) (scoreboard: Map<string, uint>) : Stats =
         let round = currentRound stats
-
-        {
-            stats with
-                Points =
-                    stats.Points
-                    |> Map.add round (scoreboard |> Map.map (fun _ score -> float score))
-                Rounds = float round
-        }
+        let scoreboard' = scoreboard |> Map.map (fun _ score -> float score)
+        let points = Map.add round scoreboard' stats.Points
+        { stats with Points = points; Rounds = float round }
 
     let public Update (stats: Stats) (instant: Instant) : Stats =
         let round = currentRound stats
-
         match instant.Event with
         | Event.RoundEnded scoreboard -> updateRoundEnded stats scoreboard
         | Event.Flip7Achieved player -> { stats with Flip7s = tally stats.Flip7s round player }
@@ -241,10 +235,5 @@ let makeThread (index: int) : Async<uint * TimelineStats.Stats> =
     in
     thread (0u, TimelineStats.Empty)
 
-// Run 4 parallel simulations until the user cancels, printing final results to
-// stdout. Keep track of number of wins for each player, average number of
-// hit or stand decisions a player gets to make, average number of targeting
-// decisions a player gets to make, average number of rounds per game, average
-// number of turns per round, average number of flip7s achieved per game.
 searcher.GainFromHitting [] |> Async.RunSynchronously |> ignore
 Seq.init threads makeThread |> Async.Parallel |> Async.RunSynchronously
