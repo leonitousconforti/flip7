@@ -1,0 +1,105 @@
+{
+    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+    "extends": [
+        "mergeConfidence:all-badges",
+        "config:recommended",
+        ":dependencyDashboard",
+        "helpers:pinGitHubActionDigests"
+    ],
+    "labels": [
+        "dependencies",
+        "renovate"
+    ],
+    "automerge": true,
+    "automergeType": "branch",
+    "enabledManagers": [
+        "github-actions",
+        "nix",
+        "nuget"
+    ],
+    "nix": {
+        "enabled": true
+    },
+    "lockFileMaintenance": {
+        "enabled": true,
+        "schedule": [
+            "before 5am on monday"
+        ],
+        "commitMessageAction": "Refresh",
+        "addLabels": [
+            "lockfile-maintenance"
+        ],
+        "automerge": true
+    },
+    "packageRules": [
+        {
+            "description": "Pin GitHub Actions to a full commit SHA and keep that SHA at the latest release",
+            "matchManagers": [
+                "github-actions"
+            ],
+            "pinDigests": true,
+            "addLabels": [
+                "github-actions"
+            ]
+        },
+        {
+            "description": "Keep the Nix flake inputs (flake.lock) current",
+            "matchManagers": [
+                "nix"
+            ],
+            "addLabels": [
+                "nix"
+            ]
+        },
+        {
+            "description": "Label every PackageReference, dotnet tool, and SDK bump",
+            "matchManagers": [
+                "nuget"
+            ],
+            "addLabels": [
+                "nuget"
+            ]
+        },
+        {
+            "description": "Group the xunit packages into one PR since the runner must match the framework version",
+            "matchManagers": [
+                "nuget"
+            ],
+            "matchPackageNames": [
+                "/^xunit/"
+            ],
+            "groupName": "xunit packages"
+        },
+        {
+            "description": "Group the dotnet local tools (dotnet-tools.json) into one PR",
+            "matchManagers": [
+                "nuget"
+            ],
+            "matchFileNames": [
+                "dotnet-tools.json"
+            ],
+            "groupName": "dotnet tools"
+        },
+        {
+            "description": "Never automerge runtime dependencies of the library or the UI",
+            "matchManagers": [
+                "nuget"
+            ],
+            "matchFileNames": [
+                "src/**",
+                "ui/**"
+            ],
+            "automerge": false
+        },
+        {
+            "description": "Never automerge the .NET SDK in global.json: the nix flake pins dotnet-sdk_10, so the dev shell breaks until nixpkgs ships the same patch",
+            "matchManagers": [
+                "nuget"
+            ],
+            "matchDepTypes": [
+                "dotnet-sdk"
+            ],
+            "automerge": false
+        }
+    ]
+}
