@@ -372,9 +372,14 @@ type public Lookahead
         )
         |> Seq.toArray
 
-    // The whole table prices once, starting now; everything below awaits it
+    // The whole table prices once, starting now; everything below awaits it. A
+    // task rather than an async, since the pricing has nothing to await: a
+    // cancellation thrown under the task's own token marks it cancelled rather
+    // than faulted, so awaiters see an OperationCanceledException, and its
+    // continuations run on the pool rather than in line on the thread that
+    // finished it, so awaiters never queue up behind one another
     let table =
-        async {
+        fun () ->
             let watch = System.Diagnostics.Stopwatch.StartNew()
 
             // The sweep needs its generations sorted, and the hands arrive in
@@ -452,23 +457,14 @@ type public Lookahead
                         Word.afterHitting universe childStates childWorths state spare remaining
                         - banked
 
-            return gains, childStates, childWorths
-        }
+            gains, childStates, childWorths
         |> fun work ->
-            let source =
-                System.Threading.Tasks.TaskCompletionSource<_>(
-                    System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously
-                )
-
-            Async.StartWithContinuations(
+            System.Threading.Tasks.Task.Factory.StartNew(
                 work,
-                source.SetResult,
-                source.SetException,
-                (fun _exn -> source.SetCanceled()),
-                cancellationToken = token
+                token,
+                System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously,
+                System.Threading.Tasks.TaskScheduler.Default
             )
-
-            source.Task
 
     /// <summary>
     /// What hitting is worth over standing, in points of expected round score,

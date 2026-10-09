@@ -37,7 +37,7 @@ let seed =
 // Every legal hand of 0..8 cards: a dup and the second chance covering it
 // cancel the moment they meet, so a lasting hand holds each value at most once,
 // each modifier at most once, and up to the deck's three of each action
-let hands = seq {
+let roots = seq {
     let limits =
         Deck.Full
         |> Map.toList
@@ -57,8 +57,6 @@ let hands = seq {
         yield! choose size limits
 }
 
-let all = hands |> Seq.toArray
-
 let canceller = new System.Threading.CancellationTokenSource()
 System.Console.CancelKeyPress.Add(fun press ->
     press.Cancel <- true
@@ -68,7 +66,7 @@ System.Console.CancelKeyPress.Add(fun press ->
 // Progress on stderr, so redirected stdout stays clean
 let LookaheadBuilderProgress = fun line -> eprintfn $"  {line}"
 let searcher =
-    new Lookahead(depth, all, progress = LookaheadBuilderProgress, cancellation = canceller.Token)
+    new Lookahead(depth, roots, progress = LookaheadBuilderProgress, cancellation = canceller.Token)
 
 let LookAheadDecider (random: System.Random) : Strategy.HitOrStandDecider =
     let x = fun () -> random.NextDouble()
@@ -239,10 +237,6 @@ let makeThread (index: int) : Async<uint * TimelineStats.Stats> =
     in
     thread (0u, TimelineStats.Empty)
 
-// Every workflow hands back its stats once it sees the cancellation, so the
-// final figures are just those results merged. The searcher shares the token,
-// so a Ctrl-C while the table is still pricing lands in the handler below with
-// no game played
 try
     let final =
         Seq.init threads makeThread
