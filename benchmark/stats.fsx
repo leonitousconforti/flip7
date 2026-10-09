@@ -112,14 +112,16 @@ let makeThread (cancellation: System.Threading.CancellationToken) (index: int) :
         let! game =
             (random, decider, players)
             |||> Timeline.SimulateWithDecider
+            |> AsyncSeq.takeWhile (fun _ -> not cancellation.IsCancellationRequested)
             |> AsyncSeq.fold TimelineStats.Update TimelineStats.Empty
+
+        if cancellation.IsCancellationRequested then
+            return games, totals
+        else
 
         let aggregate = TimelineStats.Aggregate (games, totals) (1u, game)
         eprintfn $"\rThread {index + 1}: {TimelineStats.Summary aggregate}      "
-        if cancellation.IsCancellationRequested then
-            return aggregate
-        else
-            return! thread aggregate
+        return! thread aggregate
     }
 
     in
