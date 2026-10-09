@@ -65,7 +65,11 @@ System.Console.CancelKeyPress.Add(fun press ->
     canceller.Cancel()
 )
 
-let searcher = new Lookahead(depth, all, cancellation = canceller.Token)
+// Progress on stderr, so redirected stdout stays clean
+let LookaheadBuilderProgress = fun line -> eprintfn $"  {line}"
+let searcher =
+    new Lookahead(depth, all, progress = LookaheadBuilderProgress, cancellation = canceller.Token)
+
 let LookAheadDecider (random: System.Random) : Strategy.HitOrStandDecider =
     let x = fun () -> random.NextDouble()
     let onUnpricedHand = fun () -> if x () < 0.5 then Strategy.Hit else Strategy.Stand
@@ -235,5 +239,19 @@ let makeThread (index: int) : Async<uint * TimelineStats.Stats> =
     in
     thread (0u, TimelineStats.Empty)
 
-searcher.GainFromHitting [] |> Async.RunSynchronously |> ignore
-Seq.init threads makeThread |> Async.Parallel |> Async.RunSynchronously
+// Every workflow hands back its stats once it sees the cancellation, so the
+// final figures are just those results merged. The searcher shares the token,
+// so a Ctrl-C while the table is still pricing lands in the handler below with
+// no game played
+try
+    let final =
+        Seq.init threads makeThread
+        |> Async.Parallel
+        |> Async.RunSynchronously
+        |> Array.fold TimelineStats.Aggregate (0u, TimelineStats.Empty)
+
+    System.Console.Clear()
+    printfn $"{TimelineStats.Summary final}"
+with :? System.OperationCanceledException ->
+    eprintfn "cancelled before any game completed"
+    exit 130

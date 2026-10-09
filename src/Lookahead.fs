@@ -454,7 +454,21 @@ type public Lookahead
 
             return gains, childStates, childWorths
         }
-        |> fun work -> Async.StartAsTask(work, cancellationToken = token)
+        |> fun work ->
+            let source =
+                System.Threading.Tasks.TaskCompletionSource<_>(
+                    System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously
+                )
+
+            Async.StartWithContinuations(
+                work,
+                source.SetResult,
+                source.SetException,
+                (fun _exn -> source.SetCanceled()),
+                cancellationToken = token
+            )
+
+            source.Task
 
     /// <summary>
     /// What hitting is worth over standing, in points of expected round score,
