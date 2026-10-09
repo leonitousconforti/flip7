@@ -17,6 +17,7 @@
 
 open Flip7
 open FSharp.Control
+open System.Threading.Tasks
 
 let threads =
     fsi.CommandLineArgs
@@ -105,21 +106,24 @@ let players = [
 ]
 
 let makeThread (cancellation: System.Threading.CancellationToken) (index: int) : Async<uint * TimelineStats.Stats> =
+    let cancelled: Task = Task.Delay(System.Threading.Timeout.Infinite, cancellation)
     let random = System.Random(seed + index)
     let decider = makeDecider random
 
     let rec thread ((games, totals): uint * TimelineStats.Stats) = async {
-        let! game =
+        let game =
             (random, decider, players)
             |||> Timeline.SimulateWithDecider
-            |> AsyncSeq.takeWhile (fun _ -> not cancellation.IsCancellationRequested)
             |> AsyncSeq.fold TimelineStats.Update TimelineStats.Empty
+            |> fun play -> Async.StartAsTask(play, cancellationToken = cancellation)
 
+        do! Task.WhenAny(game, cancelled) |> Async.AwaitTask |> Async.Ignore
         if cancellation.IsCancellationRequested then
             return games, totals
         else
 
-        let aggregate = TimelineStats.Aggregate (games, totals) (1u, game)
+        let! played = Async.AwaitTask game
+        let aggregate = TimelineStats.Aggregate (games, totals) (1u, played)
         eprintfn $"\rThread {index + 1}: {TimelineStats.Summary aggregate}      "
         return! thread aggregate
     }
@@ -127,15 +131,11 @@ let makeThread (cancellation: System.Threading.CancellationToken) (index: int) :
     in
     thread (0u, TimelineStats.Empty)
 
-try
-    let final =
-        Seq.init threads (makeThread canceller.Token)
-        |> Async.Parallel
-        |> Async.RunSynchronously
-        |> Array.fold TimelineStats.Aggregate (0u, TimelineStats.Empty)
+let final =
+    Seq.init threads (makeThread canceller.Token)
+    |> Async.Parallel
+    |> Async.RunSynchronously
+    |> Array.fold TimelineStats.Aggregate (0u, TimelineStats.Empty)
 
-    System.Console.Clear()
-    printfn $"{TimelineStats.Summary final}"
-with :? System.OperationCanceledException ->
-    eprintfn "cancelled before any game completed"
-    exit 130
+System.Console.Clear()
+printfn $"{TimelineStats.Summary final}"
