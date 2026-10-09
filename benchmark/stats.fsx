@@ -25,15 +25,21 @@ let threads =
     |> Option.map int
     |> Option.defaultValue 4
 
-let depth =
+let limit =
     fsi.CommandLineArgs
     |> Array.tryItem 2
+    |> Option.map int
+    |> Option.defaultValue -1
+
+let depth =
+    fsi.CommandLineArgs
+    |> Array.tryItem 3
     |> Option.map int
     |> Option.defaultValue 5
 
 let seed =
     fsi.CommandLineArgs
-    |> Array.tryItem 3
+    |> Array.tryItem 4
     |> Option.map int
     |> Option.defaultValue 0
 
@@ -110,7 +116,18 @@ let makeThread (cancellation: System.Threading.CancellationToken) (index: int) :
     let random = System.Random(seed + index)
     let decider = makeDecider random
 
+    let quota =
+        if limit < 0 then
+            System.UInt32.MaxValue
+        else
+            let remainder = if index < limit % threads then 1 else 0
+            uint (limit / threads + remainder)
+
     let rec thread ((games, totals): uint * TimelineStats.Stats) = async {
+        if games >= quota then
+            return games, totals
+        else
+
         let game =
             (random, decider, players)
             |||> Timeline.SimulateWithDecider
