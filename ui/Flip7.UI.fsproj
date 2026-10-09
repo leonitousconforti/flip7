@@ -8,6 +8,7 @@
   <ItemGroup>
     <Compile Include="shared/Ansi.fs" />
     <Compile Include="shared/Sparkline.fs" />
+    <Compile Include="shared/Stats.fs" />
     <Compile Include="shared/Render.fs" />
     <Compile Include="shared/Editor.fs" />
     <Compile Include="shared/Mvu.fs" />
