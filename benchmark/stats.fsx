@@ -104,7 +104,7 @@ let players = [
     ("Sage", Strategy.Custom "LookAhead", Targeting.PlaysSpitefully)
 ]
 
-let makeThread (index: int) : Async<uint * TimelineStats.Stats> =
+let makeThread (cancellation: System.Threading.CancellationToken) (index: int) : Async<uint * TimelineStats.Stats> =
     let random = System.Random(seed + index)
     let decider = makeDecider random
 
@@ -116,7 +116,7 @@ let makeThread (index: int) : Async<uint * TimelineStats.Stats> =
 
         let aggregate = TimelineStats.Aggregate (games, totals) (1u, game)
         eprintfn $"\rThread {index + 1}: {TimelineStats.Summary aggregate}      "
-        if canceller.IsCancellationRequested then
+        if cancellation.IsCancellationRequested then
             return aggregate
         else
             return! thread aggregate
@@ -127,7 +127,7 @@ let makeThread (index: int) : Async<uint * TimelineStats.Stats> =
 
 try
     let final =
-        Seq.init threads makeThread
+        Seq.init threads (makeThread canceller.Token)
         |> Async.Parallel
         |> Async.RunSynchronously
         |> Array.fold TimelineStats.Aggregate (0u, TimelineStats.Empty)
