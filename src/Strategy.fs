@@ -74,20 +74,20 @@ module public Strategy =
         if Hand.UniqueValueCards player.Hand >= 5 then
             0.9
         else
-            let leader =
-                otherPlayers @ finishedPlayers |> List.map Player.Showing |> List.fold max 0u
 
-            let showing = Player.Showing player
-            let behind = float (leader - min leader showing)
+        let showing = Player.Showing player
+        let allPlayers = otherPlayers @ finishedPlayers
+        let leader = allPlayers |> List.map Player.Showing |> List.fold max 0u
+        let behind = float (leader - min leader showing)
 
-            let emboldened =
-                if player.Hand |> List.contains (ActionCard Card.SecondChance) then
-                    6.0
-                else
-                    0.0
+        let emboldened =
+            if player.Hand |> List.contains (ActionCard Card.SecondChance) then
+                6.0
+            else
+                0.0
 
-            let threshold = float caution + min 10.0 (behind / 4.0) + emboldened
-            1.0 / (1.0 + exp ((float (Hand.Score player.Hand) - threshold) / 3.0))
+        let threshold = float caution + min 10.0 (behind / 4.0) + emboldened
+        1.0 / (1.0 + exp ((float (Hand.Score player.Hand) - threshold) / 3.0))
 
     /// <summary>
     /// Evaluates a strategy using the given source of randomness, given the
