@@ -15,6 +15,8 @@ type public Stats = {
     Points: Map<uint, Map<string, float>>
     /// How many flip7s each player achieved by round
     Flip7s: Map<uint, Map<string, float>>
+    /// On what rounds did each player win
+    Wins: Map<string, uint list>
 }
 
 let public Empty: Stats = {
@@ -23,6 +25,7 @@ let public Empty: Stats = {
     Targeting = Map.empty
     Points = Map.empty
     Flip7s = Map.empty
+    Wins = Map.empty
 }
 
 let private currentRound (stats: Stats) : uint = uint stats.Rounds + 1u
@@ -35,7 +38,26 @@ let private updateRoundEnded (stats: Stats) (scoreboard: Map<string, uint>) : St
     let round = currentRound stats
     let scoreboard' = scoreboard |> Map.map (fun _ score -> float score)
     let points = Map.add round scoreboard' stats.Points
-    { stats with Points = points; Rounds = float round }
+    let maxScore = scoreboard |> Map.toList |> List.map snd |> List.max
+
+    let wins =
+        scoreboard
+        |> Map.toList
+        |> List.filter (fun (_player, score) -> score = maxScore)
+        |> List.map fst
+        |> List.fold
+            (fun wins player ->
+                let rounds = wins |> Map.tryFind player |> Option.defaultValue []
+                wins |> Map.add player (round :: rounds)
+            )
+            stats.Wins
+
+    {
+        stats with
+            Points = points
+            Rounds = float round
+            Wins = wins
+    }
 
 let public Update (stats: Stats) (instant: Instant) : Stats =
     let round = currentRound stats
@@ -96,6 +118,7 @@ let public Aggregate ((games1, stats1): uint * Stats) ((games2, stats2): uint * 
         Targeting = meanByRound stats1.Targeting stats2.Targeting
         Points = meanByRound stats1.Points stats2.Points
         Flip7s = meanByRound stats1.Flip7s stats2.Flip7s
+        Wins = merge List.empty List.append stats1.Wins stats2.Wins
     }
 
 let public Summary ((games, stats): uint * Stats) : string =
@@ -109,8 +132,15 @@ let public Summary ((games, stats): uint * Stats) : string =
         |> List.map (fun (player, total) -> $"{player}: %.2f{total}")
         |> String.concat ", "
 
+    let wins =
+        stats.Wins
+        |> Map.toList
+        |> List.map (fun (player, rounds) -> $"{player}: {List.length rounds}")
+        |> String.concat ", "
+
     $"Games: {games}, rounds per game: %.2f{stats.Rounds}\n"
     + $"Decisions per player per game: {perPlayer stats.Decisions}\n"
     + $"Targeting decisions per player per game: {perPlayer stats.Targeting}\n"
     + $"Points per player per game: {perPlayer stats.Points}\n"
-    + $"Flip7s per player per game: {perPlayer stats.Flip7s}"
+    + $"Flip7s per player per game: {perPlayer stats.Flip7s}\n"
+    + $"Wins per player per game: {wins}"
