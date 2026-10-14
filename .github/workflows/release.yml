@@ -4,18 +4,22 @@ on:
   pull_request:
     types: [closed]
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   publish:
-    if: github.head_ref == 'release' && github.event.pull_request.merged == true
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      || (github.head_ref == 'release' && github.event.pull_request.merged == true)
     runs-on: ubuntu-latest
     permissions:
       contents: write # tag and create the GitHub release
       id-token: write # OIDC token for NuGet trusted publishing
+      packages: write # push to GitHub Packages
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
@@ -56,10 +60,23 @@ jobs:
         with:
           user: leocon40
 
-      - name: Push packages
+      - name: Push packages to nuget.org
         env:
           NUGET_API_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}
         run: dotnet nuget push 'artifacts/*.nupkg' --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      # The registry wants credentials to read its service index, not just an API
+      # key to push, so it has to be added as a source first
+      - name: Push packages to GitHub Packages
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          dotnet nuget add source https://nuget.pkg.github.com/leonitousconforti/index.json \
+            --name github \
+            --username "$GITHUB_ACTOR" \
+            --password "$GITHUB_TOKEN" \
+            --store-password-in-clear-text
+          dotnet nuget push 'artifacts/*.nupkg' --api-key "$GITHUB_TOKEN" --source github --skip-duplicate
 
       - uses: knope-dev/action@19617851f9f13ab2f27a05989c55efb18aca3675 # v2.1.2
         with:

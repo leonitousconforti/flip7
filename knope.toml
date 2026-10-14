@@ -41,7 +41,7 @@ template = "chore: prepare release $version"
 
 [workflows.steps.body]
 template = """
-Merging this pull request publishes Flip7 $version to nuget.org and creates the GitHub release, with the terminal app attached for Linux, macOS and Windows. Knope keeps it up to date as change files land on main.
+Merging this pull request publishes Flip7 $version to nuget.org and GitHub Packages and creates the GitHub release, with the terminal app attached for Linux, macOS and Windows. Knope keeps it up to date as change files land on main.
 
 $changelog
 """
