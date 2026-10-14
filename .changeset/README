@@ -1,0 +1,25 @@
+# Change files
+
+Every pull request that changes the library or the terminal app adds a
+Markdown file to this directory. Knope reads the files to choose the next
+version, write `CHANGELOG.md` and open the release pull request. Merging that
+pull request publishes the package and the terminal app. The files are deleted
+when the release is prepared.
+
+Create one with `knope document-change` (the dev shell provides `knope`), or
+write it by hand:
+
+```markdown
+---
+default: minor
+---
+
+# Add `Strategy.ChasesFlip7`
+
+Optional detail in Markdown below the heading. It becomes the changelog entry.
+```
+
+`default` is the only package name because the NuGet package and the terminal
+app share one version. The type is `major`, `minor` or `patch`. While the
+version is below 1.0, `major` bumps the middle number and both `minor` and
+`patch` bump the last one, so breaking changes stay visible in the version.

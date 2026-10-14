@@ -1,0 +1,57 @@
+[package]
+versioned_files = [
+  { path = "Directory.Build.props", regex = '<Version>(?<version>[^<]+)</Version>' },
+]
+changelog = "CHANGELOG.md"
+assets = "artifacts/*"
+
+[changes]
+ignore_conventional_commits = true
+
+[[workflows]]
+name = "document-change"
+
+[[workflows.steps]]
+type = "CreateChangeFile"
+
+[[workflows]]
+name = "prepare-release"
+
+[[workflows.steps]]
+type = "Command"
+command = "git switch -c release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+[[workflows.steps]]
+type = "Command"
+command = "git -c user.name=\"github-actions[bot]\" -c user.email=\"41898282+github-actions[bot]@users.noreply.github.com\" commit -m \"chore: prepare release $version\""
+
+[[workflows.steps]]
+type = "Command"
+command = "git push --force --set-upstream origin release"
+
+[[workflows.steps]]
+type = "CreatePullRequest"
+base = "main"
+
+[workflows.steps.title]
+template = "chore: prepare release $version"
+
+[workflows.steps.body]
+template = """
+Merging this pull request publishes Flip7 $version to nuget.org and creates the GitHub release, with the terminal app attached for Linux, macOS and Windows. Knope keeps it up to date as change files land on main.
+
+$changelog
+"""
+
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "Release"
+
+[github]
+owner = "leonitousconforti"
+repo = "flip7"

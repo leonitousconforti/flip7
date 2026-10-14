@@ -4,11 +4,24 @@
     <WarnOn>3390</WarnOn>
     <TargetFramework>net10.0</TargetFramework>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <RepositoryUrl>https://github.com/leonitousconforti/flip7</RepositoryUrl>
-    <FsDocsLicenseLink>https://github.com/leonitousconforti/flip7/blob/main/License.md</FsDocsLicenseLink>
-    <FsDocsReleaseNotesLink>https://github.com/leonitousconforti/flip7/blob/main/RELEASE_NOTES.md</FsDocsReleaseNotesLink>
-    <PackageProjectUrl>https://leonitousconforti.github.io/flip7</PackageProjectUrl>
+    <FsDocsLicenseLink>https://github.com/leonitousconforti/flip7/blob/main/LICENSE</FsDocsLicenseLink>
+    <FsDocsReleaseNotesLink>https://github.com/leonitousconforti/flip7/blob/main/CHANGELOG.md</FsDocsReleaseNotesLink>
   </PropertyGroup>
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Flip7</PackageId>
+    <Description>The card game Flip 7 in F#: a rules engine that plays whole games, the odds a hand busts and what hitting it is worth, an exact search of the decision, strategies to play against, and inference of the strategy a player is using.</Description>
+    <PackageTags>fsharp;flip7;card-game;simulation;probability</PackageTags>
+    <!-- The package depends on the FSharp.Core it was built against, so build against the first
+         one F# 10 shipped rather than this SDK's, which would force consumers onto it too. The
+         terminal app and the tests keep the SDK's. -->
+    <FSharpCoreImplicitPackageVersion>10.0.100</FSharpCoreImplicitPackageVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="Flip7.Test" />

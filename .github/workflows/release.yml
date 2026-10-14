@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  publish:
+    if: github.head_ref == 'release' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # tag and create the GitHub release
+      id-token: write # OIDC token for NuGet trusted publishing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - run: dotnet build -c Release
+      - run: dotnet test --no-build -c Release
+      - run: dotnet pack --no-build -c Release -o artifacts
+
+      # The SDK builds every runtime from Linux, ad-hoc signing the macOS executables
+      # as Apple silicon requires. A tarball keeps the executable bit, which a bare
+      # download loses.
+      - name: Publish the terminal app
+        run: |
+          for rid in linux-x64 osx-x64 osx-arm64 win-x64; do
+            out="$RUNNER_TEMP/$rid"
+            dotnet publish ui/Flip7.UI.fsproj \
+              -c Release \
+              -r "$rid" \
+              --self-contained true \
+              -p:PublishSingleFile=true \
+              -p:EnableCompressionInSingleFile=true \
+              -p:DebugType=None \
+              -p:DebugSymbols=false \
+              -o "$out"
+            if [ -f "$out/Flip7.UI.exe" ]; then
+              mv "$out/Flip7.UI.exe" "$out/flip7.exe"
+              (cd "$out" && zip "$GITHUB_WORKSPACE/artifacts/flip7-$rid.zip" flip7.exe)
+            else
+              mv "$out/Flip7.UI" "$out/flip7"
+              tar -czf "artifacts/flip7-$rid.tar.gz" -C "$out" flip7
+            fi
+          done
+
+      - name: Log in to nuget.org
+        id: nuget
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: leocon40
+
+      - name: Push packages
+        env:
+          NUGET_API_KEY: ${{ steps.nuget.outputs.NUGET_API_KEY }}
+        run: dotnet nuget push 'artifacts/*.nupkg' --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - uses: knope-dev/action@19617851f9f13ab2f27a05989c55efb18aca3675 # v2.1.2
+        with:
+          version: 0.23.0
+
+      - name: Tag and create the GitHub release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: knope release
