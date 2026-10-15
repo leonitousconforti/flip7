@@ -27,3 +27,18 @@ jobs:
       - run: dotnet build -c Release
       - run: dotnet test --no-build -c Release
       - run: dotnet pack --no-build -c Release -o artifacts
+      - name: Check the package carries its sources for Fable
+        run: |
+          contents=$(unzip -l artifacts/Flip7.*.nupkg)
+          grep -qE ' fable/+Flip7.fsproj$' <<< "$contents"
+          if grep -qE ' fable/+(obj|bin)/' <<< "$contents"; then exit 1; fi
+
+  fable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet tool restore
+      - run: dotnet fable src/Flip7.fsproj --outDir ${{ runner.temp }}/fable

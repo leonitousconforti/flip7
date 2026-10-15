@@ -29,6 +29,13 @@
         "csharpier"
       ],
       "rollForward": false
+    },
+    "fable": {
+      "version": "5.21.0",
+      "commands": [
+        "fable"
+      ],
+      "rollForward": false
     }
   }
 }

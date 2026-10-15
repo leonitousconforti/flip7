@@ -27,7 +27,11 @@ type public Strategy =
 
     override self.ToString() : string =
         let writeFloat (value: float) =
+#if FABLE_COMPILER
+            string value
+#else
             value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+#endif
 
         match self with
         | AlwaysHits -> "AlwaysHits"
@@ -101,7 +105,11 @@ type public Targeting =
 
     override self.ToString() : string =
         let writeFloat (value: float) =
+#if FABLE_COMPILER
+            string value
+#else
             value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+#endif
 
         match self with
         | ChoosesRandomly -> "ChoosesRandomly"
