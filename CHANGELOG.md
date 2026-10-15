@@ -1,4 +1,14 @@
 # Changelog
+## 0.1.1 (2026-10-15)
+
+### Features
+
+#### Compile with Fable
+
+The package carries its F# sources, so Fable can compile it to JavaScript.
+`Lookahead` and `Persistence` stay .NET only, as do the obsolete helpers that
+draw from `System.Random.Shared`.
+
 ## 0.1.0 (2026-10-14)
 
 ### Breaking Changes
