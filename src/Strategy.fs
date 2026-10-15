@@ -237,8 +237,11 @@ module public Strategy =
         Target = DecideTargetWith random
     }
 
+    // Fable has no System.Random.Shared, so this is .NET only
+#if !FABLE_COMPILER
     /// <summary>
     /// Evaluates a strategy without threading a source of randomness.
     /// </summary>
     [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Strategy.DecideWith instead")>]
     let public Decide: Decider = DecideWith System.Random.Shared
+#endif

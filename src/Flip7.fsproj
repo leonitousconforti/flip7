@@ -21,23 +21,28 @@
 
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
+    <!-- Fable compiles a package from its F# sources rather than its assembly -->
+    <Content Include="*.fsproj;**\*.fs" Exclude="obj\**;bin\**" PackagePath="fable\" />
   </ItemGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="Flip7.Test" />
   </ItemGroup>
 
+  <!-- Lookahead runs on threads and Persistence on the file system, so neither compiles to
+       JavaScript. Nothing else depends on them, and Fable honours these conditions in a package
+       as well as in a project. -->
   <ItemGroup>
     <Compile Include="ScoreBuckets.fs" />
     <Compile Include="Card.fs" />
     <Compile Include="Hand.fs" />
     <Compile Include="Deck.fs" />
     <Compile Include="Simulation.fs" />
-    <Compile Include="Lookahead.fs" />
+    <Compile Include="Lookahead.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
     <Compile Include="Player.fs" />
     <Compile Include="Strategy.fs" />
     <Compile Include="Timeline.fs" />
-    <Compile Include="Persistence.fs" />
+    <Compile Include="Persistence.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
     <Compile Include="Observation.fs" />
     <Compile Include="Inference.fs" />
   </ItemGroup>
