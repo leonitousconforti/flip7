@@ -676,7 +676,6 @@ module public Timeline =
     let public SimulateWith (random: System.Random) (players: list<string * Strategy * Targeting>) : Timeline =
         SimulateWithDecider random (Strategy.DecideWith random) players
 
-    // Fable has no System.Random.Shared, so this is .NET only
 #if !FABLE_COMPILER
     /// <summary>
     /// Simulates a full game without threading a source of randomness.

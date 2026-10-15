@@ -28,7 +28,6 @@ type public Strategy =
     override self.ToString() : string =
         let writeFloat (value: float) =
 #if FABLE_COMPILER
-            // Fable has no round-trip format, but JavaScript's own formatting round-trips
             string value
 #else
             value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
@@ -107,7 +106,6 @@ type public Targeting =
     override self.ToString() : string =
         let writeFloat (value: float) =
 #if FABLE_COMPILER
-            // Fable has no round-trip format, but JavaScript's own formatting round-trips
             string value
 #else
             value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)

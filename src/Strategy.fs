@@ -237,7 +237,6 @@ module public Strategy =
         Target = DecideTargetWith random
     }
 
-    // Fable has no System.Random.Shared, so this is .NET only
 #if !FABLE_COMPILER
     /// <summary>
     /// Evaluates a strategy without threading a source of randomness.

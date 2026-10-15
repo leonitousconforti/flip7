@@ -77,7 +77,6 @@ module public Deck =
             (Empty, Empty)
             Full
 
-    // Fable has no System.Random.Shared, so the helpers that hide it are .NET only
 #if !FABLE_COMPILER
     /// <summary>
     /// A random deck with the corresponding discards.

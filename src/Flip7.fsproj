@@ -29,9 +29,6 @@
     <InternalsVisibleTo Include="Flip7.Test" />
   </ItemGroup>
 
-  <!-- Lookahead runs on threads and Persistence on the file system, so neither compiles to
-       JavaScript. Nothing else depends on them, and Fable honours these conditions in a package
-       as well as in a project. -->
   <ItemGroup>
     <Compile Include="ScoreBuckets.fs" />
     <Compile Include="Card.fs" />

@@ -90,10 +90,3 @@ for model in models do
 // Bob plays like MaximizesExpectedValue
 // Chloe plays like HitUntilScore 24
 ```
-
-## Fable
-
-The package carries its F# sources, so [Fable](https://fable.io) can compile it
-to JavaScript. `Lookahead` and `Persistence` are .NET only, as are the obsolete
-helpers that draw from `System.Random.Shared`. A seeded `Random` deals different
-games under Fable than on .NET, because the two shuffle differently.
