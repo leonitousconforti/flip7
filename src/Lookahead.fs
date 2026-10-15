@@ -350,7 +350,6 @@ type public Lookahead
         | None -> invalidArg (nameof deck) "the deck holds more copies of a card than the full deck ever had"
 
     let report = defaultArg progress ignore
-
     let canceller =
         match cancellation with
         | Some token -> System.Threading.CancellationTokenSource.CreateLinkedTokenSource token
