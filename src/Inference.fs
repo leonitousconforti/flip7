@@ -49,19 +49,15 @@ module public Inference =
                 0.0
         | Strategy.HitUntilBustProbability threshold ->
             let onlyPlayer = List.isEmpty observation.OtherPlayers
-            if
-                Simulation.probabilityToBust observation.Deck observation.Discards observation.Player.Hand onlyPlayer < threshold
-            then
-                1.0
-            else
-                0.0
+            let bustProbability =
+                Simulation.probabilityToBust observation.Deck observation.Discards observation.Player.Hand onlyPlayer
+            if bustProbability < threshold then 1.0 else 0.0
         | Strategy.HitUntilNaiveBustProbability threshold ->
             let unseen = observation.Player.Hand |> List.fold Deck.Decrement Deck.Full
             let onlyPlayer = List.isEmpty observation.OtherPlayers
-            if Simulation.probabilityToBust unseen Deck.Empty observation.Player.Hand onlyPlayer < threshold then
-                1.0
-            else
-                0.0
+            let bustProbability =
+                Simulation.probabilityToBust unseen Deck.Empty observation.Player.Hand onlyPlayer
+            if bustProbability < threshold then 1.0 else 0.0
         | Strategy.SoftHitUntilScore(threshold, temperature) ->
             let distance = float (Hand.Score observation.Player.Hand) - float threshold
             1.0 / (1.0 + exp (distance / temperature))
