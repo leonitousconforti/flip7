@@ -42,6 +42,7 @@
     <Compile Include="Persistence.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
     <Compile Include="Observation.fs" />
     <Compile Include="Inference.fs" />
+    <Compile Include="Sage.fs" />
   </ItemGroup>
 
   <ItemGroup>
