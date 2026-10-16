@@ -333,6 +333,7 @@ let ``continuing from any legal mid-round state conserves all 94 cards and finis
                     Timeline.ContinueWith
                         (Random seed)
                         (Strategy.DecideWith(Random seed))
+                        (active @ finished |> List.map (fun player -> player.Name))
                         round
                         turnsTaken
                         active

@@ -43,6 +43,7 @@ let public Make
 type public Splice = {
     Round: uint
     Turn: uint
+    Seating: string list
     Active: Player list
     Finished: Player list
     Deck: Deck
@@ -56,6 +57,9 @@ let private spliceOf (edited: Model) : Splice = {
     Finished = edited.Finished
     Deck = edited.Deck
     Discards = edited.Discards
+    Seating =
+        edited.Seating
+        |> Option.defaultValue (edited.Active @ edited.Finished |> List.map (fun player -> player.Name))
 }
 
 type public EditException(splice: Splice) =
@@ -213,6 +217,7 @@ let public Fork (random: Random) (decide: Strategy.Decider) (splice: Splice) : T
             Timeline.ContinueWith
                 random
                 decide
+                splice.Seating
                 splice.Round
                 turnsTaken
                 splice.Active

@@ -143,6 +143,7 @@ let ``continuing from a state with a repeated name is refused`` () =
         Timeline.ContinueWith
             (System.Random 1)
             (Strategy.DecideWith(System.Random 1))
+            [ "A"; "A" ]
             1u
             Map.empty
             active
@@ -207,10 +208,10 @@ let ``ContinueWith resumes a round mid-flight and banks finished hands`` () =
         |> List.fold Deck.Decrement Deck.Full
 
     // Everyone stands as soon as they are asked, so the seeded round closes
-    // immediately; both actives already took their forced first hit
-    // Standing is only the hit-or-stand half: play continues past the seeded
-    // round, and a forced first hit there can still flip an action card that
-    // has to be aimed at someone
+    // immediately; both actives already took their forced first hit Standing is
+    // only the hit-or-stand half: play continues past the seeded round, and a
+    // forced first hit there can still flip an action card that has to be aimed
+    // at someone
     let decide: Strategy.Decider = {
         HitOrStand = fun _ _ _ _ _ _ _ -> async.Return Strategy.Stand
         Target = Strategy.DecideTargetWith(System.Random 3)
@@ -219,7 +220,15 @@ let ``ContinueWith resumes a round mid-flight and banks finished hands`` () =
     let turnsTaken = Map.ofList [ "A", 1u; "B", 1u ]
 
     let timeline =
-        Timeline.ContinueWith (System.Random 3) decide 4u turnsTaken active finished (deck, Deck.Empty)
+        Timeline.ContinueWith
+            (System.Random 3)
+            decide
+            [ "A"; "B"; "C" ]
+            4u
+            turnsTaken
+            active
+            finished
+            (deck, Deck.Empty)
         |> AsyncSeq.toListAsync
         |> Async.RunSynchronously
 
@@ -239,3 +248,151 @@ let ``ContinueWith resumes a round mid-flight and banks finished hands`` () =
         (List.last timeline).Players
         |> List.exists (fun player -> player.FirmScore >= 200u)
     )
+
+[<Fact>]
+let ``a continued round is scored and followed in seat order`` () =
+    let active = [ Player.Make("A", Strategy.AlwaysStands, 0u, [ ValueCard Card.Five ]) ]
+    let finished = [
+        Player.Make("B", Strategy.AlwaysStands, 0u, [ ValueCard Card.Seven ])
+        Player.Make("C", Strategy.AlwaysStands, 0u, [ ValueCard Card.Nine ])
+    ]
+
+    let deck =
+        active @ finished
+        |> List.collect (fun player -> player.Hand)
+        |> List.fold Deck.Decrement Deck.Full
+
+    let rounds =
+        Timeline.ContinueWith
+            (System.Random 3)
+            (Strategy.DecideWith(System.Random 3))
+            [ "A"; "B"; "C" ]
+            2u
+            (Map.ofList [ "A", 1u ])
+            active
+            finished
+            (deck, Deck.Empty)
+        |> AsyncSeq.toListAsync
+        |> Async.RunSynchronously
+        |> List.where (fun instant -> instant.Event.IsRoundEnded)
+        |> List.map (fun instant -> instant.Players |> List.map (fun player -> player.Name))
+
+    // The second round started one seat along, at B, and the third starts at C
+    Assert.Equal<string list>([ "B"; "C"; "A" ], rounds[0])
+    Assert.Equal<string list>([ "C"; "A"; "B" ], rounds[1])
+
+[<Fact>]
+let ``continuing with a seating that is not the table is refused`` () =
+    let active = [
+        Player.Make("A", Strategy.AlwaysStands)
+        Player.Make("B", Strategy.AlwaysStands)
+    ]
+
+    let error =
+        Assert.Throws<System.ArgumentException>(fun () ->
+            Timeline.ContinueWith
+                (System.Random 1)
+                (Strategy.DecideWith(System.Random 1))
+                [ "A"; "C" ]
+                1u
+                Map.empty
+                active
+                []
+                (Deck.Full, Deck.Empty)
+            |> ignore
+        )
+
+    Assert.Equal("seating", error.ParamName)
+
+// Passes every call to a Random of the same seed and counts them: each one the
+// engine makes draws a single sample, so a fresh Random of the seed wound on by
+// the count stands exactly where this one does
+type private Counting(seed: int) =
+    inherit System.Random()
+    let inner = System.Random seed
+    member val Calls = 0 with get, set
+
+    override self.Next() =
+        self.Calls <- self.Calls + 1
+        inner.Next()
+
+    override self.Next(maxValue: int) =
+        self.Calls <- self.Calls + 1
+        inner.Next maxValue
+
+    override self.Next(minValue: int, maxValue: int) =
+        self.Calls <- self.Calls + 1
+        inner.Next(minValue, maxValue)
+
+    override self.NextDouble() =
+        self.Calls <- self.Calls + 1
+        inner.NextDouble()
+
+    override self.Sample() =
+        self.Calls <- self.Calls + 1
+        inner.NextDouble()
+
+// A continuation is a fork: given the seating, the turns everyone has taken,
+// and the Random where it stood, a game continued from any hit-or-stand
+// question plays out exactly as the game it was forked from, later rounds and
+// all. Every turn count a fork needs is one a decider can see: everyone still
+// in the round has taken their forced first turn before anyone is asked
+[<Theory>]
+[<InlineData 1>]
+[<InlineData 2>]
+[<InlineData 3>]
+let ``a game forked at any question with its seating plays out as it did`` (seed: int) =
+    let lineup = [
+        "Alice", Strategy.PlaysLikeAHuman 20u, Targeting.ChoosesRandomly
+        "Bob", Strategy.MaximizesExpectedValue, Targeting.PlaysSpitefully
+        "Carol", Strategy.Random, Targeting.ChoosesRandomly
+        "Dave", Strategy.HitUntilScore 22u, Targeting.PlaysGreedily(0.8, 0.2)
+    ]
+
+    let seating = lineup |> List.map (fun (name, _, _) -> name)
+    let random = Counting seed
+    let inner = Strategy.DecideWith random
+    let played = ResizeArray<Instant>()
+    let forks = ResizeArray<_>()
+    let asked = ref (0u, Map.empty<string, uint>)
+
+    let decide: Strategy.Decider = {
+        inner with
+            HitOrStand =
+                fun strategy round turn player others finished decks ->
+                    let lastRound, lastTurns = asked.Value
+                    let lastTurns = if round = lastRound then lastTurns else Map.empty
+
+                    let taken =
+                        player :: others
+                        |> List.map (fun active ->
+                            if active.Name = player.Name then
+                                active.Name, turn - 1u
+                            else
+                                active.Name, lastTurns |> Map.tryFind active.Name |> Option.defaultValue 1u
+                        )
+                        |> Map.ofList
+
+                    forks.Add(played.Count, random.Calls, round, taken, player :: others, finished, decks)
+                    asked.Value <- round, Map.add player.Name turn lastTurns
+                    inner.HitOrStand strategy round turn player others finished decks
+    }
+
+    Timeline.SimulateWithDecider random decide lineup
+    |> AsyncSeq.iter played.Add
+    |> Async.RunSynchronously
+
+    Assert.NotEmpty(forks)
+
+    for before, calls, round, taken, active, finished, decks in forks do
+        let forked = System.Random seed
+
+        for _ in 1..calls do
+            forked.NextDouble() |> ignore
+
+        let rest =
+            Timeline.ContinueWith forked (Strategy.DecideWith forked) seating round taken active finished decks
+            |> AsyncSeq.toListAsync
+            |> Async.RunSynchronously
+
+        Assert.Equal<Instant list>(List.ofSeq played |> List.skip before, rest)

@@ -512,13 +512,13 @@ module public Timeline =
                     yield! GoonSession random decide round turnsTaken active' finished' decks''
             }
 
-    // Names are the engine's identity key: turn counts, round scores,
-    // unparking a set-aside card during a deal3, and matching a targeting
-    // decider's answer back to a seat are all done by name, and a duplicate
-    // corrupts all four quietly rather than failing. Checked where a game or a
-    // continuation is set up, and eagerly rather than inside the timeline, so
-    // the error lands where the lineup was written instead of wherever it
-    // first came to be enumerated.
+    // Names are the engine's identity key: turn counts, round scores, unparking
+    // a set-aside card during a deal3, and matching a targeting decider's
+    // answer back to a seat are all done by name, and a duplicate corrupts all
+    // four quietly rather than failing. Checked where a game or a continuation
+    // is set up, and eagerly rather than inside the timeline, so the error
+    // lands where the lineup was written instead of wherever it first came to
+    // be enumerated.
     let private EnsureDistinctNames (players: Player list) : unit =
         let duplicated =
             players
@@ -534,20 +534,39 @@ module public Timeline =
                     $"Player names must be unique, but these are seated more than once: {duplicated}"
             )
 
+    // Every player must be named in the seating, and every name in the seating
+    // must be a player. Checked where a continuation is set up, and eagerly
+    // rather than inside the timeline, so the error lands where the seating was
+    // written instead of wherever it first came to be enumerated.
+    let private EnsureAllSeated (seating: string list) (players: Player list) : unit =
+        let names = players |> List.map (fun player -> player.Name)
+        let missing = seating |> List.where (fun name -> not (List.contains name names))
+
+        if not (List.isEmpty missing) then
+            let missing = String.concat ", " missing
+
+            raise (
+                System.ArgumentException $"The seating must name every player once, but these are missing: {missing}"
+            )
+
     /// <summary>
-    /// Continues a game from a mid-round state: the active players in rotation
-    /// order (the next actor at the head), the players already finished this
-    /// round, the round number, how many turns each player has taken, and the
-    /// decks. The round plays out from there and whole rounds follow until a
+    /// Continues a game from a mid-round state: the seating, every player's
+    /// name in seat order, the round number, how many turns each player has
+    /// taken, the active players in rotation order (the next actor at the
+    /// head), the players already finished this round, and the decks. The first
+    /// round starts at the head of the seating and each round after it one seat
+    /// further round the table, so the round being continued started round - 1
+    /// seats along, and the seating is what scores it and deals the rounds that
+    /// follow. The round plays out from there and whole rounds follow until a
     /// player first reaches 200 points at a RoundEnded, which is the last
     /// instant of the timeline. A player whose turn count is zero is dealt a
     /// forced first hit, so a continuation should count at least one turn for
-    /// anyone already holding cards. The next round's rotation derives from the
-    /// given ordering, since the original seating is not recoverable.
+    /// anyone already holding cards.
     /// </summary>
     let public ContinueWith
         (random: System.Random)
         (decide: Strategy.Decider)
+        (seating: string list)
         (startingRound: uint)
         (startingTurnsTaken: Map<string, uint>)
         (startingActive: Player list)
@@ -556,10 +575,16 @@ module public Timeline =
         : Timeline =
         let everyone = startingActive @ startingFinished
         EnsureDistinctNames everyone
+        EnsureAllSeated seating everyone
 
         if List.isEmpty everyone then
             AsyncSeq.empty
         else
+
+        let along = int ((startingRound + uint seating.Length - 1u) % uint seating.Length)
+        let seated =
+            List.skip along seating @ List.take along seating
+            |> List.map (fun name -> everyone |> List.find (fun player -> player.Name = name))
 
         // A loop rather than recursion so an arbitrarily long game cannot
         // accumulate nested asyncSeq appends
@@ -571,7 +596,7 @@ module public Timeline =
 
             // The round's turn order, which keeps scoring independent of the
             // order players finish in
-            let mutable roster = startingActive @ startingFinished
+            let mutable roster = seated
             let mutable decks = startingDecks
             let mutable gameOver = false
 
@@ -661,7 +686,8 @@ module public Timeline =
                 Discards = Deck.Empty
             }
 
-            yield! ContinueWith random decide 1u Map.empty startingPlayers [] (Deck.Full, Deck.Empty)
+            let seating = startingPlayers |> List.map (fun player -> player.Name)
+            yield! ContinueWith random decide seating 1u Map.empty startingPlayers [] (Deck.Full, Deck.Empty)
         }
 
     /// <summary>
