@@ -534,20 +534,39 @@ module public Timeline =
                     $"Player names must be unique, but these are seated more than once: {duplicated}"
             )
 
-    // Every player must be named in the seating, and every name in the seating
-    // must be a player. Checked where a continuation is set up, and eagerly
+    // Every player must be named in the seating exactly once: a player it left
+    // out would never be dealt into a later round, and a name it repeated would
+    // be dealt in twice. Checked where a continuation is set up, and eagerly
     // rather than inside the timeline, so the error lands where the seating was
     // written instead of wherever it first came to be enumerated.
     let private EnsureAllSeated (seating: string list) (players: Player list) : unit =
         let names = players |> List.map (fun player -> player.Name)
-        let missing = seating |> List.where (fun name -> not (List.contains name names))
 
-        if not (List.isEmpty missing) then
-            let missing = String.concat ", " missing
+        if List.sort seating <> List.sort names then
+            let unseated = names |> List.where (fun name -> not (List.contains name seating))
 
-            raise (
-                System.ArgumentException $"The seating must name every player once, but these are missing: {missing}"
-            )
+            let strangers =
+                seating
+                |> List.where (fun name -> not (List.contains name names))
+                |> List.distinct
+
+            let repeated =
+                seating
+                |> List.countBy id
+                |> List.where (fun (_, seats) -> seats > 1)
+                |> List.map fst
+
+            let problems =
+                [
+                    "left out", unseated
+                    "not at the table", strangers
+                    "seated more than once", repeated
+                ]
+                |> List.where (fun (_, names) -> not (List.isEmpty names))
+                |> List.map (fun (problem, names) -> $"""{problem}: {String.concat ", " names}""")
+                |> String.concat "; "
+
+            raise (System.ArgumentException $"The seating must name every player once, but {problems}")
 
     /// <summary>
     /// Continues a game from a mid-round state: the seating, every player's

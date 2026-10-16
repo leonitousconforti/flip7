@@ -277,6 +277,9 @@ let ``a continued round is scored and followed in seat order`` () =
     Assert.Equal<string list>([ "B"; "C"; "A" ], rounds[0])
     Assert.Equal<string list>([ "C"; "A"; "B" ], rounds[1])
 
+// A seating has to name exactly the players at the table: one it leaves out
+// would never be dealt into a later round, and one it repeats would be dealt
+// in twice
 [<Fact>]
 let ``continuing with a seating that is not the table is refused`` () =
     let active = [
@@ -284,19 +287,20 @@ let ``continuing with a seating that is not the table is refused`` () =
         Player.Make("B", Strategy.AlwaysStands)
     ]
 
-    Assert.Throws<System.ArgumentException>(fun () ->
-        Timeline.ContinueWith
-            (System.Random 1)
-            Strategy.Decider.Default
-            [ "A"; "C" ]
-            1u
-            Map.empty
-            active
-            []
-            (Deck.Full, Deck.Empty)
+    for seating in [ [ "A"; "C" ]; [ "A" ]; [ "A"; "A"; "B" ]; [ "A"; "B"; "C" ]; [] ] do
+        Assert.Throws<System.ArgumentException>(fun () ->
+            Timeline.ContinueWith
+                (System.Random 1)
+                Strategy.Decider.Default
+                seating
+                1u
+                Map.empty
+                active
+                []
+                (Deck.Full, Deck.Empty)
+            |> ignore
+        )
         |> ignore
-    )
-    |> ignore
 
 // Passes every call to a Random of the same seed and counts them: each one the
 // engine makes draws a single sample, so a fresh Random of the seed wound on by
