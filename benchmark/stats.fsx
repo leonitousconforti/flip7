@@ -80,21 +80,16 @@ let searcher =
 let LookAheadDecider (random: System.Random) : Strategy.HitOrStandDecider =
     let x = fun () -> random.NextDouble()
     let onUnpricedHand = fun () -> if x () < 0.5 then Strategy.Hit else Strategy.Stand
-    fun _strategy _round _turn player _otherPlayers _finishedPlayers _decks -> async {
+    fun _round _turn player _otherPlayers _finishedPlayers _decks -> async {
         match! searcher.GainFromHitting player.Hand with
         | Error(UnpricedHand _hand) -> return onUnpricedHand ()
         | Error lookAheadError -> return raise (System.InvalidOperationException $"Lookahead failed: {lookAheadError}")
         | Ok netScore -> return if netScore > 0.0 then Strategy.Hit else Strategy.Stand
     }
 
-let makeDecider (random: System.Random) : Strategy.Decider = {
-    Target = Strategy.DecideTargetWith random
-    HitOrStand =
-        fun strategy ->
-            match strategy with
-            | Strategy.Custom "LookAhead" -> LookAheadDecider random strategy
-            | _ -> Strategy.DecideHitOrStandWith random strategy
-}
+let decider =
+    Strategy.Decider.Default
+    |> Strategy.addHitOrStandStrategy "LookAhead" (fun random -> LookAheadDecider random)
 
 let players = [
     ("Alice", Strategy.Random, Targeting.ChoosesRandomly)
@@ -114,7 +109,6 @@ let players = [
 let makeThread (cancellation: System.Threading.CancellationToken) (index: int) : Async<uint * TimelineStats.Stats> =
     let cancelled: Task = Task.Delay(System.Threading.Timeout.Infinite, cancellation)
     let random = System.Random(seed + index)
-    let decider = makeDecider random
 
     let quota =
         if limit < 0 then
