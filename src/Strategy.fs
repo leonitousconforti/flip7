@@ -1,7 +1,7 @@
 namespace Flip7
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
-module public Strategy =
+module public rec Strategy =
     /// <summary>
     /// To hit or to stand.
     /// </summary>
@@ -225,6 +225,18 @@ module public Strategy =
         HitOrStand: System.Random -> Strategy -> HitOrStandDecider
         Target: System.Random -> Targeting -> TargetDecider
     } with
+
+        member public self.addHitOrStandStrategy
+            (name: string, implementation: System.Random -> HitOrStandDecider)
+            : Decider
+            =
+            self |> addHitOrStandStrategy name implementation
+
+        member public self.addTargetingStrategy
+            (name: string, implementation: System.Random -> TargetDecider)
+            : Decider
+            =
+            self |> addTargetingStrategy name implementation
 
         static member public Default = {
             HitOrStand = DecideHitOrStandWith

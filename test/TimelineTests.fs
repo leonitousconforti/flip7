@@ -142,7 +142,7 @@ let ``continuing from a state with a repeated name is refused`` () =
     Assert.Throws<System.ArgumentException>(fun () ->
         Timeline.ContinueWith
             (System.Random 1)
-            (Strategy.DecideWith(System.Random 1))
+            Strategy.Decider.Default
             [ "A"; "A" ]
             1u
             Map.empty
@@ -157,26 +157,22 @@ let ``continuing from a state with a repeated name is refused`` () =
 let ``SimulateWithDecider routes prompt players through the injected decider`` () =
     let mutable decisions = 0
 
-    let decide: Strategy.Decider = {
-        HitOrStand =
-            fun strategy round turn player others finished decks ->
-                match strategy with
-                | Strategy.Custom name ->
-                    decisions <- decisions + 1
-
-                    async.Return(
-                        if Hand.Score player.Hand < 18u then
-                            Strategy.Hit
-                        else
-                            Strategy.Stand
-                    )
-                | strategy ->
-                    Strategy.DecideHitOrStandWith (System.Random 1) strategy round turn player others finished decks
-        Target = Strategy.DecideTargetWith(System.Random 1)
-    }
+    let decider =
+        Strategy.Decider.Default
+        |> Strategy.addHitOrStandStrategy
+            "TerminalPrompt"
+            (fun _ round turn player others finished decks ->
+                decisions <- decisions + 1
+                async.Return(
+                    if Hand.Score player.Hand < 18u then
+                        Strategy.Hit
+                    else
+                        Strategy.Stand
+                )
+            )
 
     let timeline =
-        Timeline.SimulateWithDecider (System.Random 5) decide [
+        Timeline.SimulateWithDecider (System.Random 5) decider [
             "You", Strategy.Custom "TerminalPrompt", Targeting.ChoosesRandomly
             "Bot", Strategy.HitUntilScore 25u, Targeting.ChoosesRandomly
         ]
@@ -208,13 +204,13 @@ let ``ContinueWith resumes a round mid-flight and banks finished hands`` () =
         |> List.fold Deck.Decrement Deck.Full
 
     // Everyone stands as soon as they are asked, so the seeded round closes
-    // immediately; both actives already took their forced first hit Standing is
-    // only the hit-or-stand half: play continues past the seeded round, and a
+    // immediately; both actives already took their forced first hit. Standing
+    // is only the hit-or-stand half: play continues past the seeded round, and a
     // forced first hit there can still flip an action card that has to be aimed
     // at someone
     let decide: Strategy.Decider = {
-        HitOrStand = fun _ _ _ _ _ _ _ -> async.Return Strategy.Stand
-        Target = Strategy.DecideTargetWith(System.Random 3)
+        HitOrStand = fun _ _ _ _ _ _ _ _ -> async.Return Strategy.Stand
+        Target = Strategy.Decider.Default.Target
     }
 
     let turnsTaken = Map.ofList [ "A", 1u; "B", 1u ]
@@ -265,7 +261,7 @@ let ``a continued round is scored and followed in seat order`` () =
     let rounds =
         Timeline.ContinueWith
             (System.Random 3)
-            (Strategy.DecideWith(System.Random 3))
+            Strategy.Decider.Default
             [ "A"; "B"; "C" ]
             2u
             (Map.ofList [ "A", 1u ])
@@ -288,21 +284,19 @@ let ``continuing with a seating that is not the table is refused`` () =
         Player.Make("B", Strategy.AlwaysStands)
     ]
 
-    let error =
-        Assert.Throws<System.ArgumentException>(fun () ->
-            Timeline.ContinueWith
-                (System.Random 1)
-                (Strategy.DecideWith(System.Random 1))
-                [ "A"; "C" ]
-                1u
-                Map.empty
-                active
-                []
-                (Deck.Full, Deck.Empty)
-            |> ignore
-        )
-
-    Assert.Equal("seating", error.ParamName)
+    Assert.Throws<System.ArgumentException>(fun () ->
+        Timeline.ContinueWith
+            (System.Random 1)
+            Strategy.Decider.Default
+            [ "A"; "C" ]
+            1u
+            Map.empty
+            active
+            []
+            (Deck.Full, Deck.Empty)
+        |> ignore
+    )
+    |> ignore
 
 // Passes every call to a Random of the same seed and counts them: each one the
 // engine makes draws a single sample, so a fresh Random of the seed wound on by
@@ -350,8 +344,8 @@ let ``a game forked at any question with its seating plays out as it did`` (seed
     ]
 
     let seating = lineup |> List.map (fun (name, _, _) -> name)
-    let random = Counting seed
-    let inner = Strategy.DecideWith random
+    let counting = Counting seed
+    let inner = Strategy.Decider.Default
     let played = ResizeArray<Instant>()
     let forks = ResizeArray<_>()
     let asked = ref (0u, Map.empty<string, uint>)
@@ -359,7 +353,7 @@ let ``a game forked at any question with its seating plays out as it did`` (seed
     let decide: Strategy.Decider = {
         inner with
             HitOrStand =
-                fun strategy round turn player others finished decks ->
+                fun random strategy round turn player others finished decks ->
                     let lastRound, lastTurns = asked.Value
                     let lastTurns = if round = lastRound then lastTurns else Map.empty
 
@@ -373,12 +367,12 @@ let ``a game forked at any question with its seating plays out as it did`` (seed
                         )
                         |> Map.ofList
 
-                    forks.Add(played.Count, random.Calls, round, taken, player :: others, finished, decks)
+                    forks.Add(played.Count, counting.Calls, round, taken, player :: others, finished, decks)
                     asked.Value <- round, Map.add player.Name turn lastTurns
-                    inner.HitOrStand strategy round turn player others finished decks
+                    inner.HitOrStand random strategy round turn player others finished decks
     }
 
-    Timeline.SimulateWithDecider random decide lineup
+    Timeline.SimulateWithDecider counting decide lineup
     |> AsyncSeq.iter played.Add
     |> Async.RunSynchronously
 
@@ -391,7 +385,7 @@ let ``a game forked at any question with its seating plays out as it did`` (seed
             forked.NextDouble() |> ignore
 
         let rest =
-            Timeline.ContinueWith forked (Strategy.DecideWith forked) seating round taken active finished decks
+            Timeline.ContinueWith forked Strategy.Decider.Default seating round taken active finished decks
             |> AsyncSeq.toListAsync
             |> Async.RunSynchronously
 

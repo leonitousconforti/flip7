@@ -40,7 +40,7 @@ let private handWorth (score: uint) : Hand =
         build score valueByPoints []
 
 [<Fact>]
-let ``ProbabilityOfHit matches DecideHitOrStandWith for deterministic strategies`` () =
+let ``ProbabilityOfHit matches the default decider for deterministic strategies`` () =
     let random = System.Random 11
 
     let observations =
@@ -74,7 +74,7 @@ let ``ProbabilityOfHit matches DecideHitOrStandWith for deterministic strategies
         for strategy in deterministic do
             let expected =
                 match
-                    Strategy.DecideHitOrStandWith
+                    Strategy.Decider.Default.HitOrStand
                         random
                         strategy
                         observation.Round

@@ -332,7 +332,7 @@ let ``continuing from any legal mid-round state conserves all 94 cards and finis
                 let timeline =
                     Timeline.ContinueWith
                         (Random seed)
-                        (Strategy.DecideWith(Random seed))
+                        Strategy.Decider.Default
                         (active @ finished |> List.map (fun player -> player.Name))
                         round
                         turnsTaken
@@ -357,14 +357,15 @@ let ``observations reproduce exactly the decisions the engine asked for`` () =
                 // engine poses it, so the observations reconstructed from the
                 // timeline can be checked against what the players really saw
                 let random = Random seed
-                let inner = Strategy.DecideWith random
+                let inner = Strategy.Decider.Default
                 let asked = ResizeArray<Observation>()
 
                 let recording = {
                     inner with
                         HitOrStand =
-                            fun strategy round turn player others finished decks -> async {
-                                let! choice = inner.HitOrStand strategy round turn player others finished decks
+                            fun random strategy round turn player others finished decks -> async {
+                                let! choice =
+                                    inner.HitOrStand random strategy round turn player others finished decks
 
                                 asked.Add {
                                     Name = player.Name

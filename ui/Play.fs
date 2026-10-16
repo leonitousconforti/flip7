@@ -55,11 +55,11 @@ type private Model = {
     // Which candidate the picker sits on, kept by name so that it reads the
     // same way the editor's cursor does
     Choice: string option
-    // Who was asked, against the instant their ask arrived at. Keyed by
-    // instant rather than holding only the latest: the engine races on once an
-    // answer is sent and can raise the next ask while the screen is still on
-    // the frame the last one arrived at, so which player a frame is waiting on
-    // is a property of that frame, not of whichever ask happens to be open now
+    // Who was asked, against the instant their ask arrived at. Keyed by instant
+    // rather than holding only the latest: the engine races on once an answer
+    // is sent and can raise the next ask while the screen is still on the frame
+    // the last one arrived at, so which player a frame is waiting on is a
+    // property of that frame, not of whichever ask happens to be open now
     AskedAt: Map<int, string>
     // The editing overlay; only ever opened while a prompt is being asked
     Editor: Editor.Model option
@@ -107,9 +107,9 @@ let private init: Model = {
     Quit = false
 }
 
-// There is no phase machine: what the screen is doing is derived from the
-// facts above. The index of the frame on screen is the cursor once its read
-// has landed
+// There is no phase machine: what the screen is doing is derived from the facts
+// above. The index of the frame on screen is the cursor once its read has
+// landed
 let private showing (model: Model) : int option =
     match model.Reading, model.Frame with
     | None, Some _ -> Some model.Cursor
@@ -124,9 +124,9 @@ let private asking (model: Model) : Prompt option =
 let private aiming (model: Model) : Aim option =
     model.Aim |> Option.filter (fun aim -> showing model = Some(aim.At - 1))
 
-// The candidates in the order they sit on screen, which the store already
-// emits seated, so the picker moves the way the eye does. Falls back to the
-// engine's rotation order if the frame does not cover every candidate
+// The candidates in the order they sit on screen, which the store already emits
+// seated, so the picker moves the way the eye does. Falls back to the engine's
+// rotation order if the frame does not cover every candidate
 let private inSeatedOrder (model: Model) (aim: Aim) : Player list =
     let seated =
         match model.Frame with
@@ -153,14 +153,13 @@ let private chosen (model: Model) (aim: Aim) : Player =
 // the ask lands until the screen moves past that frame, which outlasts the ask
 // itself: answering resumes the engine, but the instant that follows still
 // takes a pace interval to be written, ingested and read. Tying this to the
-// open ask instead drops the annotation and pops the previous actor's
-// highlight back on for that whole gap, one repaint after the answer.
+// open ask instead drops the annotation and pops the previous actor's highlight
+// back on for that whole gap, one repaint after the answer.
 let private parked (model: Model) : string option =
     showing model
     |> Option.bind (fun shown -> Map.tryFind (shown + 1) model.AskedAt)
 
-// The game is over once the final instant of a complete timeline has been
-// shown
+// The game is over once the final instant of a complete timeline has been shown
 let private gameOver (model: Model) : bool =
     let count, isComplete, _ = model.Snapshot
     isComplete && count > 0 && showing model = Some(count - 1)
@@ -188,13 +187,13 @@ let private update (msg: Msg) (model: Model) : Model =
         let count, _, _ = model.Snapshot
         let model = { model with Refreshing = true }
 
-        // No guard against advancing past an open prompt is needed: the
-        // engine is suspended at the ask, so no instant past it exists yet
+        // No guard against advancing past an open prompt is needed: the engine
+        // is suspended at the ask, so no instant past it exists yet
         if model.Reading.IsSome then
             model
         elif model.Cursor < count - 1 then
-            // The store meters ingestion to the pace, so chasing the
-            // newest instant is what unfolds the game at watchable speed
+            // The store meters ingestion to the pace, so chasing the newest
+            // instant is what unfolds the game at watchable speed
             {
                 model with
                     Cursor = model.Cursor + 1
@@ -218,9 +217,9 @@ let private update (msg: Msg) (model: Model) : Model =
         else
             { model with Reading = Some model.Cursor }
 
-    // A new question has no answer yet. The reset is load-bearing: two
-    // prompts in a row answered identically must still each produce a
-    // Resolved change for the effects diff to send
+    // A new question has no answer yet. The reset is load-bearing: two prompts
+    // in a row answered identically must still each produce a Resolved change
+    // for the effects diff to send
     | Prompted prompt -> {
         model with
             Prompt = Some prompt
@@ -442,71 +441,66 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
             emitPlayersInSeatedOrder = true
         )
 
-    // Instants written so far: the driver advances it, and the decider
-    // stamps each prompt with it so the viewer can catch up before asking
+    // Instants written so far: the driver advances it, and the decider stamps
+    // each prompt with it so the viewer can catch up before asking
     let mutable written = 0
 
-    // The one reply channel. The engine suspends at each prompt, so prompts
-    // are strictly sequential and a single shared channel is safe by
-    // construction; and channels never run continuations synchronously by
-    // default, so answering a prompt from the runtime loop never re-enters
-    // the engine inline
+    // The one reply channel. The engine suspends at each prompt, so prompts are
+    // strictly sequential and a single shared channel is safe by construction;
+    // and channels never run continuations synchronously by default, so
+    // answering a prompt from the runtime loop never re-enters the engine
+    // inline
     let replies = Channel.CreateUnbounded<Decision>()
 
-    let decider (dispatch: Msg -> unit) : Strategy.Decider = {
-        Target =
-            fun targeting ask chooser candidates finished decks ->
-                match targeting with
-                | Targeting.ChoosesExternally name when name = terminalPrompt -> async {
-                    let deck, discards = decks
+    let decider (dispatch: Msg -> unit) : Strategy.Decider =
+        Strategy.Decider.Default
+        |> Strategy.addTargetingStrategy
+            terminalPrompt
+            (fun _random ask chooser candidates finished decks -> async {
+                let deck, discards = decks
 
-                    dispatch (
-                        Aiming {
-                            At = written
-                            Ask = ask
-                            Chooser = chooser
-                            Candidates = candidates
-                            Deck = deck
-                            Discards = discards
-                        }
-                    )
+                dispatch (
+                    Aiming {
+                        At = written
+                        Ask = ask
+                        Chooser = chooser
+                        Candidates = candidates
+                        Deck = deck
+                        Discards = discards
+                    }
+                )
 
-                    match! replies.Reader.ReadAsync().AsTask() |> Async.AwaitTask with
-                    | Aimed player -> return player
-                    | Quitting -> return raise (QuitException())
-                    // The engine is suspended at this one ask, and the picker
-                    // is the only thing the keyboard can answer it with
-                    | decision -> return raise (InvalidOperationException $"answered a target ask with {decision}")
-                  }
-                | targeting -> Strategy.DecideTargetWith random targeting ask chooser candidates finished decks
-        HitOrStand =
-            fun strategy round turn player others finished decks ->
-                match strategy with
-                | Strategy.Custom name when name = terminalPrompt -> async {
-                    let deck, discards = decks
+                match! replies.Reader.ReadAsync().AsTask() |> Async.AwaitTask with
+                | Aimed player -> return player
+                | Quitting -> return raise (QuitException())
+                // The engine is suspended at this one ask, and the picker is
+                // the only thing the keyboard can answer it with
+                | decision -> return raise (InvalidOperationException $"answered a target ask with {decision}")
+            })
+        |> Strategy.addHitOrStandStrategy
+            terminalPrompt
+            (fun _random round turn player others finished decks -> async {
+                let deck, discards = decks
 
-                    dispatch (
-                        Prompted {
-                            Round = round
-                            Turn = turn
-                            At = written
-                            Player = player
-                            Others = others
-                            Finished = finished
-                            Deck = deck
-                            Discards = discards
-                        }
-                    )
+                dispatch (
+                    Prompted {
+                        Round = round
+                        Turn = turn
+                        At = written
+                        Player = player
+                        Others = others
+                        Finished = finished
+                        Deck = deck
+                        Discards = discards
+                    }
+                )
 
-                    match! replies.Reader.ReadAsync().AsTask() |> Async.AwaitTask with
-                    | Answered decision -> return decision
-                    | Forked splice -> return raise (Editor.EditException splice)
-                    | Quitting -> return raise (QuitException())
-                    | decision ->
-                        return raise (InvalidOperationException $"answered a hit-or-stand ask with {decision}")
-                  }
-                | strategy -> Strategy.DecideHitOrStandWith random strategy round turn player others finished decks
-    }
+                match! replies.Reader.ReadAsync().AsTask() |> Async.AwaitTask with
+                | Answered decision -> return decision
+                | Forked splice -> return raise (Editor.EditException splice)
+                | Quitting -> return raise (QuitException())
+                | decision -> return raise (InvalidOperationException $"answered a hit-or-stand ask with {decision}")
+            })
 
     // The driver: drains the engine to disk until the game ends on its own. A
     // quit or an edit unwinds the paused engine with an exception, which async

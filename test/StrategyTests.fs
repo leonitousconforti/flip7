@@ -26,7 +26,7 @@ let private decks = Deck.Full, Deck.Empty
 // Tests are an edge of the program, so they inject the randomness and run
 // the asynchronous decider synchronously
 let private decide strategy round turn player others finished decks =
-    Strategy.DecideHitOrStandWith (System.Random 1) strategy round turn player others finished decks
+    Strategy.Decider.Default.HitOrStand (System.Random 1) strategy round turn player others finished decks
     |> Async.RunSynchronously
 
 [<Fact>]
@@ -52,7 +52,7 @@ let ``ToString and Parse round-trip every strategy`` () =
     |> List.iter (fun strategy -> Assert.Equal(strategy, Strategy.Parse(string strategy)))
 
 [<Fact>]
-let ``Externally decided strategies cannot be evaluated by DecideHitOrStandWith`` () =
+let ``Externally decided strategies cannot be evaluated by the default decider`` () =
     let player: Player = {
         Name = "You"
         Strategy = Strategy.Custom "TerminalPrompt"
@@ -62,7 +62,15 @@ let ``Externally decided strategies cannot be evaluated by DecideHitOrStandWith`
     }
 
     Assert.Throws<System.InvalidOperationException>(fun () ->
-        Strategy.DecideHitOrStandWith (System.Random 1) (Strategy.Custom "TerminalPrompt") 1u 2u player [] [] decks
+        Strategy.Decider.Default.HitOrStand
+            (System.Random 1)
+            (Strategy.Custom "TerminalPrompt")
+            1u
+            2u
+            player
+            []
+            []
+            decks
         |> ignore
     )
     |> ignore
@@ -89,7 +97,7 @@ let ``RandomWithProbability is reproducible with a seeded random`` () =
         List.init
             100
             (fun _ ->
-                Strategy.DecideHitOrStandWith (System.Random seed) Strategy.Random 0u 0u player [] [] decks
+                Strategy.Decider.Default.HitOrStand (System.Random seed) Strategy.Random 0u 0u player [] [] decks
                 |> Async.RunSynchronously
             )
 
@@ -272,7 +280,7 @@ let private safe = [ ValueCard Card.One ]
 let private greedy = Targeting.PlaysGreedily(0.5, 0.1)
 
 let private aim targeting ask chooser candidates =
-    Strategy.DecideTargetWith (System.Random 1) targeting ask chooser candidates [] decks
+    Strategy.Decider.Default.Target (System.Random 1) targeting ask chooser candidates [] decks
     |> Async.RunSynchronously
 
 [<Fact>]
@@ -291,12 +299,55 @@ let ``TryParse returns None for an unparseable targeting policy`` () =
     Assert.Equal(None, Targeting.TryParse "ChoosesExternally")
 
 [<Fact>]
-let ``Externally decided targeting cannot be evaluated by DecideTargetWith`` () =
+let ``Externally decided targeting cannot be evaluated by the default decider`` () =
     Assert.Throws<System.InvalidOperationException>(fun () ->
         aim (Targeting.ChoosesExternally "TerminalPrompt") Strategy.Ask.WhoToFreeze player opponents
         |> ignore
     )
     |> ignore
+
+// A decider is taught Custom strategies and ChoosesExternally targeting by
+// name, as a function or as a member, and passes everything else on to the
+// decider it was taught from
+[<Fact>]
+let ``a decider answers the strategies it is taught and passes on the rest`` () =
+    let stands: System.Random -> Strategy.HitOrStandDecider =
+        fun _ _ _ _ _ _ _ -> async.Return Strategy.Stand
+
+    let piped =
+        Strategy.Decider.Default |> Strategy.addHitOrStandStrategy "Prompt" stands
+
+    let membered = Strategy.Decider.Default.addHitOrStandStrategy ("Prompt", stands)
+
+    for taught in [ piped; membered ] do
+        let answer strategy =
+            taught.HitOrStand (System.Random 1) strategy 1u 2u player [] [] decks
+            |> Async.RunSynchronously
+
+        Assert.Equal(Strategy.Stand, answer (Strategy.Custom "Prompt"))
+        Assert.Equal(Strategy.Hit, answer Strategy.AlwaysHits)
+
+        Assert.Throws<System.InvalidOperationException>(fun () -> answer (Strategy.Custom "Other") |> ignore)
+        |> ignore
+
+[<Fact>]
+let ``a decider aims the targeting it is taught and passes on the rest`` () =
+    let last: System.Random -> Strategy.TargetDecider =
+        fun _ _ _ candidates _ _ -> async.Return(List.last candidates)
+
+    let piped = Strategy.Decider.Default |> Strategy.addTargetingStrategy "Prompt" last
+    let membered = Strategy.Decider.Default.addTargetingStrategy ("Prompt", last)
+
+    for taught in [ piped; membered ] do
+        let aimed targeting =
+            taught.Target (System.Random 1) targeting Strategy.Ask.WhoToFreeze player opponents [] decks
+            |> Async.RunSynchronously
+
+        Assert.Equal((List.last opponents).Name, (aimed (Targeting.ChoosesExternally "Prompt")).Name)
+        Assert.Equal("Bob", (aimed Targeting.PlaysSpitefully).Name)
+
+        Assert.Throws<System.InvalidOperationException>(fun () -> aimed (Targeting.ChoosesExternally "Other") |> ignore)
+        |> ignore
 
 [<Fact>]
 let ``a spiteful player freezes whoever is furthest ahead`` () =
