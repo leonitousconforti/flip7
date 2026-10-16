@@ -37,11 +37,14 @@
     <Compile Include="Simulation.fs" />
     <Compile Include="Lookahead.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
     <Compile Include="Player.fs" />
+    <Compile Include="Instant.fs" />
     <Compile Include="Strategy.fs" />
     <Compile Include="Timeline.fs" />
     <Compile Include="Persistence.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
     <Compile Include="Observation.fs" />
     <Compile Include="Inference.fs" />
+    <Compile Include="Solver.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
+    <Compile Include="Sage.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
   </ItemGroup>
 
   <ItemGroup>

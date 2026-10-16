@@ -22,21 +22,29 @@ module public rec Strategy =
 
     /// <summary>
     /// Decides hit-or-stand for one player: given the player's declared
-    /// strategy, the round, the turn, the player, the other active players, the
-    /// players who already stood, busted, or were frozen this round, and the
-    /// decks.
+    /// strategy, the game so far, the round, the turn, the player, the other
+    /// active players, the players who already stood, busted, or were frozen
+    /// this round, and the decks. The game so far is every instant the game
+    /// produced before the question, oldest first. It is a snapshot rather than
+    /// the timeline: it never changes once the question is asked, and
+    /// enumerating it plays nothing again.
     /// </summary>
     type public HitOrStandDecider =
-        uint -> uint -> Player -> Player list -> Player list -> (Deck * Deck) -> Async<HitOrStand>
+        Instant seq -> uint -> uint -> Player -> Player list -> Player list -> (Deck * Deck) -> Async<HitOrStand>
 
     /// <summary>
     /// Decides who a player gives an action card to: given their declared
-    /// targeting policy, what is being aimed, the player aiming it, the legal
-    /// targets, the players who already stood, busted, or were frozen this
-    /// round, and the decks. The candidates are narrowed by the engine and are
-    /// never empty; the answer must be one of them.
+    /// targeting policy, the game so far, what is being aimed, the player
+    /// aiming it, the legal targets, the players who already stood, busted, or
+    /// were frozen this round, and the decks. The game so far is every instant
+    /// the game produced before the question, oldest first, so while a card is
+    /// still being resolved it already holds the instants the resolution has
+    /// produced, such as the deal3 whose set-aside card is being aimed, even
+    /// though the timeline has yet to yield them. The candidates are narrowed
+    /// by the engine and are never empty; the answer must be one of them.
     /// </summary>
-    type public TargetDecider = Ask -> Player -> Player list -> Player list -> (Deck * Deck) -> Async<Player>
+    type public TargetDecider =
+        Instant seq -> Ask -> Player -> Player list -> Player list -> (Deck * Deck) -> Async<Player>
 
     /// <summary>
     /// How likely a person is to hit in this position. People do not count the
@@ -75,14 +83,15 @@ module public rec Strategy =
 
     /// <summary>
     /// Evaluates a strategy using the given source of randomness, given the
-    /// current round number, the current turn (how many times play has come
-    /// around the table this round, counting from one for the player being
-    /// asked), the player, the other players still in the round, the players
-    /// who already stood, busted, or were frozen this round, and the decks,
-    /// returning whether to hit or stand.
+    /// game so far (which no strategy reads), the current round number, the
+    /// current turn (how many times play has come around the table this round,
+    /// counting from one for the player being asked), the player, the other
+    /// players still in the round, the players who already stood, busted, or
+    /// were frozen this round, and the decks, returning whether to hit or
+    /// stand.
     /// </summary>
     let private DecideHitOrStandWith (random: System.Random) (strategy: Strategy) : HitOrStandDecider =
-        fun round turn player otherPlayers finishedPlayers decks ->
+        fun _history round turn player otherPlayers finishedPlayers decks ->
             match strategy with
             | Strategy.AlwaysHits -> Hit
             | Strategy.AlwaysStands -> Stand
@@ -159,14 +168,15 @@ module public rec Strategy =
 
     /// <summary>
     /// Evaluates a targeting policy using the given source of randomness: which
-    /// of the candidates a player gives an action card to. The candidates are
-    /// the legal targets, already narrowed by the engine, and are never empty.
-    /// For a freeze or a deal3 the chooser is usually among them, but not
-    /// always: a player frozen earlier still hands out the cards they set aside
-    /// during a deal3, and can no longer keep one for themselves.
+    /// of the candidates a player gives an action card to. No policy reads the
+    /// game so far. The candidates are the legal targets, already narrowed by
+    /// the engine, and are never empty. For a freeze or a deal3 the chooser is
+    /// usually among them, but not always: a player frozen earlier still hands
+    /// out the cards they set aside during a deal3, and can no longer keep one
+    /// for themselves.
     /// </summary>
     let private DecideTargetWith (random: System.Random) (targeting: Targeting) : TargetDecider =
-        fun ask chooser candidates _finishedPlayers decks ->
+        fun _history ask chooser candidates _finishedPlayers decks ->
             let deck, discards = decks
 
             let self =
@@ -219,7 +229,12 @@ module public rec Strategy =
     /// holding a thread. DecideWith is the canonical Decider; injecting a
     /// different one into Timeline.SimulateWithDecider lets Custom strategies
     /// and Targeting.ChoosesExternally targeting be decided by a human at the
-    /// terminal.
+    /// terminal. Every question is asked with a Random of its own, seeded from
+    /// the game's with a single draw just before it is asked, and never with
+    /// the game's Random itself. So whatever a decider draws from its Random
+    /// cannot shift the cards the game deals, a seeded game whose deciders
+    /// answer alike plays out the same way every time, and no decider can copy
+    /// its Random to see the cards to come.
     /// </summary>
     type public Decider = {
         HitOrStand: System.Random -> Strategy -> HitOrStandDecider
