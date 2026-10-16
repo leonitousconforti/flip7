@@ -27,7 +27,7 @@ module public Strategy =
     /// decks.
     /// </summary>
     type public HitOrStandDecider =
-        Strategy -> uint -> uint -> Player -> Player list -> Player list -> (Deck * Deck) -> Async<HitOrStand>
+        uint -> uint -> Player -> Player list -> Player list -> (Deck * Deck) -> Async<HitOrStand>
 
     /// <summary>
     /// Decides who a player gives an action card to: given their declared
@@ -36,23 +36,7 @@ module public Strategy =
     /// round, and the decks. The candidates are narrowed by the engine and are
     /// never empty; the answer must be one of them.
     /// </summary>
-    type public TargetDecider =
-        Targeting -> Ask -> Player -> Player list -> Player list -> (Deck * Deck) -> Async<Player>
-
-    /// <summary>
-    /// Every decision a game asks of its players. Deciders are asynchronous so
-    /// a decision can be awaited (a key press, a network message) without
-    /// holding a thread. DecideWith is the canonical Decider; injecting a
-    /// different one into Timeline.SimulateWithDecider lets Custom strategies
-    /// and Targeting.ChoosesExternally targeting be decided by a human at the
-    /// terminal.
-    /// </summary>
-    type public Decider = { HitOrStand: HitOrStandDecider; Target: TargetDecider }
-
-    /// <summary>
-    /// A strategy that randomly hits or stands with a 50% probability.
-    /// </summary>
-    let public Random: Strategy = Strategy.RandomWithProbability 0.5
+    type public TargetDecider = Ask -> Player -> Player list -> Player list -> (Deck * Deck) -> Async<Player>
 
     /// <summary>
     /// How likely a person is to hit in this position. People do not count the
@@ -65,7 +49,7 @@ module public Strategy =
     /// with Inference so that a fitted human and a played one cannot drift
     /// apart.
     /// </summary>
-    let public HumanHitProbability
+    let internal HumanHitProbability
         (caution: uint)
         (player: Player)
         (otherPlayers: Player list)
@@ -97,8 +81,8 @@ module public Strategy =
     /// who already stood, busted, or were frozen this round, and the decks,
     /// returning whether to hit or stand.
     /// </summary>
-    let public DecideHitOrStandWith (random: System.Random) : HitOrStandDecider =
-        fun strategy round turn player otherPlayers finishedPlayers decks ->
+    let private DecideHitOrStandWith (random: System.Random) (strategy: Strategy) : HitOrStandDecider =
+        fun round turn player otherPlayers finishedPlayers decks ->
             match strategy with
             | Strategy.AlwaysHits -> Hit
             | Strategy.AlwaysStands -> Stand
@@ -169,7 +153,7 @@ module public Strategy =
             | Strategy.Custom name ->
                 raise (
                     System.InvalidOperationException
-                        $"Custom {name} strategy is decided via `Timeline.SimulateWithDecider`, not by DecideHitOrStandWith"
+                        $"Custom {name} strategy should be added to a Decider via `Strategy.Decider.addHitOrStandStrategy` and then simulated via `Timeline.SimulateWithDecider`, not by DecideHitOrStandWith"
                 )
             |> async.Return
 
@@ -181,8 +165,8 @@ module public Strategy =
     /// always: a player frozen earlier still hands out the cards they set aside
     /// during a deal3, and can no longer keep one for themselves.
     /// </summary>
-    let public DecideTargetWith (random: System.Random) : TargetDecider =
-        fun targeting ask chooser candidates _finishedPlayers decks ->
+    let private DecideTargetWith (random: System.Random) (targeting: Targeting) : TargetDecider =
+        fun ask chooser candidates _finishedPlayers decks ->
             let deck, discards = decks
 
             let self =
@@ -225,22 +209,57 @@ module public Strategy =
             | Targeting.ChoosesExternally name ->
                 raise (
                     System.InvalidOperationException
-                        $"ChoosesExternally {name} targeting is decided via `Timeline.SimulateWithDecider`, not by DecideTargetWith"
+                        $"ChoosesExternally {name} targeting should be added to a Decider via `Strategy.Decider.addTargetingStrategy` and then simulated via `Timeline.SimulateWithDecider`, not by DecideTargetWith"
                 )
             |> async.Return
 
     /// <summary>
-    /// Every decision, evaluated against the given source of randomness.
+    /// Every decision a game asks of its players. Deciders are asynchronous so
+    /// a decision can be awaited (a key press, a network message) without
+    /// holding a thread. DecideWith is the canonical Decider; injecting a
+    /// different one into Timeline.SimulateWithDecider lets Custom strategies
+    /// and Targeting.ChoosesExternally targeting be decided by a human at the
+    /// terminal.
     /// </summary>
-    let public DecideWith (random: System.Random) : Decider = {
-        HitOrStand = DecideHitOrStandWith random
-        Target = DecideTargetWith random
+    type public Decider = {
+        HitOrStand: System.Random -> Strategy -> HitOrStandDecider
+        Target: System.Random -> Targeting -> TargetDecider
+    } with
+
+        static member public Default = {
+            HitOrStand = DecideHitOrStandWith
+            Target = DecideTargetWith
+        }
+
+    let public addHitOrStandStrategy
+        (name: string)
+        (implementation: System.Random -> HitOrStandDecider)
+        (decider: Decider)
+        : Decider = {
+        decider with
+            HitOrStand =
+                fun random strategy ->
+                    if strategy = Strategy.Custom name then
+                        implementation random
+                    else
+                        decider.HitOrStand random strategy
     }
 
-#if !FABLE_COMPILER
+    let public addTargetingStrategy
+        (name: string)
+        (implementation: System.Random -> TargetDecider)
+        (decider: Decider)
+        : Decider = {
+        decider with
+            Target =
+                fun random targeting ->
+                    if targeting = Targeting.ChoosesExternally name then
+                        implementation random
+                    else
+                        decider.Target random targeting
+    }
+
     /// <summary>
-    /// Evaluates a strategy without threading a source of randomness.
+    /// A strategy that randomly hits or stands with a 50% probability.
     /// </summary>
-    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Strategy.DecideWith instead")>]
-    let public Decide: Decider = DecideWith System.Random.Shared
-#endif
+    let public Random: Strategy = Strategy.RandomWithProbability 0.5

@@ -151,7 +151,7 @@ module public Timeline =
     // for that player, so a decider answering with a stale Player cannot write
     // an old hand or score back into the game.
     let private ChooseTarget
-        (decide: Strategy.TargetDecider)
+        (decide: Targeting -> Strategy.TargetDecider)
         (ask: Strategy.Ask)
         (chooser: Player)
         (candidates: Player list)
@@ -176,7 +176,7 @@ module public Timeline =
     }
 
     let private FreezePlayer
-        (decide: Strategy.TargetDecider)
+        (decide: Targeting -> Strategy.TargetDecider)
         (source: Player)
         (card: Card)
         (active: Player list)
@@ -191,7 +191,7 @@ module public Timeline =
     }
 
     let private GiveAwaySecondChance
-        (decide: Strategy.TargetDecider)
+        (decide: Targeting -> Strategy.TargetDecider)
         (card: Card)
         (holder: Player)
         (active: Player list)
@@ -235,7 +235,7 @@ module public Timeline =
     // - with a nested deal3 resolving recursively.
     let rec private ResolveDeal3
         (random: System.Random)
-        (decide: Strategy.TargetDecider)
+        (decide: Targeting -> Strategy.TargetDecider)
         (source: string)
         (targetIndex: int)
         (active: Player list)
@@ -388,7 +388,7 @@ module public Timeline =
     // receives the card, and a human decider can suspend the game there.
     let private ResolveDraw
         (random: System.Random)
-        (decide: Strategy.TargetDecider)
+        (decide: Targeting -> Strategy.TargetDecider)
         (current: Player)
         (others: Player list)
         (finished: Player list)
@@ -492,7 +492,7 @@ module public Timeline =
                     if turn = 1u then
                         async.Return Strategy.Hit
                     else
-                        decide.HitOrStand current.Strategy round turn current others finished decks
+                        decide.HitOrStand random current.Strategy round turn current others finished decks
 
                 match hitOrStand with
                 | Strategy.Stand ->
@@ -504,7 +504,7 @@ module public Timeline =
                     let decks', card = Deck.Draw1With random decks
 
                     let! instants, active', finished', decks'' =
-                        ResolveDraw random decide.Target current others finished decks' card
+                        ResolveDraw random (decide.Target random) current others finished decks' card
 
                     for instant in instants do
                         yield instant
@@ -700,7 +700,7 @@ module public Timeline =
     /// when reproducibility matters.
     /// </summary>
     let public SimulateWith (random: System.Random) (players: list<string * Strategy * Targeting>) : Timeline =
-        SimulateWithDecider random (Strategy.DecideWith random) players
+        SimulateWithDecider random Strategy.Decider.Default players
 
 #if !FABLE_COMPILER
     /// <summary>
