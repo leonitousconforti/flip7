@@ -226,15 +226,17 @@ module public rec Strategy =
     /// <summary>
     /// Every decision a game asks of its players. Deciders are asynchronous so
     /// a decision can be awaited (a key press, a network message) without
-    /// holding a thread. DecideWith is the canonical Decider; injecting a
+    /// holding a thread. Decider.Default is the canonical Decider; injecting a
     /// different one into Timeline.SimulateWithDecider lets Custom strategies
     /// and Targeting.ChoosesExternally targeting be decided by a human at the
     /// terminal. Every question is asked with a Random of its own, seeded from
     /// the game's with a single draw just before it is asked, and never with
     /// the game's Random itself. So whatever a decider draws from its Random
-    /// cannot shift the cards the game deals, a seeded game whose deciders
-    /// answer alike plays out the same way every time, and no decider can copy
-    /// its Random to see the cards to come.
+    /// cannot shift the cards the game deals, and a seeded game whose deciders
+    /// answer alike plays out the same way every time. A question's Random is
+    /// no secret from the game's, though: its seed is the game's next draw,
+    /// which in a seeded game gives the game's seed away to a decider that sets
+    /// out to work it back.
     /// </summary>
     type public Decider = {
         HitOrStand: System.Random -> Strategy -> HitOrStandDecider
