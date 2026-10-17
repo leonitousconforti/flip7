@@ -5,7 +5,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Version>0.1.1</Version>
+    <Version>0.2.0</Version>
     <Authors>Leo Conforti</Authors>
     <Copyright>Copyright (c) 2026 Leo Conforti</Copyright>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
