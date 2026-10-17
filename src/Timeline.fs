@@ -3,126 +3,11 @@ namespace Flip7
 open FSharp.Control
 
 /// <summary>
-/// What happened at a single moment of a game.
-/// </summary>
-type public Event =
-    | TableSeated
-    | Drew of Name: string * Card: Card
-    | Stood of Name: string
-    | Busted of Name: string * Card: Card
-    | Froze of Source: string * Target: string
-    | SecondChancePassed of Source: string * Target: string
-    | SecondChanceDiscarded of Name: string
-    | Dealt3 of Source: string * Target: string * Cards: Card list
-    | Flip7Achieved of Name: string
-    | Edited of Name: string
-    | RoundEnded of Scores: Map<string, uint>
-
-    override self.ToString() : string =
-        match self with
-        | TableSeated -> "the table is seated"
-        | Drew(name, card) -> $"{name} drew {card}"
-        | Stood name -> $"{name} stood"
-        | Busted(name, card) -> $"{name} drew {card} and busted"
-        | Froze(source, target) when source = target -> $"{source} drew Freeze and froze themselves"
-        | Froze(source, target) -> $"{source} drew Freeze and froze {target}"
-        | SecondChancePassed(source, target) -> $"{source} passed a SecondChance to {target}"
-        | SecondChanceDiscarded name -> $"{name} discarded a duplicate SecondChance"
-        | Dealt3(source, target, cards) ->
-            let cards = cards |> List.map string |> String.concat ", "
-            $"{source} drew Deal3, dealing {target}: {cards}"
-        | Flip7Achieved name -> $"{name} flipped 7 and ended the round!"
-        | Edited name -> $"{name} edited the table"
-        | RoundEnded scores ->
-            let scores =
-                scores
-                |> Map.toList
-                |> List.map (fun (name, score) -> $"{name} +{score}")
-                |> String.concat "  "
-
-            $"round over: {scores}"
-
-    member public self.Actor() : string option =
-        match self with
-        | Drew(name, _) -> Some name
-        | Stood name -> Some name
-        | Busted(name, _) -> Some name
-        | SecondChanceDiscarded name -> Some name
-        | Flip7Achieved name -> Some name
-        | Froze(_, target) -> Some target
-        | SecondChancePassed(_, target) -> Some target
-        | Dealt3(_, target, _) -> Some target
-        | TableSeated -> None
-        | Edited _ -> None
-        | RoundEnded _ -> None
-
-/// <summary>
-/// A snapshot of the game immediately after an event. Players still in the
-/// round come first (the next player to act at the head), followed by players
-/// who have stood, busted, or been frozen.
-/// </summary>
-type public Instant = {
-    Event: Event
-    Players: Player list
-    Deck: Deck
-    Discards: Deck
-}
-
-/// <summary>
 /// A timeline is the full history of a game: one instant per event, produced
 /// asynchronously so consumers can render or persist instants as they arrive
 /// rather than waiting for the whole game to finish.
 /// </summary>
 type public Timeline = AsyncSeq<Instant>
-
-module public Event =
-    /// <summary>
-    /// Converts an event to an array of lines: the event kind followed by its
-    /// fields, one per line.
-    /// </summary>
-    let public Serialize (event: Event) : string array =
-        match event with
-        | TableSeated -> [| "TableSeated" |]
-        | Drew(name, card) -> [| "Drew"; name; string card |]
-        | Stood name -> [| "Stood"; name |]
-        | Busted(name, card) -> [| "Busted"; name; string card |]
-        | Froze(source, target) -> [| "Froze"; source; target |]
-        | SecondChancePassed(source, target) -> [| "SecondChancePassed"; source; target |]
-        | SecondChanceDiscarded name -> [| "SecondChanceDiscarded"; name |]
-        | Dealt3(source, target, cards) -> [| "Dealt3"; source; target; yield! cards |> List.map string |]
-        | Flip7Achieved name -> [| "Flip7Achieved"; name |]
-        | Edited name -> [| "Edited"; name |]
-        | RoundEnded scores -> [|
-            "RoundEnded"
-            yield! scores |> Map.toList |> List.map (fun (name, score) -> $"{name}: {score}")
-          |]
-
-    /// <summary>
-    /// Parses an event from a sequence of lines: the event kind followed by its
-    /// fields, one per line.
-    /// </summary>
-    let public Deserialize (lines: string seq) : Event =
-        match lines |> Seq.toList with
-        | [ "TableSeated" ] -> TableSeated
-        | [ "Drew"; name; card ] -> Drew(name, Card.Parse card)
-        | [ "Stood"; name ] -> Stood name
-        | [ "Busted"; name; card ] -> Busted(name, Card.Parse card)
-        | [ "Froze"; source; target ] -> Froze(source, target)
-        | [ "SecondChancePassed"; source; target ] -> SecondChancePassed(source, target)
-        | [ "SecondChanceDiscarded"; name ] -> SecondChanceDiscarded name
-        | "Dealt3" :: source :: target :: cards -> Dealt3(source, target, cards |> List.map Card.Parse)
-        | [ "Flip7Achieved"; name ] -> Flip7Achieved name
-        | [ "Edited"; name ] -> Edited name
-        | "RoundEnded" :: scores ->
-            scores
-            |> List.map (fun line ->
-                match line.LastIndexOf(": ", System.StringComparison.Ordinal) with
-                | -1 -> raise (System.FormatException $"Invalid score line format: {line}")
-                | index -> line.Substring(0, index), uint (line.Substring(index + 2))
-            )
-            |> Map.ofList
-            |> RoundEnded
-        | lines -> raise (System.FormatException $"Invalid event lines: %A{lines}")
 
 module public Timeline =
     let private MakeInstant
@@ -145,6 +30,33 @@ module public Timeline =
 
     let private WithCard (card: Card) (player: Player) : Player = { player with Hand = card :: player.Hand }
 
+    // What a decider is shown of the game so far: every instant produced before
+    // its question, oldest first, as the first count instants of a buffer that
+    // is only ever added to, so it reads in order with nothing to reverse.
+    // Appending to the newest view adds to the buffer, and appending to any
+    // older one copies. Read by index up to its count, a view never changes
+    // once given, however long it is kept; the buffer's own enumerator would
+    // throw once the buffer grows.
+    type private History(buffer: ResizeArray<Instant>, count: int) =
+        member _.Append(instant: Instant) : History =
+            if count = buffer.Count then
+                buffer.Add instant
+                History(buffer, count + 1)
+            else
+                let copy = buffer.GetRange(0, count)
+                copy.Add instant
+                History(copy, count + 1)
+
+        member this.AppendAll(instants: Instant list) : History =
+            List.fold (fun (soFar: History) instant -> soFar.Append instant) this instants
+
+        interface Instant seq with
+            member _.GetEnumerator() : Instant System.Collections.Generic.IEnumerator =
+                (Seq.init count (fun index -> buffer[index])).GetEnumerator()
+
+        interface System.Collections.IEnumerable with
+            member this.GetEnumerator() : System.Collections.IEnumerator = (this :> Instant seq).GetEnumerator()
+
     // Asks the chooser's targeting policy to pick one of the candidates, which
     // the caller has already narrowed to the legal targets and which is never
     // empty. Returns the pick's position together with the engine's own value
@@ -152,6 +64,7 @@ module public Timeline =
     // an old hand or score back into the game.
     let private ChooseTarget
         (decide: Targeting -> Strategy.TargetDecider)
+        (history: History)
         (ask: Strategy.Ask)
         (chooser: Player)
         (candidates: Player list)
@@ -160,7 +73,7 @@ module public Timeline =
         : Async<int * Player> = async {
         assert (not (List.isEmpty candidates))
 
-        let! chosen = decide chooser.Targeting ask chooser candidates finished decks
+        let! chosen = decide chooser.Targeting history ask chooser candidates finished decks
 
         match candidates |> List.tryFindIndex (fun candidate -> candidate.Name = chosen.Name) with
         | Some index -> return index, List.item index candidates
@@ -177,6 +90,7 @@ module public Timeline =
 
     let private FreezePlayer
         (decide: Targeting -> Strategy.TargetDecider)
+        (history: History)
         (source: Player)
         (card: Card)
         (active: Player list)
@@ -184,7 +98,7 @@ module public Timeline =
         (decks: Deck * Deck)
         : Async<Instant list * Player list * Player list * (Deck * Deck)> = async {
         let! index, target =
-            ChooseTarget decide Strategy.Ask.WhoToFreeze source active finished decks
+            ChooseTarget decide history Strategy.Ask.WhoToFreeze source active finished decks
 
         return
             step (Froze(source.Name, target.Name)) (List.removeAt index active) (WithCard card target :: finished) decks
@@ -192,6 +106,7 @@ module public Timeline =
 
     let private GiveAwaySecondChance
         (decide: Targeting -> Strategy.TargetDecider)
+        (history: History)
         (card: Card)
         (holder: Player)
         (active: Player list)
@@ -209,7 +124,14 @@ module public Timeline =
             return None, active, (deck, Deck.Increment discards card)
         | _ ->
             let! position, recipient =
-                ChooseTarget decide Strategy.Ask.WhoReceivesSecondChance holder (List.map snd candidates) finished decks
+                ChooseTarget
+                    decide
+                    history
+                    Strategy.Ask.WhoReceivesSecondChance
+                    holder
+                    (List.map snd candidates)
+                    finished
+                    decks
 
             let index, _ = List.item position candidates
             return Some recipient.Name, List.updateAt index (WithCard card recipient) active, decks
@@ -232,10 +154,14 @@ module public Timeline =
     // keeps them from being reshuffled back into the deck mid-deal3. Once the
     // flips finish they are resolved in flip order - unless the target busted
     // or the round ended, in which case they stay in the (soon discarded) hand
-    // - with a nested deal3 resolving recursively.
+    // - with a nested deal3 resolving recursively. The history is every instant
+    //   produced before the deal3 began: a second chance passed during the
+    //   flips is aimed before the deal3's own instant exists, while a set-aside
+    //   card is aimed after it and after every set-aside resolved before it.
     let rec private ResolveDeal3
         (random: System.Random)
         (decide: Targeting -> Strategy.TargetDecider)
+        (history: History)
         (source: string)
         (targetIndex: int)
         (active: Player list)
@@ -256,12 +182,12 @@ module public Timeline =
             let target = List.item targetIndex active
 
             if remaining = 0u || Hand.HasFlip7Bonus target.Hand then
-                return false, List.rev flipped, List.rev setAsides, active, decks
+                return false, flipped, setAsides, active, decks
             else
 
             let decks', card = Deck.Draw1With random decks
             let deck', discards' = decks'
-            let flipped' = card :: flipped
+            let flipped' = flipped @ [ card ]
 
             match card with
             // Parked in the target's hand (harmless: action cards do not score
@@ -269,7 +195,7 @@ module public Timeline =
             | ActionCard Card.Freeze
             | ActionCard Card.Deal3 ->
                 let active' = List.updateAt targetIndex (WithCard card target) active
-                return! Flip (remaining - 1u) flipped' (card :: setAsides) active' decks'
+                return! Flip (remaining - 1u) flipped' (setAsides @ [ card ]) active' decks'
 
             | ActionCard Card.SecondChance when not (HasSecondChance target) ->
                 let active' = List.updateAt targetIndex (WithCard card target) active
@@ -277,7 +203,7 @@ module public Timeline =
 
             | ActionCard Card.SecondChance ->
                 let! _, active', decks'' =
-                    GiveAwaySecondChance decide card target active finished decks'
+                    GiveAwaySecondChance decide history card target active finished decks'
                 return! Flip (remaining - 1u) flipped' setAsides active' decks''
 
             | ValueCard _
@@ -287,7 +213,7 @@ module public Timeline =
                 let active' = List.updateAt targetIndex { target with Hand = reducedHand } active
 
                 if isBust then
-                    return true, List.rev flipped', List.rev setAsides, active', decks''
+                    return true, flipped', setAsides, active', decks''
                 else
                     return! Flip (remaining - 1u) flipped' setAsides active' decks''
         }
@@ -341,13 +267,17 @@ module public Timeline =
                     active @ finished
                     |> List.exists (fun player -> player.Name = targetName && Hand.IsBust player.Hand)
 
+                // The instants this deal3 has produced so far are not yet
+                // yielded, but they come before the question all the same
+                let history = history.AppendAll instants
+
                 match setAside with
                 | _ when roundEnded || flipperBusted -> return instants, active, finished, decks
                 | ActionCard Card.Freeze ->
                     let active, finished = unpark active finished setAside
 
                     let! more, active', finished', decks' =
-                        FreezePlayer decide (chooser active finished) setAside active finished decks
+                        FreezePlayer decide history (chooser active finished) setAside active finished decks
 
                     return instants @ more, active', finished', decks'
                 | ActionCard Card.Deal3 ->
@@ -357,6 +287,7 @@ module public Timeline =
                     let! index, _ =
                         ChooseTarget
                             decide
+                            history
                             Strategy.Ask.WhoReceivesDeal3
                             (chooser active finished)
                             active
@@ -364,7 +295,7 @@ module public Timeline =
                             decks
 
                     let! nested, active', finished', decks' =
-                        ResolveDeal3 random decide targetName index active finished decks
+                        ResolveDeal3 random decide history targetName index active finished decks
 
                     return instants @ nested, active', finished', decks'
                 | _ -> return raise (System.InvalidOperationException $"Unexpected set-aside card: {setAside}")
@@ -385,10 +316,12 @@ module public Timeline =
     // Resolution is asynchronous because a card can pose a choice - who to
     // freeze, who receives a deal3, who is passed a second chance - and whoever
     // answers may need to be awaited: the targeting decider is asked who
-    // receives the card, and a human decider can suspend the game there.
+    // receives the card, and a human decider can suspend the game there. The
+    // history is every instant produced before the draw.
     let private ResolveDraw
         (random: System.Random)
         (decide: Targeting -> Strategy.TargetDecider)
+        (history: History)
         (current: Player)
         (others: Player list)
         (finished: Player list)
@@ -411,7 +344,7 @@ module public Timeline =
         // hold it
         | ActionCard Card.SecondChance ->
             let! recipient, active', decks' =
-                GiveAwaySecondChance decide card current (others @ [ current ]) finished decks
+                GiveAwaySecondChance decide history card current (others @ [ current ]) finished decks
 
             let event =
                 match recipient with
@@ -423,7 +356,8 @@ module public Timeline =
         // Can never bust on a freeze card, just pick someone to freeze
         // (possibly yourself); they bank their points and are done for the
         // round
-        | ActionCard Card.Freeze -> return! FreezePlayer decide current card (others @ [ current ]) finished decks
+        | ActionCard Card.Freeze ->
+            return! FreezePlayer decide history current card (others @ [ current ]) finished decks
 
         // Can bust on a value card, so reduce the hand to see whether the
         // player is done
@@ -443,13 +377,20 @@ module public Timeline =
             let decks' = deck, Deck.Increment discards card
             let rotated = others @ [ current ]
             let! index, _ =
-                ChooseTarget decide Strategy.Ask.WhoReceivesDeal3 current rotated finished decks'
-            return! ResolveDeal3 random decide current.Name index rotated finished decks'
+                ChooseTarget decide history Strategy.Ask.WhoReceivesDeal3 current rotated finished decks'
+            return! ResolveDeal3 random decide history current.Name index rotated finished decks'
     }
 
+    // Plays the rest of a round, asking each hit or stand of hitOrStand and
+    // each aim of target, which ContinueWith gives every question's Random and
+    // the history that led to it. The history is every instant produced before
+    // the round, and every instant the round yields joins it before the next
+    // question is asked.
     let rec private GoonSession
         (random: System.Random)
-        (decide: Strategy.Decider)
+        (hitOrStand: Strategy -> Strategy.HitOrStandDecider)
+        (target: Targeting -> Strategy.TargetDecider)
+        (history: History)
         (round: uint)
         (turnsTaken: Map<string, uint>)
         (active: Player list)
@@ -487,29 +428,51 @@ module public Timeline =
                 // The first time play comes around the table each player is
                 // dealt a card before they may choose, and a player may never
                 // stand with no cards, so the opening turn is always a forced
-                // hit
-                let! hitOrStand =
+                // hit. Being no question, it draws no Random of its own
+                let! choice =
                     if turn = 1u then
                         async.Return Strategy.Hit
                     else
-                        decide.HitOrStand random current.Strategy round turn current others finished decks
+                        hitOrStand current.Strategy history round turn current others finished decks
 
-                match hitOrStand with
+                match choice with
                 | Strategy.Stand ->
                     let finished' = current :: finished
-                    yield MakeInstant (Stood current.Name) others finished' decks
-                    yield! GoonSession random decide round turnsTaken others finished' decks
+                    let stood = MakeInstant (Stood current.Name) others finished' decks
+                    yield stood
+
+                    yield!
+                        GoonSession
+                            random
+                            hitOrStand
+                            target
+                            (history.Append stood)
+                            round
+                            turnsTaken
+                            others
+                            finished'
+                            decks
 
                 | Strategy.Hit ->
                     let decks', card = Deck.Draw1With random decks
 
                     let! instants, active', finished', decks'' =
-                        ResolveDraw random (decide.Target random) current others finished decks' card
+                        ResolveDraw random target history current others finished decks' card
 
                     for instant in instants do
                         yield instant
 
-                    yield! GoonSession random decide round turnsTaken active' finished' decks''
+                    yield!
+                        GoonSession
+                            random
+                            hitOrStand
+                            target
+                            (history.AppendAll instants)
+                            round
+                            turnsTaken
+                            active'
+                            finished'
+                            decks''
             }
 
     // Names are the engine's identity key: turn counts, round scores, unparking
@@ -569,22 +532,29 @@ module public Timeline =
             raise (System.ArgumentException $"The seating must name every player once, but {problems}")
 
     /// <summary>
-    /// Continues a game from a mid-round state: the seating, every player's
-    /// name in seat order, the round number, how many turns each player has
-    /// taken, the active players in rotation order (the next actor at the
-    /// head), the players already finished this round, and the decks. The first
-    /// round starts at the head of the seating and each round after it one seat
+    /// Continues a game from a mid-round state: the history, every instant that
+    /// led to the state, oldest first; the seating, every player's name in seat
+    /// order; the round number; how many turns each player has taken; the
+    /// active players in rotation order (the next actor at the head); the
+    /// players already finished this round; and the decks. The first round
+    /// starts at the head of the seating and each round after it one seat
     /// further round the table, so the round being continued started round - 1
     /// seats along, and the seating is what scores it and deals the rounds that
     /// follow. The round plays out from there and whole rounds follow until a
     /// player first reaches 200 points at a RoundEnded, which is the last
     /// instant of the timeline. A player whose turn count is zero is dealt a
     /// forced first hit, so a continuation should count at least one turn for
-    /// anyone already holding cards.
+    /// anyone already holding cards. Each question shows its decider the
+    /// history followed by every instant the continuation produced before it,
+    /// but the timeline yields only the continuation's own instants. A decider
+    /// that reads the history enumerates it afresh each time, so pass a
+    /// snapshot, such as a list or an array, rather than a timeline, which
+    /// would play its game again.
     /// </summary>
     let public ContinueWith
         (random: System.Random)
         (decide: Strategy.Decider)
+        (history: Instant seq)
         (seating: string list)
         (startingRound: uint)
         (startingTurnsTaken: Map<string, uint>)
@@ -605,6 +575,19 @@ module public Timeline =
             List.skip along seating @ List.take along seating
             |> List.map (fun name -> everyone |> List.find (fun player -> player.Name = name))
 
+        // Every question is asked with a Random of its own, seeded by a single
+        // draw from the game's as it is asked, so that what a decider draws
+        // cannot shift the cards the game deals. These draw each time they are
+        // called rather than once where they are passed on, so a card that
+        // poses no question draws nothing and one that poses several draws once
+        // for each. The engine keeps only what the continuation has produced,
+        // so they also put the history that led here in front of it.
+        let hitOrStand (strategy: Strategy) (seen: Instant seq) =
+            decide.HitOrStand (System.Random(random.Next())) strategy (Seq.append history seen)
+
+        let target (targeting: Targeting) (seen: Instant seq) =
+            decide.Target (System.Random(random.Next())) targeting (Seq.append history seen)
+
         // A loop rather than recursion so an arbitrarily long game cannot
         // accumulate nested asyncSeq appends
         asyncSeq {
@@ -619,11 +602,15 @@ module public Timeline =
             let mutable decks = startingDecks
             let mutable gameOver = false
 
+            // Every instant yielded so far
+            let mutable produced = History(ResizeArray(), 0)
+
             while not gameOver do
                 let mutable lastInstant = None
 
-                for instant in GoonSession random decide round turnsTaken active finished decks do
+                for instant in GoonSession random hitOrStand target produced round turnsTaken active finished decks do
                     lastInstant <- Some instant
+                    produced <- produced.Append instant
                     yield instant
 
                 let finalPlayers, (deck, discards) =
@@ -656,12 +643,15 @@ module public Timeline =
                             Hand = List.empty
                     })
 
-                yield {
+                let roundEnded = {
                     Event = RoundEnded scores
                     Players = scored
                     Deck = deck
                     Discards = discards'
                 }
+
+                produced <- produced.Append roundEnded
+                yield roundEnded
 
                 if scored |> List.forall (fun player -> player.FirmScore < 200u) then
                     let rotated =
@@ -681,10 +671,16 @@ module public Timeline =
 
     /// <summary>
     /// Simulates a full game like SimulateWith, but every hit or stand decision
-    /// is routed through the given decider, so Prompt strategies can be
-    /// answered by a human at the terminal. Pulling the timeline drives the
-    /// game, so a decider may await (a key press, a network message) and the
-    /// game simply pauses there without holding a thread.
+    /// and every aim is routed through the given decider, so Custom strategies
+    /// and ChoosesExternally targeting can be answered by a human at the
+    /// terminal. Pulling the timeline drives the game, so a decider may await
+    /// (a key press, a network message) and the game simply pauses there
+    /// without holding a thread. Every question shows its decider the game so
+    /// far, from the TableSeated instant on, and comes with a Random of its own
+    /// seeded from the game's, so a decider is never handed the game's Random
+    /// and cannot shift the cards the game deals by drawing from its own. The
+    /// seed it comes with is the game's own next draw, so in a seeded game it
+    /// gives the game's seed away to a decider that sets out to work it back.
     /// </summary>
     let public SimulateWithDecider
         (random: System.Random)
@@ -697,16 +693,18 @@ module public Timeline =
 
         EnsureDistinctNames startingPlayers
 
+        let seated = {
+            Event = TableSeated
+            Players = startingPlayers
+            Deck = Deck.Full
+            Discards = Deck.Empty
+        }
+
         asyncSeq {
-            yield {
-                Event = TableSeated
-                Players = startingPlayers
-                Deck = Deck.Full
-                Discards = Deck.Empty
-            }
+            yield seated
 
             let seating = startingPlayers |> List.map (fun player -> player.Name)
-            yield! ContinueWith random decide seating 1u Map.empty startingPlayers [] (Deck.Full, Deck.Empty)
+            yield! ContinueWith random decide [ seated ] seating 1u Map.empty startingPlayers [] (Deck.Full, Deck.Empty)
         }
 
     /// <summary>
@@ -716,7 +714,10 @@ module public Timeline =
     /// RoundEnded in which a player first reaches 200 points. A seeded random
     /// makes the timeline reproducible, but note that the timeline is lazy:
     /// enumerating it advances the random, so enumerate it once (or cache it)
-    /// when reproducibility matters.
+    /// when reproducibility matters. The game draws from the random for every
+    /// card it deals and once for every question it asks, seeding a Random of
+    /// the question's own with that draw, so however much a strategy draws from
+    /// its Random it never shifts the cards the game deals.
     /// </summary>
     let public SimulateWith (random: System.Random) (players: list<string * Strategy * Targeting>) : Timeline =
         SimulateWithDecider random Strategy.Decider.Default players
