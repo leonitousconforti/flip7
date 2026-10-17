@@ -3,7 +3,7 @@ namespace Flip7
 /// <summary>
 /// A strategy decides whether a player hits or stands. Strategies are
 /// represented as data rather than functions so that they can be serialized and
-/// deserialized; use Strategy.DecideWith to evaluate one.
+/// deserialized; use Strategy.Decider.Default to evaluate one.
 /// </summary>
 [<RequireQualifiedAccess>]
 type public Strategy =
@@ -91,7 +91,7 @@ type public Strategy =
 /// A targeting policy decides who an action card is given to: who gets frozen,
 /// who is dealt three cards, and who is passed a second chance its holder
 /// cannot keep. Like a strategy it is data rather than a function so that it
-/// can be serialized and deserialized; use Strategy.DecideTargetWith to
+/// can be serialized and deserialized; use Strategy.Decider.Default to
 /// evaluate one. The escape hatch is called ChoosesExternally rather than
 /// Custom because Strategy.Custom is matched unqualified in several places and
 /// a second case of the same name in this namespace would rebind those matches.
