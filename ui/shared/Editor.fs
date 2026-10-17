@@ -199,24 +199,27 @@ let public Key (key: ConsoleKeyInfo) (editor: Model) : Outcome =
         Editing { editor with Cursor = Choice1Of2 EveryCard[index'] }
     | _ -> Editing editor
 
-let public Fork (random: Random) (decide: Strategy.Decider) (splice: Splice) : Timeline =
+let public Fork (random: Random) (decide: Strategy.Decider) (history: Instant seq) (splice: Splice) : Timeline =
     let turnsTaken =
         splice.Active
         |> List.map (fun player -> player.Name, splice.Turn - 1u)
         |> Map.ofList
 
+    let edited = {
+        Event = Edited (List.head splice.Active).Name
+        Players = splice.Active @ splice.Finished
+        Deck = splice.Deck
+        Discards = splice.Discards
+    }
+
     asyncSeq {
-        yield {
-            Event = Edited (List.head splice.Active).Name
-            Players = splice.Active @ splice.Finished
-            Deck = splice.Deck
-            Discards = splice.Discards
-        }
+        yield edited
 
         yield!
             Timeline.ContinueWith
                 random
                 decide
+                (Seq.append history [ edited ])
                 splice.Seating
                 splice.Round
                 turnsTaken
