@@ -7,6 +7,7 @@
 #load "../src/Simulation.fs"
 #load "../src/Lookahead.fs"
 #load "../src/Player.fs"
+#load "../src/Instant.fs"
 #load "../src/Strategy.fs"
 #load "../src/Timeline.fs"
 #load "../src/Persistence.fs"
@@ -80,7 +81,7 @@ let searcher =
 let LookAheadDecider (random: System.Random) : Strategy.HitOrStandDecider =
     let x = fun () -> random.NextDouble()
     let onUnpricedHand = fun () -> if x () < 0.5 then Strategy.Hit else Strategy.Stand
-    fun _round _turn player _otherPlayers _finishedPlayers _decks -> async {
+    fun _history _round _turn player _otherPlayers _finishedPlayers _decks -> async {
         match! searcher.GainFromHitting player.Hand with
         | Error(UnpricedHand _hand) -> return onUnpricedHand ()
         | Error lookAheadError -> return raise (System.InvalidOperationException $"Lookahead failed: {lookAheadError}")
