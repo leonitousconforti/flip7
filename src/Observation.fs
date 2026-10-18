@@ -19,7 +19,9 @@ open FSharp.Control
 /// not, or zero if they have taken none: an aim made after hitting on a third
 /// turn is made on turn three and the card of a forced first hit on turn one,
 /// while a card a deal3's target set aside is given out on the turns they had
-/// already taken, which may be none.
+/// already taken, which may be none. After an edit the turns are the engine's,
+/// which counts everyone still in the round as having taken as many as the
+/// asker had.
 /// </summary>
 type public Observation = {
     Name: string
@@ -112,7 +114,9 @@ module public Observation =
     /// <summary>
     /// How many turns each player has taken in the scan's current round.
     /// Matches the engine's per-round counter, because every turn produces
-    /// exactly one decision event.
+    /// exactly one decision event and an Edited instant counts everyone still
+    /// in the round as having taken as many turns as the asker had, as the play
+    /// editor's fork continues the game.
     /// </summary>
     let public TurnsTaken (scan: Scan) : Map<string, uint> =
         let (Scan(_, _, turns, _, _)) = scan
@@ -309,10 +313,12 @@ module public Observation =
     /// the engine never asks their strategy about - it is dealing, not a
     /// decision - and gives no hit-or-stand decision; the turn is reconstructed
     /// by counting the player's decision events, which matches the engine's
-    /// count because every turn produces exactly one such event. Froze and
-    /// Dealt3 events that resolve a set-aside card from an earlier deal3 are
-    /// the flipper giving out cards they were dealt, not a voluntary hit, and
-    /// give none either.
+    /// count because every turn produces exactly one such event, and from an
+    /// Edited instant on by counting them from as many turns as the asker had
+    /// taken, which the play editor's fork counts for everyone still in the
+    /// round. Froze and Dealt3 events that resolve a set-aside card from an
+    /// earlier deal3 are the flipper giving out cards they were dealt, not a
+    /// voluntary hit, and give none either.
     ///
     /// The OtherPlayers of a hit-or-stand decision are only the players still
     /// in the round, matching what the hit-or-stand decider receives: players
@@ -388,6 +394,15 @@ module public Observation =
                 ->
                 Set.add target finished, round, turns', pending'
             | RoundEnded _ -> Set.empty, round + 1u, Map.empty, Map.empty
+            | Edited asker ->
+                let taken = turns' |> Map.tryFind asker |> Option.defaultValue 0u
+
+                let reset =
+                    instant.Players
+                    |> List.filter (InRound scan)
+                    |> List.fold (fun turns (player: Player) -> turns |> Map.add player.Name taken) turns'
+
+                finished, round, reset, pending'
             | _ -> finished, round, turns', pending'
 
         let observations =
