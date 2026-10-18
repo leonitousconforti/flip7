@@ -15,9 +15,10 @@ type public LookaheadError =
 // A state of the search is one word: what the full deck is missing. The missing
 // cards name the hand they built - each value held once, the extra copies dups
 // that each burned a second chance - and the deck they left behind, so nothing
-// else needs storing. Each card's count gets just enough bits for its copies in
-// the full deck, fifty bits in all. None of this depends on any particular
-// search, only on the full deck itself.
+// else needs storing but the second chances the hand passed on. Each card's
+// count gets just enough bits for its copies in the full deck, fifty bits in
+// all, and the count passed on gets as many bits as a second chance's. None of
+// this depends on any particular search, only on the full deck itself.
 module private Word =
     let cards = Deck.Full |> Map.toArray
     let fullCounts = cards |> Array.map (snd >> int)
@@ -39,10 +40,6 @@ module private Word =
     let masks = widths |> Array.map (fun width -> (1UL <<< width) - 1UL)
     let deltas = offsets |> Array.map (fun offset -> 1UL <<< offset)
 
-    do
-        if Array.sum widths > 64 then
-            failwith "the missing counts no longer fit in one word"
-
     let indexOf = cards |> Array.mapi (fun index (card, _) -> card, index) |> dict
     let isValue = cards |> Array.map (fun (card, _) -> card.IsValueCard)
     let valuePoints = cards |> Array.map (fun (card, _) -> int card.Value.ValuePoints)
@@ -50,6 +47,18 @@ module private Word =
         cards |> Array.map (fun (card, _) -> int card.Value.ModifierPoints)
     let doubleIndex = indexOf[ModifierCard Card.Double]
     let secondChanceIndex = indexOf[ActionCard Card.SecondChance]
+
+    // A hand holds one second chance at most: one drawn while it holds another
+    // is passed on or discarded, as the engine does, so the hand stays as it
+    // was and only the deck loses the card. Those cards are counted above all
+    // the others, and drawing one is a move of its own beside each card's
+    let passedOffset = Array.sum widths
+    let passedMove = cards.Length
+    let moves = Array.append deltas [| 1UL <<< passedOffset |]
+
+    do
+        if passedOffset + widths[secondChanceIndex] > 64 then
+            failwith "the missing counts no longer fit in one word"
 
     // The deck a search draws from: a count per card in word order, and the
     // total. Any deck within the full one packs the same way; one that outgrows
@@ -69,10 +78,33 @@ module private Word =
     let missingOf (state: uint64) (index: int) : int =
         int ((state >>> offsets[index]) &&& masks[index])
 
-    let drawn (state: uint64) (index: int) : uint64 = state + deltas[index]
+    let drawn (state: uint64) (move: int) : uint64 = state + moves[move]
 
-    // A hand fits a word only when its universe holds every copy it claims
+    let passedOf (state: uint64) : int =
+        int ((state >>> passedOffset) &&& masks[secondChanceIndex])
+
+    let copiesLeft (universe: Universe) (state: uint64) (index: int) : int =
+        let passed = if index = secondChanceIndex then passedOf state else 0
+        universe.Counts[index] - missingOf state index - passed
+
+    // The move a card makes: a second chance drawn while the hand has one spare
+    // is passed on, and every other card joins the hand
+    let moveOf (spare: int) (index: int) : int =
+        if index = secondChanceIndex && spare > 0 then
+            passedMove
+        else
+            index
+
+    // A hand fits a word only when its universe holds every copy it claims. Of
+    // the second chances its dups leave uncancelled it keeps one, and the rest
+    // it passed on
     let tryEncode (universe: Universe) (hand: Hand) : uint64 option =
+        let values = hand |> List.filter (fun card -> card.IsValueCard)
+        let dups = values.Length - (List.distinct values).Length
+        let chances =
+            hand |> List.filter ((=) (ActionCard Card.SecondChance)) |> List.length
+        let passed = uint64 (max 0 (chances - dups - 1))
+
         (Some 0UL, hand)
         ||> List.fold (fun state card ->
             let index = indexOf[card]
@@ -81,6 +113,7 @@ module private Word =
             |> Option.filter (fun state -> missingOf state index < universe.Counts[index])
             |> Option.map (fun state -> drawn state index)
         )
+        |> Option.map (fun state -> state - passed * deltas[secondChanceIndex] + passed * moves[passedMove])
 
     let shown (hand: Hand) : string =
         hand |> List.map string |> String.concat " "
@@ -110,9 +143,9 @@ module private Word =
         let bonus = if distinct >= 7 then 15 else 0
         let banked = float (points * multiplier + modifiers + bonus)
         let spare = missingOf state secondChanceIndex - dups
-        struct (banked, distinct, spare, universe.Size - missing)
+        struct (banked, distinct, spare, universe.Size - missing - passedOf state)
 
-    // Which draws a state lives through, one bit per card: a card with copies
+    // Which moves a state lives through, one bit per move: a card with copies
     // left that is new to the hand or covered by a spare second chance. A hand
     // that has flipped seven has stopped drawing and lives through nothing
     let liveMask (universe: Universe) (state: uint64) : uint32 =
@@ -122,17 +155,18 @@ module private Word =
         if distinct < 7 then
             for index in 0 .. cards.Length - 1 do
                 let m = missingOf state index
+                let count = copiesLeft universe state index
 
-                if m < universe.Counts[index] && (spare > 0 || not (isValue[index] && m > 0)) then
-                    mask <- mask ||| (1u <<< index)
+                if count > 0 && (spare > 0 || not (isValue[index] && m > 0)) then
+                    mask <- mask ||| (1u <<< moveOf spare index)
 
         mask
 
     // The forward sweep: the states one draw deeper than a generation. Adding a
-    // card's delta to every state of a sorted generation keeps it sorted, so
-    // the children arrive as twenty-one sorted streams and one merge with dedup
-    // produces the next generation already sorted: no hashing, and no memory
-    // beyond the output itself. The output key space is split at sampled
+    // move's delta to every state of a sorted generation keeps it sorted, so
+    // the children arrive as one sorted stream per move and one merge with
+    // dedup produces the next generation already sorted: no hashing, and no
+    // memory beyond the output itself. The output key space is split at sampled
     // quantiles so the partitions can merge in parallel
     let expand (token: System.Threading.CancellationToken) (universe: Universe) (frontier: uint64[]) : uint64[] =
         let options = System.Threading.Tasks.ParallelOptions(CancellationToken = token)
@@ -151,9 +185,9 @@ module private Word =
         let stride = max 1 (frontier.Length / 1024)
 
         for at in 0..stride .. frontier.Length - 1 do
-            for index in 0 .. cards.Length - 1 do
+            for index in 0 .. moves.Length - 1 do
                 if live[at] &&& (1u <<< index) <> 0u then
-                    sample.Add(frontier[at] + deltas[index])
+                    sample.Add(frontier[at] + moves[index])
 
         sample.Sort()
 
@@ -186,14 +220,14 @@ module private Word =
                 let low = bounds[partition]
                 let high = bounds[partition + 1]
 
-                // One cursor per card, walking the parents whose child for that
-                // card lands inside this partition's slice of key space
-                let position = Array.zeroCreate cards.Length
-                let finish = Array.zeroCreate cards.Length
-                let current = Array.create cards.Length System.UInt64.MaxValue
+                // One cursor per move, walking the parents whose child for that
+                // move lands inside this partition's slice of key space
+                let position = Array.zeroCreate moves.Length
+                let finish = Array.zeroCreate moves.Length
+                let current = Array.create moves.Length System.UInt64.MaxValue
 
-                for index in 0 .. cards.Length - 1 do
-                    let delta = deltas[index]
+                for index in 0 .. moves.Length - 1 do
+                    let delta = moves[index]
                     let bit = 1u <<< index
                     let finishAt = if delta >= high then 0 else lowerBound (high - delta)
 
@@ -216,7 +250,7 @@ module private Word =
                             System.UInt64.MaxValue
 
                 // The merge: emit the smallest child not yet emitted, advance
-                // its cursor to the next parent that lives through the card
+                // its cursor to the next parent that lives through the move
                 let output = buffers[partition]
                 let mutable emitted = System.UInt64.MaxValue
                 let mutable draining = true
@@ -224,7 +258,7 @@ module private Word =
                 while draining do
                     let mutable best = 0
 
-                    for index in 1 .. cards.Length - 1 do
+                    for index in 1 .. moves.Length - 1 do
                         if current[index] < current[best] then
                             best <- index
 
@@ -251,7 +285,7 @@ module private Word =
 
                         current[best] <-
                             if at < finishAt then
-                                frontier[at] + deltas[best]
+                                frontier[at] + moves[best]
                             else
                                 System.UInt64.MaxValue
         )
@@ -280,10 +314,10 @@ module private Word =
 
         for index in 0 .. cards.Length - 1 do
             let m = missingOf state index
-            let count = universe.Counts[index] - m
+            let count = copiesLeft universe state index
 
             if count > 0 && (spare > 0 || not (isValue[index] && m > 0)) then
-                let child = System.Array.BinarySearch(nextStates, drawn state index)
+                let child = System.Array.BinarySearch(nextStates, drawn state (moveOf spare index))
                 sum <- sum + float count / float remaining * nextWorths[child]
 
         sum
@@ -497,7 +531,7 @@ type public Lookahead
             let index = Word.indexOf[card]
             let m = Word.missingOf state index
 
-            if m >= universe.Counts[index] then
+            if Word.copiesLeft universe state index <= 0 then
                 return Error(NoCopiesLeft card)
             else
                 let struct (_, _, spare, _) = Word.facts universe state
@@ -505,7 +539,8 @@ type public Lookahead
                 if Word.isValue[index] && m > 0 && spare <= 0 then
                     return Ok 0.0 // the draw busts, and a bust banks nothing
                 else
-                    let child = System.Array.BinarySearch(childStates, Word.drawn state index)
+                    let child =
+                        System.Array.BinarySearch(childStates, Word.drawn state (Word.moveOf spare index))
                     return Ok childWorths[child]
     }
 
