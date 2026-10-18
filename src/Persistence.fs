@@ -204,7 +204,15 @@ module public Persistence =
                     let read (index: int) : Async<Result<Instant, exn>> =
                         ReadInstantAsync(Path.Join(directory, string index))
 
+                    // An index read before it was ingested is remembered again
+                    // when it is, so its old node goes first: left in the list,
+                    // it would hold the cache past its capacity and, once
+                    // evicted, take the index's live entry with it
                     let remember (index: int) (instant: Instant) : unit =
+                        match cache.TryGetValue index with
+                        | true, node -> recency.Remove node
+                        | _ -> ()
+
                         cache[index] <- recency.AddFirst((index, instant))
                         if cache.Count > cacheCapacity then
                             cache.Remove(fst recency.Last.Value) |> ignore
