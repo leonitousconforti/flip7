@@ -7,7 +7,8 @@ namespace Flip7
 /// <item>Value points: the sum of the value cards in the hand.</item>
 /// <item>Modifier points: the sum of the modifier cards in the hand.</item>
 /// <item>Bonus points: the 15pts for getting to 7 cards before busting.</item>
-/// <item>Multiplier: multiplies the sum of the other points.</item>
+/// <item>Multiplier: multiplies the value points only, as Total
+/// computes.</item>
 /// </list>
 /// </summary>
 /// <remarks>
@@ -47,9 +48,9 @@ type public ScoreBuckets = {
     }
 
     /// <summary>
-    /// The maximum possible score, which is the sum of all the points from the
-    /// top seven cards, plus one of all the modifier cards, plus the 15pts for
-    /// getting the flip7 bonus, times two for the double multiplier.
+    /// The maximum possible score: the top seven value cards (12 down to 6)
+    /// doubled by the x2 multiplier, plus one of each modifier card and the
+    /// 15pts flip7 bonus, for a Total of 171.
     /// </summary>
     static member public Max: ScoreBuckets = {
         ValuePoints = 12 + 11 + 10 + 9 + 8 + 7 + 6 |> uint
