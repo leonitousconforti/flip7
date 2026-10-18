@@ -2,6 +2,10 @@ namespace Flip7
 
 module Simulation =
     let rec public probabilityToBust (deck: Deck) (discards: Deck) (hand: Hand) (onlyPlayer: bool) : float =
+        if Deck.IsEmpty deck && not (Deck.IsEmpty discards) then
+            probabilityToBust discards Deck.Empty hand onlyPlayer
+        else
+
         let pdf = Deck.pdf deck
         let probabilityOfDuplicateValueCard =
             if hand |> List.contains (ActionCard Card.SecondChance) then
