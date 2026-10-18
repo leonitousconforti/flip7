@@ -1,152 +1,247 @@
 module DeckTests
 
+open System
+open FsCheck
+open FsCheck.FSharp
 open Xunit
+
 open Flip7
+open Support
+
+// ---- composition ----
 
 [<Fact>]
-let ``Empty deck is empty`` () = Assert.True(Deck.IsEmpty Deck.Empty)
+let ``the full deck holds n copies of each value card n, one Zero, one of each modifier and three of each action`` () =
+    let copies (card: Card) =
+        match card with
+        | ValueCard _ -> max card.Value.ValuePoints 1u
+        | ModifierCard _ -> 1u
+        | ActionCard _ -> 3u
+
+    Assert.Equal<Deck>(Deck.Full |> Map.map (fun card _ -> copies card), Deck.Full)
+    // Every card is a key of both, so looking a card up is safe in either
+    Assert.Equal<Set<Card>>(set Deck.Full.Keys, set Deck.Empty.Keys)
+    // 79 value cards (the Zero and 1 + 2 + ... + 12 = 78 more), 6 modifiers and
+    // 9 actions
+    Assert.Equal(94I, Deck.Count Deck.Full)
+
+// ---- IsEmpty ----
 
 [<Fact>]
-let ``Full deck is not empty`` () = Assert.False(Deck.IsEmpty Deck.Full)
+let ``a deck is empty only when no card is left`` () =
+    Assert.True(Deck.IsEmpty Deck.Empty)
+    Assert.False(Deck.IsEmpty Deck.Full)
+    // One card among zeros tells "no card left" apart from "some card missing"
+    Assert.False(Deck.IsEmpty(deckOf [ ValueCard Card.Five ]))
+
+// ---- draws ----
 
 [<Fact>]
-let ``Count of Empty deck is 0`` () = Assert.Equal(0I, Deck.Count Deck.Empty)
+let ``a draw takes its cards from the deck and leaves the discards alone`` () =
+    // A few cards already played sit in the discards, so a draw that took from
+    // them, or emptied them, would show
+    let played = [ ValueCard Card.Twelve; ModifierCard Card.Plus4; ActionCard Card.Freeze ]
+    let deck = List.fold Deck.Decrement Deck.Full played
+    let discards = deckOf played
+
+    // Draw1With hands back its card on its own rather than in a list
+    let afterOne, card = Deck.Draw1With (Random 1) (deck, discards)
+
+    let draws = [
+        1, (afterOne, [ card ])
+        3, Deck.Draw3With (Random 1) (deck, discards)
+        5, Deck.DrawWith (Random 1) (deck, discards) 5u
+    ]
+
+    for count, ((deck', discards'), cards) in draws do
+        Assert.Equal(count, cards.Length)
+        // Putting the drawn cards back restores the deck exactly
+        Assert.Equal<Deck>(deck, List.fold Deck.Increment deck' cards)
+        Assert.Equal<Deck>(discards, discards')
 
 [<Fact>]
-let ``Count of Full deck is 94`` () = Assert.Equal(94I, Deck.Count Deck.Full)
+let ``an empty deck takes the discards in as the new deck`` () =
+    let five = ValueCard Card.Five
 
-[<Fact>]
-let ``Full deck has correct per-card counts`` () =
-    Assert.Equal(1u, Deck.Full[ValueCard Card.Zero])
-    Assert.Equal(1u, Deck.Full[ValueCard Card.One])
-    Assert.Equal(12u, Deck.Full[ValueCard Card.Twelve])
-    Assert.Equal(1u, Deck.Full[ModifierCard Card.Double])
-    Assert.Equal(3u, Deck.Full[ActionCard Card.Deal3])
-    Assert.Equal(3u, Deck.Full[ActionCard Card.SecondChance])
+    let (deck', discards'), cards =
+        Deck.DrawWith (Random 1) (deckOf [ five ], Deck.Decrement Deck.Full five) 3u
 
-[<Fact>]
-let ``Draw1 returns exactly one card`` () =
-    let _, cards = Deck.Draw1With (System.Random 1) (Deck.Full, Deck.Empty)
-    Assert.Equal(1, List.length [ cards ])
-
-[<Fact>]
-let ``Draw1 reduces deck count by 1`` () =
-    let (deck', _), _ = Deck.Draw1With (System.Random 1) (Deck.Full, Deck.Empty)
-    Assert.Equal(93I, Deck.Count deck')
-
-[<Fact>]
-let ``Draw3 returns exactly three cards`` () =
-    let _, cards = Deck.Draw3With (System.Random 1) (Deck.Full, Deck.Empty)
-    Assert.Equal(3, List.length cards)
-
-[<Fact>]
-let ``Draw3 reduces deck count by 3`` () =
-    let (deck', _), _ = Deck.Draw3With (System.Random 1) (Deck.Full, Deck.Empty)
+    // The deck's only card comes first, and the other two come from the 93
+    // discards once they are shuffled in as the new deck
+    Assert.Equal(3, cards.Length)
+    Assert.Equal(five, List.head cards)
+    Assert.True(Deck.IsEmpty discards')
     Assert.Equal(91I, Deck.Count deck')
 
 [<Fact>]
-let ``pdf of Full deck - values sum to 1`` () =
-    let total = Deck.pdf Deck.Full |> Map.fold (fun acc _ v -> acc + v) 0.0
-    Assert.InRange(total, 0.9999, 1.0001)
+let ``drawing with every card in a hand fails rather than hangs`` () =
+    // Two empty piles used to be shuffled into each other forever, so the draw
+    // runs on a task of its own and a regression times out instead of hanging
+    // the suite
+    let draw =
+        Threading.Tasks.Task.Run(fun () -> Deck.Draw1With (Random 1) (Deck.Empty, Deck.Empty))
+
+    let error =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            draw.WaitAsync(TimeSpan.FromSeconds 10.0).GetAwaiter().GetResult() |> ignore
+        )
+
+    Assert.Contains("the deck and the discards are both empty", error.Message)
+
+// The deck and the discards pooled into one count per card
+let private pooled (deck: Deck, discards: Deck) : Deck =
+    deck |> Map.map (fun card count -> count + Map.find card discards)
 
 [<Fact>]
-let ``pdf of Full deck - each card has correct probability`` () =
-    let pdf = Deck.pdf Deck.Full
-    Assert.InRange(pdf[ValueCard Card.Zero], 1.0 / 94.0 - 1e-9, 1.0 / 94.0 + 1e-9)
-    Assert.InRange(pdf[ValueCard Card.One], 1.0 / 94.0 - 1e-9, 1.0 / 94.0 + 1e-9)
-    Assert.InRange(pdf[ValueCard Card.Seven], 7.0 / 94.0 - 1e-9, 7.0 / 94.0 + 1e-9)
-    Assert.InRange(pdf[ValueCard Card.Eleven], 11.0 / 94.0 - 1e-9, 11.0 / 94.0 + 1e-9)
-    Assert.InRange(pdf[ValueCard Card.Twelve], 12.0 / 94.0 - 1e-9, 12.0 / 94.0 + 1e-9)
-    Assert.InRange(pdf[ActionCard Card.Deal3], 3.0 / 94.0 - 1e-9, 3.0 / 94.0 + 1e-9)
+let ``a draw conserves every card and touches the discards only to reshuffle them in`` () =
+    // A fifth of the decks are empty, so FsCheck's default hundred cases take
+    // the reshuffle about twenty times
+    let decks = Gen.frequency [ 1, Gen.constant Deck.Empty; 4, genDeck ]
+
+    Prop.forAll
+        (Arb.fromGen (Gen.zip genSeed decks))
+        (fun (seed, deck) ->
+            // The discards complete the deck to the full 94 cards, so the pair
+            // can never run out mid-draw
+            let discards = Deck.Full |> Map.map (fun card count -> count - Map.find card deck)
+
+            let (deck', discards'), drawn = Deck.Draw1With (Random seed) (deck, discards)
+
+            let conserved =
+                Deck.Increment (pooled (deck', discards')) drawn = pooled (deck, discards)
+
+            // A reshuffle takes every discard in, and a plain draw leaves them be
+            let expectedDiscards = if Deck.IsEmpty deck then Deck.Empty else discards
+
+            Prop.label "the drawn card is the only one to leave the deck and the discards" conserved
+            .&. Prop.label
+                    "a reshuffle empties the discards, and a plain draw leaves them as they were"
+                    (discards' = expectedDiscards)
+        )
+    |> Check.QuickThrowOnFailure
+
+// ---- saved format ----
 
 [<Fact>]
-let ``pdf of Empty deck - all values are 0.0`` () =
-    let pdf = Deck.pdf Deck.Empty
-    Assert.True(Map.forall (fun _ v -> v = 0.0) pdf)
+let ``a deck round-trips through serialization`` () =
+    // A round trip is cheap, and FsCheck's default hundred decks vary every
+    // card's count
+    Prop.forAll (Arb.fromGen genDeck) (fun deck -> Deck.Deserialize(Deck.Serialize deck) = deck)
+    |> Check.QuickThrowOnFailure
 
 [<Fact>]
-let ``pdf of single-card deck - that card has probability 1.0, rest are 0.0`` () =
-    let pdf = Deck.Empty |> Map.add (ValueCard Card.Five) 1u |> Deck.pdf
-    Assert.InRange(pdf[ValueCard Card.Five], 1.0 - 1e-9, 1.0 + 1e-9)
-    Assert.True(Map.forall (fun card v -> card = ValueCard Card.Five || v = 0.0) pdf)
+let ``a deck is saved as one 'card: count' line per card`` () =
+    // Timelines saved by earlier builds have to keep reading, and a change made
+    // to both directions at once passes every round trip, so the lines are
+    // pinned here: one per kind of card, in Card's order, actions first and
+    // values last
+    let lines = Deck.Serialize Deck.Full
+
+    Assert.Equal(22, lines.Length)
+    Assert.Equal<string array>([| "Deal3: 3"; "Freeze: 3"; "SecondChance: 3" |], Array.take 3 lines)
+    Assert.Equal("12: 12", Array.last lines)
 
 [<Fact>]
-let ``pdf of two-card-type deck - probabilities reflect counts`` () =
-    let pdf =
-        Deck.Empty
-        |> Map.add (ValueCard Card.One) 1u
-        |> Map.add (ValueCard Card.Three) 3u
-        |> Deck.pdf
-    Assert.InRange(pdf[ValueCard Card.One], 0.25 - 1e-9, 0.25 + 1e-9)
-    Assert.InRange(pdf[ValueCard Card.Three], 0.75 - 1e-9, 0.75 + 1e-9)
+let ``a deck that is not exactly the lines Serialize writes is None rather than an exception`` () =
+    // Each bad input is the full deck's lines with one thing wrong, most of
+    // them in the first line, which is "Deal3: 3"
+    let full = Deck.Serialize Deck.Full
+    let withFirst line = Array.updateAt 0 line full
+
+    let badInputs = [
+        "no lines", [||]
+        "a line short", Array.tail full
+        "a blank line past the last card", Array.append full [| "" |]
+        "a card repeated past the last card", Array.append full [| "Deal3: 3" |]
+        "a card listed twice and another missing", withFirst "Freeze: 3"
+        "a blank line in place of a card", withFirst ""
+        "a null line in place of a card", withFirst null
+        "no separator", withFirst "Deal3 3"
+        "no space after the colon", withFirst "Deal3:3"
+        "a second separator", withFirst "Deal3: 3: 3"
+        "an unknown card", withFirst "Deal4: 3"
+        "a card in the wrong case", withFirst "deal3: 3"
+        "no count", withFirst "Deal3: "
+        "a count in words", withFirst "Deal3: three"
+        "a fractional count", withFirst "Deal3: 1.5"
+        "a negative count", withFirst "Deal3: -1"
+        "a count past uint's range", withFirst "Deal3: 99999999999"
+        "a count with a sign", withFirst "Deal3: +3"
+        "a count padded with a space", withFirst "Deal3:  3"
+        "a count with a leading zero", withFirst "Deal3: 03"
+        "more copies than a full deck holds", withFirst "Deal3: 4"
+    ]
+
+    // An exception is reported under its label like a deck that read, so one
+    // bad input that raises does not hide the rest
+    let wrong = [
+        for label, lines in badInputs do
+            try
+                if Option.isSome (Deck.TryDeserialize lines) then
+                    yield $"{label}: read as a deck"
+            with error ->
+                yield $"{label}: raised {error.GetType().Name}"
+    ]
+
+    Assert.True(wrong.IsEmpty, String.concat "\n" wrong)
+
+// ---- pdf ----
 
 [<Fact>]
-let ``cdf of Full deck - last entry is 1`` () =
-    let lastValue = Deck.cdf Deck.Full |> Map.toList |> List.last |> snd
-    Assert.InRange(lastValue, 0.9999, 1.0001)
+let ``a card's probability is its share of the deck`` () =
+    let one, three = ValueCard Card.One, ValueCard Card.Three
+    let pdf = Deck.pdf (deckOf [ one; three; three; three ])
+
+    Assert.Equal(0.25, pdf[one], 1e-9)
+    Assert.Equal(0.75, pdf[three], 1e-9)
+    // Every other card, the actions and modifiers included, has no share
+    Assert.Empty(
+        pdf
+        |> Map.toList
+        |> List.filter (fun (card, probability) -> card <> one && card <> three && probability <> 0.0)
+    )
 
 [<Fact>]
-let ``cdf of Full deck - values are monotonically non-decreasing`` () =
-    let values = Deck.cdf Deck.Full |> Map.toList |> List.sortBy fst |> List.map snd
-    let pairs = List.pairwise values
-    Assert.True(List.forall (fun (a, b) -> b >= a) pairs)
+let ``an empty deck gives every card a probability of zero rather than NaN`` () =
+    // Dividing by the empty deck's count of zero would give NaN for every card
+    Assert.Equal<Map<Card, float>>(Map.map (fun _ _ -> 0.0) Deck.Empty, Deck.pdf Deck.Empty)
+
+// ---- cdf ----
 
 [<Fact>]
-let ``cdf of Empty deck - all values are 0.0`` () =
-    let cdf = Deck.cdf Deck.Empty
-    Assert.True(Map.forall (fun _ v -> v = 0.0) cdf)
-
-[<Fact>]
-let ``cdf of single-card deck - cards before Five are 0.0, Five and after are 1.0`` () =
-    let cdf = Deck.Empty |> Map.add (ValueCard Card.Five) 1u |> Deck.cdf
-    let sorted = cdf |> Map.toList |> List.sortBy fst
-    let beforeFive =
-        sorted
-        |> List.takeWhile (fun (card, _) -> card < ValueCard Card.Five)
-        |> List.map snd
-    let fiveAndAfter =
-        sorted
-        |> List.skipWhile (fun (card, _) -> card < ValueCard Card.Five)
-        |> List.map snd
-    Assert.True(List.forall (fun v -> v = 0.0) beforeFive)
-    Assert.True(List.forall (fun v -> abs (v - 1.0) < 1e-9) fiveAndAfter)
-
-[<Fact>]
-let ``cdf of two-card-type deck - cumulative values are correct`` () =
+let ``a card's cumulative probability counts every card ordered before it, actions and modifiers first`` () =
     let cdf =
-        Deck.Empty
-        |> Map.add (ValueCard Card.One) 1u
-        |> Map.add (ValueCard Card.Three) 3u
-        |> Deck.cdf
-    Assert.InRange(cdf[ValueCard Card.One], 0.25 - 1e-9, 0.25 + 1e-9)
-    Assert.InRange(cdf[ValueCard Card.Two], 0.25 - 1e-9, 0.25 + 1e-9)
-    Assert.InRange(cdf[ValueCard Card.Three], 1.0 - 1e-9, 1.0 + 1e-9)
+        Deck.cdf (
+            deckOf [
+                ActionCard Card.Freeze
+                ValueCard Card.One
+                ValueCard Card.Three
+                ValueCard Card.Three
+            ]
+        )
+
+    // The Freeze is a quarter of the deck and is ordered ahead of every
+    // modifier and value card, so each of them counts it
+    Assert.Equal(0.0, cdf[ActionCard Card.Deal3], 1e-9)
+    Assert.Equal(0.25, cdf[ActionCard Card.Freeze], 1e-9)
+    Assert.Equal(0.25, cdf[ModifierCard Card.Plus2], 1e-9)
+    Assert.Equal(0.25, cdf[ValueCard Card.Zero], 1e-9)
+    Assert.Equal(0.5, cdf[ValueCard Card.One], 1e-9)
+    Assert.Equal(0.5, cdf[ValueCard Card.Two], 1e-9)
+    Assert.Equal(1.0, cdf[ValueCard Card.Three], 1e-9)
+    Assert.Equal(1.0, cdf[ValueCard Card.Twelve], 1e-9)
+
+// ---- statistics ----
 
 [<Fact>]
-let ``Draw returns the requested number of cards`` () =
-    let _, cards = Deck.DrawWith (System.Random 1) (Deck.Full, Deck.Empty) 5u
-    Assert.Equal(5, List.length cards)
-
-[<Fact>]
-let ``Draw reduces deck count by the requested amount`` () =
-    let (deck', _), _ = Deck.DrawWith (System.Random 1) (Deck.Full, Deck.Empty) 5u
-    Assert.Equal(89I, Deck.Count deck')
-
-[<Fact>]
-let ``Draw from single-card deck continues from discards`` () =
-    let singleCard = Deck.Empty |> Map.add (ValueCard Card.Five) 1u
-    let _, cards = Deck.DrawWith (System.Random 1) (singleCard, Deck.Full) 3u
-    Assert.Equal(3, List.length cards)
-
-[<Fact>]
-let ``Draw 1 card from single-card deck returns that card`` () =
-    let singleCard = Deck.Empty |> Map.add (ValueCard Card.Five) 1u
-    let _, cards = Deck.DrawWith (System.Random 1) (singleCard, Deck.Empty) 1u
-    Assert.Equal<Card list>([ ValueCard Card.Five ], cards)
-
-[<Fact>]
-let ``DrawWith is reproducible with a seeded random`` () =
-    let draw (seed: int) =
-        Deck.DrawWith (System.Random seed) (Deck.Full, Deck.Empty) 10u |> snd
-
-    Assert.Equal<Card list>(draw 42, draw 42)
+let ``a draw from the full deck is likeliest to be a Twelve and is worth 680/94 points on average`` () =
+    // There are more Twelves than copies of any other card
+    Assert.Equal(ValueCard Card.Twelve, Deck.ec Deck.Full)
+    // The n copies of each value card n give 1 + 4 + ... + 144 = 650 points
+    // and the +2 to +10 modifiers 30 more, while a Double and the actions count
+    // no points
+    Assert.Equal(680.0 / 94.0, Deck.ev Deck.Full, 1e-9)
+    // The squared points sum to 6084 over the value cards (the cubes of 1 to
+    // 12) and 220 over the modifiers, and the variance is their mean less the
+    // square of the mean
+    Assert.Equal(sqrt (6304.0 / 94.0 - (680.0 / 94.0) ** 2.0), Deck.std Deck.Full, 1e-9)

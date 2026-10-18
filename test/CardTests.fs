@@ -3,68 +3,92 @@ module CardTests
 open Xunit
 open Flip7
 
-[<Fact>]
-let ``ValueCard Zero has 0 value points`` () =
-    let card = ValueCard Card.Zero
-    Assert.Equal(0u, card.Value.ValuePoints)
+// Deck.Full holds every card in the game, in Card's structural order: actions,
+// then modifiers, then values. Each test covers all of them.
+
+// ---- scores ----
 
 [<Fact>]
-let ``ValueCard Seven has 7 value points`` () =
-    let card = ValueCard Card.Seven
-    Assert.Equal(7u, card.Value.ValuePoints)
+let ``every card scores what its face shows`` () =
+    let values =
+        [
+            Card.Zero
+            Card.One
+            Card.Two
+            Card.Three
+            Card.Four
+            Card.Five
+            Card.Six
+            Card.Seven
+            Card.Eight
+            Card.Nine
+            Card.Ten
+            Card.Eleven
+            Card.Twelve
+        ]
+        |> List.mapi (fun n card -> ValueCard card, { ScoreBuckets.Zero with ValuePoints = uint n })
 
+    let modifiers =
+        [
+            Card.Plus2, 2u
+            Card.Plus4, 4u
+            Card.Plus6, 6u
+            Card.Plus8, 8u
+            Card.Plus10, 10u
+        ]
+        |> List.map (fun (card, points) -> ModifierCard card, { ScoreBuckets.Zero with ModifierPoints = points })
+
+    let multiplier =
+        ModifierCard Card.Double, { ScoreBuckets.Zero with Multiplier = 2u }
+
+    let actions =
+        [ Card.Deal3; Card.Freeze; Card.SecondChance ]
+        |> List.map (fun card -> ActionCard card, ScoreBuckets.Zero)
+
+    let expected = values @ modifiers @ [ multiplier ] @ actions
+    // Sorted, the table's cards are Deck.Full's, so it names every card once
+    Assert.Equal<Card list>(List.ofSeq Deck.Full.Keys, expected |> List.map fst |> List.sort)
+
+    // F# = compares every bucket, where Assert.Equal would compare totals only
+    // and pass a Double worth nothing
+    for card, worth in expected do
+        Assert.True((card.Value = worth), $"{card} is worth {card.Value}, expected {worth}")
+
+// ---- strings ----
+
+// These strings are the on-disk format: Event.Serialize and Persistence write
+// every card this way and read it back with Card.Parse
 [<Fact>]
-let ``ValueCard Twelve has 12 value points`` () =
-    let card = ValueCard Card.Twelve
-    Assert.Equal(12u, card.Value.ValuePoints)
+let ``every card is written the way saved games spell it`` () =
+    let cards = List.ofSeq Deck.Full.Keys
 
-[<Theory>]
-[<InlineData(2u)>]
-[<InlineData(4u)>]
-[<InlineData(6u)>]
-[<InlineData(8u)>]
-[<InlineData(10u)>]
-let ``Plus modifier cards have correct modifier points`` (points: uint) =
-    let card =
-        match points with
-        | 2u -> ModifierCard Card.Plus2
-        | 4u -> ModifierCard Card.Plus4
-        | 6u -> ModifierCard Card.Plus6
-        | 8u -> ModifierCard Card.Plus8
-        | 10u -> ModifierCard Card.Plus10
-        | _ -> failwith "unexpected"
+    Assert.Equal<string list>(
+        [
+            "Deal3"
+            "Freeze"
+            "SecondChance"
+            "+2"
+            "+4"
+            "+6"
+            "+8"
+            "+10"
+            "x2"
+            "0"
+            "1"
+            "2"
+            "3"
+            "4"
+            "5"
+            "6"
+            "7"
+            "8"
+            "9"
+            "10"
+            "11"
+            "12"
+        ],
+        cards |> List.map string
+    )
 
-    Assert.Equal(points, card.Value.ModifierPoints)
-    Assert.Equal(0u, card.Value.ValuePoints)
-    Assert.Equal(1u, card.Value.Multiplier)
-
-[<Fact>]
-let ``Double card has multiplier of 2 and no points`` () =
-    let card = ModifierCard Card.Double
-    Assert.Equal(2u, card.Value.Multiplier)
-    Assert.Equal(0u, card.Value.ModifierPoints)
-    Assert.Equal(0u, card.Value.ValuePoints)
-
-[<Fact>]
-let ``All action cards have Zero score`` () =
-    Assert.Equal(ScoreBuckets.Zero, (ActionCard Card.Deal3).Value)
-    Assert.Equal(ScoreBuckets.Zero, (ActionCard Card.Freeze).Value)
-    Assert.Equal(ScoreBuckets.Zero, (ActionCard Card.SecondChance).Value)
-
-[<Fact>]
-let ``ValueCard ToString returns numeric string`` () =
-    Assert.Equal("0", (ValueCard Card.Zero).ToString())
-    Assert.Equal("7", (ValueCard Card.Seven).ToString())
-    Assert.Equal("12", (ValueCard Card.Twelve).ToString())
-
-[<Fact>]
-let ``ModifierCard ToString returns name`` () =
-    Assert.Equal("+2", (ModifierCard Card.Plus2).ToString())
-    Assert.Equal("+10", (ModifierCard Card.Plus10).ToString())
-    Assert.Equal("x2", (ModifierCard Card.Double).ToString())
-
-[<Fact>]
-let ``ActionCard ToString returns name`` () =
-    Assert.Equal("Deal3", (ActionCard Card.Deal3).ToString())
-    Assert.Equal("Freeze", (ActionCard Card.Freeze).ToString())
-    Assert.Equal("SecondChance", (ActionCard Card.SecondChance).ToString())
+    for card in cards do
+        Assert.Equal(card, Card.Parse(string card))

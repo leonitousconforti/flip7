@@ -6,6 +6,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Support.fs" />
+    <Compile Include="Games.fs" />
     <Compile Include="ScoreBucketsTests.fs" />
     <Compile Include="CardTests.fs" />
     <Compile Include="HandTests.fs" />
@@ -18,6 +20,9 @@
     <Compile Include="ObservationTests.fs" />
     <Compile Include="InferenceTests.fs" />
     <Compile Include="LookaheadTests.fs" />
+    <Compile Include="SolverTests.fs" />
+    <Compile Include="AimTests.fs" />
+    <Compile Include="SageTests.fs" />
     <Compile Include="PropertyTests.fs" />
   </ItemGroup>
 
