@@ -84,17 +84,18 @@ type public Strategy =
     static member TryParse(string: string) : Strategy option =
         try
             string |> Strategy.Parse |> Some
-        with :? System.FormatException ->
-            None
+        with
+        | :? System.FormatException
+        | :? System.OverflowException -> None
 
 /// <summary>
 /// A targeting policy decides who an action card is given to: who gets frozen,
 /// who is dealt three cards, and who is passed a second chance its holder
 /// cannot keep. Like a strategy it is data rather than a function so that it
-/// can be serialized and deserialized; use Strategy.Decider.Default to
-/// evaluate one. The escape hatch is called ChoosesExternally rather than
-/// Custom because Strategy.Custom is matched unqualified in several places and
-/// a second case of the same name in this namespace would rebind those matches.
+/// can be serialized and deserialized; use Strategy.Decider.Default to evaluate
+/// one. The escape hatch is called ChoosesExternally rather than Custom because
+/// Strategy.Custom is matched unqualified in several places and a second case
+/// of the same name in this namespace would rebind those matches.
 /// </summary>
 [<RequireQualifiedAccess>]
 type public Targeting =
