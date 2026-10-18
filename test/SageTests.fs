@@ -47,9 +47,26 @@ let private budget = 300
 
 // Sage playing alone for its seat, knowing the field from the study
 let private studiedSage () : Sage =
-    Sage(Strategy.Decider.Default, "Sage", study = study.Value, budget = budget)
+    Sage("Sage", study = study.Value, budget = budget)
 
-// ---- passing questions on ----
+// The table's decider with Sage seated on it: each of Sage's players, whom
+// the table seats as Custom and ChoosesExternally under their own name, is
+// answered by what Sage's Strategies hold for them, and everyone else by the
+// decider
+let private seated
+    (strategies: Map<string, (Random -> Strategy.HitOrStandDecider) * (Random -> Strategy.TargetDecider)>)
+    (decider: Strategy.Decider)
+    : Strategy.Decider =
+    strategies
+    |> Map.fold
+        (fun decider name (hitOrStand, target) ->
+            decider
+            |> Strategy.addHitOrStandStrategy name hitOrStand
+            |> Strategy.addTargetingStrategy name target
+        )
+        decider
+
+// ---- seating Sage ----
 
 // Passes every question on to the decider, noting for each one asked of a seat
 // the filter lets through the Random and the game so far it came with, and
@@ -84,59 +101,158 @@ let private recording
         }
 }
 
+// Sage's strategies are seated on the table's decider, each noting whose
+// question it was handed, with which Random and game so far, and what Sage
+// made of everyone by its answer beside what a Sage shown that game so far
+// makes of them. The two agree exactly where Sage took in the game so far
+// the question came with
 [<Fact>]
-let ``Sage passes every other seat's question on with the Random and the game so far it came with`` () =
+let ``the table's decider answers everyone else, and Sage only its seat's questions, each with the Random and the game so far it came with``
+    ()
+    =
     let passed = ResizeArray<Random * Instant seq>()
     let decided = ResizeArray<string>()
     let opponents = Strategy.Decider.Default |> recording passed decided (fun _ -> true)
 
-    let sage = Sage(opponents, "Sage", study = study.Value, budget = budget)
+    let sage = studiedSage ()
+    let read (sage: Sage) = [ for name, _, _ in lineup -> sage.ModelOf name ]
+    let handed = ResizeArray<string * Random * Instant seq>()
+
+    // Whether each question was an aim, what a Sage shown its game so far
+    // makes of everyone, and what Sage made of them by its answer
+    let models = ResizeArray<bool * PlayerModel option list * PlayerModel option list>()
+
+    let noting (aim: bool) (name: string) (random: Random) (history: Instant seq) =
+        handed.Add(name, random, history)
+        let shown = Sage("Sage", study = study.Value)
+        shown.Follow history
+        models.Add(aim, read shown, read sage)
+
+    let noted =
+        sage.Strategies
+        |> Map.map (fun _ (hitOrStand, target) ->
+            (fun random history round turn (player: Player) others finished decks -> async {
+                let! choice = hitOrStand random history round turn player others finished decks
+                noting false player.Name random history
+                return choice
+            }),
+            (fun random history ask (chooser: Player) candidates finished decks -> async {
+                let! aimed = target random history ask chooser candidates finished decks
+                noting true chooser.Name random history
+                return aimed
+            })
+        )
 
     let given = ResizeArray<Random * Instant seq>()
     let answered = ResizeArray<string>()
-    let table = sage.Decider |> recording given answered (fun name -> name <> "Sage")
+    let asked = ResizeArray<Random * Instant seq>()
+
+    let table =
+        seated noted opponents
+        |> recording given answered (fun name -> name <> "Sage")
+        |> recording asked (ResizeArray()) (fun name -> name = "Sage")
 
     Timeline.SimulateWithDecider (Random 7) table lineup |> played |> ignore
 
-    // Sage searched, and its replays asked the opponents nothing: they were
-    // asked exactly the questions the other seats were
+    // Sage searched, and its replays asked the table's decider nothing: it
+    // was asked exactly the questions the other seats were
     Assert.NotEmpty sage.Plans
     Assert.NotEmpty given
     Assert.Equal(given.Count, passed.Count)
 
-    // Each with the very Random and game so far the engine gave Sage, and
-    // their answers came back unchanged
+    // Each with the very Random and game so far the engine gave the table,
+    // and its answers came back unchanged
     for (random, history), (random', history') in Seq.zip given passed do
         Assert.Same(random, random')
         Assert.Same(history, history')
 
     Assert.Equal<string seq>(decided, answered)
 
+    // Sage was handed its seat's questions alone, every one of them, each
+    // with the very Random and game so far the engine gave the table
+    Assert.NotEmpty asked
+    Assert.Equal(asked.Count, handed.Count)
+
+    for (random, history), (name, random', history') in Seq.zip asked handed do
+        Assert.Equal("Sage", name)
+        Assert.Same(random, random')
+        Assert.Same(history, history')
+
+    // and took in the game so far each came with, so that by its answer it
+    // made of everyone what a Sage shown that game so far makes of them. Some
+    // aim must show Sage something its last question had not, or a Sage that
+    // ignored the game so far its aims came with would pass
+    Assert.True(
+        models
+        |> Seq.pairwise
+        |> Seq.exists (fun ((_, before, _), (aim, after, _)) -> aim && after <> before),
+        "no aim of Sage's showed it anything new; pick a new seed"
+    )
+
+    for _, shown, followed in models do
+        Assert.Equal<PlayerModel option list>(shown, followed)
+
+// Were Bob to declare Ally's labels, the table would hand his questions to
+// what Sage registers for Ally, which must not answer them as Ally's
+[<Fact>]
+let ``what Sage registers for a seat refuses anyone else's question`` () =
+    let sage = Sage("Sage", supporters = [ "Ally" ])
+    let hitOrStand, target = sage.Strategies["Ally"]
+    let bob =
+        Player.Make("Bob", Strategy.Custom "Ally", targeting = Targeting.ChoosesExternally "Ally")
+
+    let players = [
+        Player.Make("Sage", Strategy.Custom "Sage", targeting = Targeting.ChoosesExternally "Sage")
+        Player.Make("Ally", Strategy.Custom "Ally", targeting = Targeting.ChoosesExternally "Ally")
+        bob
+    ]
+
+    let history = [
+        {
+            Event = TableSeated
+            Players = players
+            Deck = Deck.Full
+            Discards = Deck.Empty
+        }
+    ]
+
+    let others = players |> List.where (fun player -> player.Name <> "Bob")
+
+    let asked =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            hitOrStand (Random 1) history 1u 1u bob others [] (Deck.Full, Deck.Empty)
+            |> Async.RunSynchronously
+            |> ignore
+        )
+
+    let aimed =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            target (Random 1) history Strategy.Ask.WhoToFreeze bob players [] (Deck.Full, Deck.Empty)
+            |> Async.RunSynchronously
+            |> ignore
+        )
+
+    for refusal in [ asked; aimed ] do
+        Assert.Contains("Ally", refusal.Message)
+        Assert.Contains("Bob", refusal.Message)
+
+    // Sage registers one entry for each of its seats, by name
+    Assert.Equal<string list>([ "Ally"; "Sage" ], sage.Strategies |> Map.keys |> List.ofSeq)
+
 // ---- before the seed is pinned ----
 
-// What a solved seat answers unaided, on dice of its own seeded as given
+// What a solved seat answers unaided, on dice of its own seeded as given: it
+// maximizes expected value and aims spitefully, as the engine plays those
 let private unaidedHitOrStand (seed: int) : Strategy.HitOrStandDecider =
-    fun history round turn player others finished decks ->
-        let strategy =
-            match player.Strategy with
-            | Strategy.Custom _ -> Strategy.MaximizesExpectedValue
-            | strategy -> strategy
-
-        Strategy.Decider.Default.HitOrStand (Random seed) strategy history round turn player others finished decks
+    Strategy.Decider.Default.HitOrStand (Random seed) Strategy.MaximizesExpectedValue
 
 let private unaidedTarget (seed: int) : Strategy.TargetDecider =
-    fun history ask chooser candidates finished decks ->
-        let targeting =
-            match chooser.Targeting with
-            | Targeting.ChoosesExternally _ -> Targeting.PlaysSpitefully
-            | targeting -> targeting
+    Strategy.Decider.Default.Target (Random seed) Targeting.PlaysSpitefully
 
-        Strategy.Decider.Default.Target (Random seed) targeting history ask chooser candidates finished decks
-
-// A protagonist who rolls dice and a supporter who declared a Custom strategy
+// The protagonist and a supporter, seated as Sage requires
 let private solvedLineup: Lineup = [
-    "Sage", Strategy.PlaysLikeAHuman 18u, Targeting.ChoosesExternally "Sage"
-    "Ally", Strategy.Custom "Ally", Targeting.PlaysGreedily(0.5, 0.1)
+    sageSeat
+    "Ally", Strategy.Custom "Ally", Targeting.ChoosesExternally "Ally"
     bob
     carol
 ]
@@ -158,13 +274,14 @@ type private Compared = {
     PlansAfter: int
 }
 
-// Plays a game with Sage answering for the protagonist and the supporter, each
-// solved question asked with a Random of the test's, seeded by a draw from the
-// one the engine gave, so that the test can roll the same dice. Returns the
-// timeline and every solved question
+// Plays a game with Sage seated on the default decider, answering for the
+// protagonist and the supporter, each solved question asked with a Random of
+// the test's, seeded by a draw from the one the engine gave, so that the test
+// can roll the same dice. Returns the timeline and every solved question
 let private playSolved (random: Random) (sage: Sage) : Instant list * Compared list =
     let asked = ResizeArray<Compared>()
     let solved = set [ "Sage"; "Ally" ]
+    let withSage = seated sage.Strategies Strategy.Decider.Default
 
     let table: Strategy.Decider = {
         HitOrStand =
@@ -174,7 +291,7 @@ let private playSolved (random: Random) (sage: Sage) : Instant list * Compared l
                     let before = sage.Plans.Length
 
                     let! answer =
-                        sage.Decider.HitOrStand (Random seed) strategy history round turn player others finished decks
+                        withSage.HitOrStand (Random seed) strategy history round turn player others finished decks
 
                     let! unaided = unaidedHitOrStand seed history round turn player others finished decks
 
@@ -191,7 +308,7 @@ let private playSolved (random: Random) (sage: Sage) : Instant list * Compared l
 
                     return answer
                 else
-                    return! sage.Decider.HitOrStand random strategy history round turn player others finished decks
+                    return! withSage.HitOrStand random strategy history round turn player others finished decks
             }
         Target =
             fun random targeting history ask chooser candidates finished decks -> async {
@@ -200,7 +317,7 @@ let private playSolved (random: Random) (sage: Sage) : Instant list * Compared l
                     let before = sage.Plans.Length
 
                     let! answer =
-                        sage.Decider.Target (Random seed) targeting history ask chooser candidates finished decks
+                        withSage.Target (Random seed) targeting history ask chooser candidates finished decks
 
                     let! unaided = unaidedTarget seed history ask chooser candidates finished decks
 
@@ -228,7 +345,7 @@ let private playSolved (random: Random) (sage: Sage) : Instant list * Compared l
 
                     return answer
                 else
-                    return! sage.Decider.Target random targeting history ask chooser candidates finished decks
+                    return! withSage.Target random targeting history ask chooser candidates finished decks
             }
     }
 
@@ -238,7 +355,7 @@ let private playSolved (random: Random) (sage: Sage) : Instant list * Compared l
 [<Fact>]
 let ``until the seed is pinned the solved seats answer unaided, and Sage searches at the first question after`` () =
     let sage =
-        Sage(Strategy.Decider.Default, "Sage", supporters = [ "Ally" ], study = study.Value, budget = budget)
+        Sage("Sage", supporters = [ "Ally" ], study = study.Value, budget = budget)
 
     let timeline, asked = playSolved (Random 2026) sage
 
@@ -279,8 +396,7 @@ let ``in a game no fresh seed dealt, Sage answers unaided throughout`` () =
     let random = Random 2029
     random.Next() |> ignore
 
-    let sage =
-        Sage(Strategy.Decider.Default, "Sage", supporters = [ "Ally" ], study = study.Value)
+    let sage = Sage("Sage", supporters = [ "Ally" ], study = study.Value)
 
     let _, asked = playSolved random sage
 
@@ -309,20 +425,23 @@ let ``in a game no fresh seed dealt, Sage answers unaided throughout`` () =
 
 // ---- what Sage learns of the players ----
 
-// Sage follows a game only through the questions it is asked, so the answer to
-// the game's last question counts only once Sage is shown the finished game,
-// and then Sage reads everyone exactly as one shown the whole game at once
-// does, since both take in the same instants in the same order
+// Sage follows a game only through its seat's questions, so whatever the game
+// shows after the last of them counts only once Sage is shown the finished
+// game, and then Sage reads everyone exactly as one shown the whole game at
+// once does, since both take in the same instants in the same order
 [<Fact>]
 let ``shown the finished game, Sage reads everyone by all of it`` () =
     let sage = studiedSage ()
-    let timeline = Timeline.SimulateWithDecider (Random 5) sage.Decider lineup |> played
+
+    let timeline =
+        Timeline.SimulateWithDecider (Random 5) (seated sage.Strategies Strategy.Decider.Default) lineup
+        |> played
 
     let read (sage: Sage) = [ for name, _, _ in lineup -> sage.ModelOf name ]
 
     let asked = read sage
     sage.Follow timeline
-    let shown = Sage(Strategy.Decider.Default, "Sage", study = study.Value)
+    let shown = Sage("Sage", study = study.Value)
     shown.Follow timeline
 
     Assert.NotEqual<PlayerModel option list>(asked, read sage)
@@ -352,10 +471,10 @@ let ``studying the field names every opponent's strategy and targeting`` () =
             Assert.True(declared > 0.9, $"{name} aims {targeting} at {declared}")
 
 // Before a game Sage knows everyone as it studied them. Sage follows a game
-// only through the questions it is asked, so by the end of one it has added
-// to that at most all of the decisions each opponent made in it, and of their
+// only through its seat's questions, so by the end of one it has added to
+// that at most all of the decisions each opponent made in it, and of their
 // aims at one of two or more players, and at least one of each where the game
-// showed any, since it was asked something after each opponent's first.
+// showed any, since its seat was asked something after each opponent's first.
 // Shown the finished game, it has added every one of them
 [<Fact>]
 let ``Sage adds every decision and aim a game shows to what it studied`` () =
@@ -364,7 +483,9 @@ let ``Sage adds every decision and aim a game shows to what it studied`` () =
     for name, _, _ in lineup do
         Assert.Equal(Study.ModelOf study.Value name, sage.ModelOf name)
 
-    let timeline = Timeline.SimulateWithDecider (Random 5) sage.Decider lineup |> played
+    let timeline =
+        Timeline.SimulateWithDecider (Random 5) (seated sage.Strategies Strategy.Decider.Default) lineup
+        |> played
     let observations = observationsOf timeline
 
     let shown (name: string) =
@@ -404,6 +525,30 @@ let ``Sage adds every decision and aim a game shows to what it studied`` () =
         Assert.Equal(studied.Observations + decided, model.Observations)
         Assert.Equal(studied.Aims + aimed, model.Aims)
 
+// The lineup with the named player seated as Sage requires of its seats, as
+// Custom and ChoosesExternally under their own name, and a decider that plays
+// them as the lineup declared them, with the Random each question comes with,
+// as the engine would. So the game is the one the lineup deals, and a Sage for
+// that player can be shown it
+let private declaredFor (name: string) (lineup: Lineup) : Lineup * Strategy.Decider =
+    let _, strategy, targeting = lineup |> List.find (fun (seat, _, _) -> seat = name)
+
+    let decider =
+        Strategy.Decider.Default
+        |> Strategy.addHitOrStandStrategy name (fun random -> Strategy.Decider.Default.HitOrStand random strategy)
+        |> Strategy.addTargetingStrategy name (fun random -> Strategy.Decider.Default.Target random targeting)
+
+    let seats =
+        lineup
+        |> List.map (fun (seat, strategy, targeting) ->
+            if seat = name then
+                seat, Strategy.Custom name, Targeting.ChoosesExternally name
+            else
+                seat, strategy, targeting
+        )
+
+    seats, decider
+
 // At a table of two, the first 26 instants of seed 13 end with Bob freezing
 // himself, the only one left in the round, and before it he never aims at
 // all, so that a game quit there shows him aim only where he had no choice.
@@ -411,12 +556,13 @@ let ``Sage adds every decision and aim a game shows to what it studied`` () =
 // whole game counts every aim he made with a choice of players
 [<Fact>]
 let ``an aim with no choice of players shows nothing of how a player aims`` () =
-    let lineup = [
-        "Ann", Strategy.HitUntilScore 25u, Targeting.PlaysSpitefully
-        "Bob", Strategy.HitUntilScore 20u, Targeting.ChoosesRandomly
-    ]
+    let lineup, decider =
+        declaredFor "Ann" [
+            "Ann", Strategy.HitUntilScore 25u, Targeting.PlaysSpitefully
+            "Bob", Strategy.HitUntilScore 20u, Targeting.ChoosesRandomly
+        ]
 
-    let whole = Timeline.SimulateWith (Random 13) lineup |> played
+    let whole = Timeline.SimulateWithDecider (Random 13) decider lineup |> played
     let quit = List.take 26 whole
 
     let aimsOf (timeline: Instant list) =
@@ -442,9 +588,9 @@ let ``an aim with no choice of players shows nothing of how a player aims`` () =
     let aimsIn (model: PlayerModel option) : int =
         model |> Option.map (fun model -> model.Aims) |> Option.defaultValue 0
 
-    // What a Sage shown a game makes of Bob
+    // What a Sage for Ann shown a game makes of Bob
     let following (timeline: Instant list) : PlayerModel option =
-        let sage = Sage(Strategy.Decider.Default, "Ann")
+        let sage = Sage("Ann")
         sage.Follow timeline
         sage.ModelOf "Bob"
 
@@ -472,17 +618,22 @@ let ``an aim with no choice of players shows nothing of how a player aims`` () =
 // it compares as unequal to itself, so the models are compared bare
 [<Fact>]
 let ``a player seen only aiming is modelled once seen aiming at one of two or more players`` () =
-    let lineup = [
-        "Ann", Strategy.HitUntilScore 25u, Targeting.ChoosesRandomly
-        "Bob", Strategy.HitUntilScore 20u, Targeting.ChoosesRandomly
-    ]
+    let lineup, decider =
+        declaredFor "Ann" [
+            "Ann", Strategy.HitUntilScore 25u, Targeting.ChoosesRandomly
+            "Bob", Strategy.HitUntilScore 20u, Targeting.ChoosesRandomly
+        ]
 
     // Bob's observations in the first three instants of a seed's game, and
-    // what a study of them and a Sage shown them make of him
+    // what a study of them and a Sage for Ann shown them make of him
     let opening (seed: int) =
-        let instants = Timeline.SimulateWith (Random seed) lineup |> played |> List.take 3
+        let instants =
+            Timeline.SimulateWithDecider (Random seed) decider lineup
+            |> played
+            |> List.take 3
+
         let study = Study.OfTimelines [ AsyncSeq.ofSeq instants ] |> Async.RunSynchronously
-        let sage = Sage(Strategy.Decider.Default, "Ann")
+        let sage = Sage("Ann")
         sage.Follow instants
 
         let bobs =
@@ -549,9 +700,12 @@ let ``a study over a grid of one's own names a strategy between the default grid
     Assert.Equal(between, fst (Inference.MostLikely model))
     Assert.Equal(Inference.DefaultCandidates.Length + 1, model.Posterior.Length)
 
-    let sage = Sage(Strategy.Decider.Default, "Sage", study = own, budget = budget)
+    let sage = Sage("Sage", study = own, budget = budget)
 
-    Timeline.SimulateWithDecider (Random 5) sage.Decider (sageSeat :: fieldWithDaveBetween)
+    Timeline.SimulateWithDecider
+        (Random 5)
+        (seated sage.Strategies Strategy.Decider.Default)
+        (sageSeat :: fieldWithDaveBetween)
     |> played
     |> ignore
 
@@ -604,8 +758,15 @@ type private Asked = {
     Edited: bool
 }
 
-// Passes every question to Sage, noting each one a solved seat is asked
-let private asking (solved: Set<string>) (sage: Sage) (asked: ResizeArray<Asked>) : Strategy.Decider =
+// Seats Sage on the opponents' decider and passes every question to it,
+// noting each one a solved seat is asked
+let private asking
+    (solved: Set<string>)
+    (sage: Sage)
+    (asked: ResizeArray<Asked>)
+    (opponents: Strategy.Decider)
+    : Strategy.Decider =
+    let withSage = seated sage.Strategies opponents
     let seen = ref 0
 
     let note (history: Instant seq) (before: int) (candidates: string list) (answer: Answer) =
@@ -630,7 +791,7 @@ let private asking (solved: Set<string>) (sage: Sage) (asked: ResizeArray<Asked>
                 let before = sage.Plans.Length
 
                 let! choice =
-                    sage.Decider.HitOrStand random strategy history round turn player others finished decks
+                    withSage.HitOrStand random strategy history round turn player others finished decks
 
                 if solved.Contains player.Name then
                     note history before [] (Answer.HitOrStand(player.Name, round, turn, player.Hand, choice))
@@ -642,7 +803,7 @@ let private asking (solved: Set<string>) (sage: Sage) (asked: ResizeArray<Asked>
                 let before = sage.Plans.Length
 
                 let! target =
-                    sage.Decider.Target random targeting history ask chooser candidates finished decks
+                    withSage.Target random targeting history ask chooser candidates finished decks
 
                 if solved.Contains chooser.Name then
                     let names = candidates |> List.map (fun candidate -> candidate.Name)
@@ -693,8 +854,8 @@ let private follows (game: string) (plan: Plan) (asked: Asked seq) : unit =
 // hit-or-stand questions the plan still expected next once the game had gone
 // otherwise than it foresaw, where only the events show that the plan is no
 // longer the game's. The rules mirror how Sage follows a game and answers
-// (follow and the decider in src/Sage.fs), so a change to those must be made
-// here too
+// (follow and the strategies it registers, in src/Sage.fs), so a change to
+// those must be made here too
 type private Audit = { Problems: string list; Strays: int }
 
 let private audit (plans: Plan list) (asked: Asked seq) : Audit =
@@ -778,7 +939,10 @@ let ``once the seed is pinned the live game follows Sage's plan, which wins most
             let asked = ResizeArray<Asked>()
 
             let timeline =
-                Timeline.SimulateWithDecider (Random seed) (asking (set [ "Sage" ]) sage asked) lineup
+                Timeline.SimulateWithDecider
+                    (Random seed)
+                    (asking (set [ "Sage" ]) sage asked Strategy.Decider.Default)
+                    lineup
                 |> played
 
             let game = $"seed {seed}"
@@ -829,11 +993,14 @@ let ``Sage replays players who take sides as it fitted them, and its plan forese
         Assert.True(probability > 0.9, $"{name} aims {likeliest} at {probability}")
 
     for seed in 1..5 do
-        let sage = Sage(partisans, "Sage", study = partisanStudy.Value, budget = budget)
+        let sage = Sage("Sage", study = partisanStudy.Value, budget = budget)
         let asked = ResizeArray<Asked>()
 
         let timeline =
-            Timeline.SimulateWithDecider (Random seed) (asking (set [ "Sage" ]) sage asked) (sageSeat :: partisanField)
+            Timeline.SimulateWithDecider
+                (Random seed)
+                (asking (set [ "Sage" ]) sage asked partisans)
+                (sageSeat :: partisanField)
             |> played
 
         let game = $"seed {seed}"
@@ -935,7 +1102,7 @@ let private twelveAt (targeting: Targeting) : Lineup =
             name, Strategy.Custom "Person", targeting
     ]
 
-// The opponents' decider for them, which plays their label as maximizing
+// The table's decider for them, which plays their label as maximizing
 // expected value on the dice the engine hands them
 let private maximizers: Strategy.Decider =
     Strategy.Decider.Default
@@ -948,7 +1115,7 @@ let private maximizers: Strategy.Decider =
 // with no study it has never seen the others decide. A budget of one replay
 // makes the plan what Sage answers unaided, so the plan foresees the game
 // only if the replay plays everyone as they play. That is as maximizing
-// expected value, which is how the opponents' decider plays their label,
+// expected value, which is how the table's decider plays their label,
 // rather than on the label, which the engine cannot play, or as the grid's
 // first candidate. And it is on the policy they declared, with the dice the
 // live game rolls, rather than as the aims Sage saw before its search
@@ -966,12 +1133,12 @@ let ``Sage replays a player it has never seen decide as maximizing expected valu
         | "random" -> Targeting.ChoosesRandomly
         | _ -> Targeting.PlaysGreedily(0.25, 0.15)
 
-    let sage = Sage(maximizers, "Sage", budget = 1)
+    let sage = Sage("Sage", budget = 1)
     let asked = ResizeArray<Asked>()
     let first = ref []
 
     let noting =
-        asking (set [ "Sage" ]) sage asked
+        asking (set [ "Sage" ]) sage asked maximizers
         |> beforeEachQuestion (fun _ history question ->
             match question with
             | HitOrStandQuestion(Player = player) when player.Name = "Sage" && first.Value.IsEmpty ->
@@ -1017,7 +1184,7 @@ let private counting (solved: Set<string>) (count: int ref) (decider: Strategy.D
     )
 
 // People at a real table play under Custom labels and aim as they please,
-// both left to the opponents' decider, and Sage knows them only by name.
+// both left to the table's decider, and Sage knows them only by name.
 // These play and aim as the field's players of the same names do, on the dice
 // the engine hands them, so that Erin aims at random as the study saw her
 let private people: Strategy.Decider =
@@ -1037,9 +1204,11 @@ let private people: Strategy.Decider =
 
 // Erin, seated first, and Bob have finished the round by the time Sage first
 // searches seed 10, so a replay that did not model the players who had
-// finished the round would hand the engine a Custom strategy it cannot play
+// finished the round would hand the engine a Custom strategy it cannot play.
+// The people's decider is the table's, and is asked exactly the questions the
+// other seats are at the table
 [<Fact>]
-let ``Sage replays people by what it made of them, never asking the opponents' decider`` () =
+let ``Sage replays people by what it made of them, never by the table's decider`` () =
     let lineup = [
         "Erin", Strategy.Custom "Person", Targeting.ChoosesExternally "Person"
         sageSeat
@@ -1050,7 +1219,7 @@ let ``Sage replays people by what it made of them, never asking the opponents' d
 
     let passed = ref 0
     let toPeople = people |> counting Set.empty passed
-    let sage = Sage(toPeople, "Sage", study = study.Value, budget = budget)
+    let sage = Sage("Sage", study = study.Value, budget = budget)
 
     // Who had finished the round at each question Sage was asked to hit or
     // stand before it made a plan, the last of which it made the plan at
@@ -1059,7 +1228,7 @@ let ``Sage replays people by what it made of them, never asking the opponents' d
     let live = ref 0
 
     let atTable =
-        asking (set [ "Sage" ]) sage asked
+        asking (set [ "Sage" ]) sage asked toPeople
         |> counting (set [ "Sage" ]) live
         |> beforeEachQuestion (fun _ _ question ->
             match question with
@@ -1110,9 +1279,9 @@ let ``against people who stray, Sage plays its plan only while the game goes as 
     let asked = ResizeArray<Asked>()
 
     let sage =
-        Sage(strays 1, "Sage", supporters = [ "Ally" ], study = study.Value, budget = budget)
+        Sage("Sage", supporters = [ "Ally" ], study = study.Value, budget = budget)
 
-    Timeline.SimulateWithDecider (Random 1) (asking (set [ "Sage"; "Ally" ]) sage asked) lineup
+    Timeline.SimulateWithDecider (Random 1) (asking (set [ "Sage"; "Ally" ]) sage asked (strays 1)) lineup
     |> played
     |> ignore
 
@@ -1129,34 +1298,39 @@ let ``against people who stray, Sage plays its plan only while the game goes as 
 // ---- new games and edits ----
 
 // Shown only the opening of the first game, Sage has seen fewer instants than
-// the second game's first question shows it, so only the identity of the
-// second game's TableSeated, not how much of a game Sage has seen, tells the
-// two games apart
+// its seat's first question in the second game shows it, so only the identity
+// of the second game's TableSeated, not how much of a game Sage has seen,
+// tells the two games apart
 [<Fact>]
 let ``a new game starts afresh, keeping only what Sage studied`` () =
     let fresh = studiedSage ()
     let used = studiedSage ()
 
-    let opening = Timeline.SimulateWithDecider (Random 3) used.Decider lineup |> played
+    let opening =
+        Timeline.SimulateWithDecider (Random 3) (seated used.Strategies Strategy.Decider.Default) lineup
+        |> played
+
     Assert.NotEmpty used.Plans
     used.Follow(List.take 2 opening)
 
     let firstShown = ref None
 
     let noting =
-        used.Decider
-        |> beforeEachQuestion (fun _ history _ ->
-            if firstShown.Value.IsNone then
+        seated used.Strategies Strategy.Decider.Default
+        |> beforeEachQuestion (fun _ history question ->
+            if firstShown.Value.IsNone && question.Asked.Name = "Sage" then
                 firstShown.Value <- Some(Seq.length history)
         )
 
     let again = Timeline.SimulateWithDecider (Random 4) noting lineup |> played
     Assert.True(
         firstShown.Value.Value >= 2,
-        $"the second game's first question showed {firstShown.Value.Value} instants, which the length check tells apart"
+        $"Sage's first question in the second game showed {firstShown.Value.Value} instants, which the length check tells apart"
     )
 
-    let first = Timeline.SimulateWithDecider (Random 4) fresh.Decider lineup |> played
+    let first =
+        Timeline.SimulateWithDecider (Random 4) (seated fresh.Strategies Strategy.Decider.Default) lineup
+        |> played
     Assert.Equal<Instant list>(first, again)
     Assert.Equal<Plan list>(fresh.Plans, used.Plans)
 
@@ -1180,7 +1354,7 @@ let private edited
     : Instant list * Instant list * Asked list * int =
     let random = Random seed
     let asked = ResizeArray<Asked>()
-    let table = asking solved sage asked
+    let table = asking solved sage asked Strategy.Decider.Default
 
     let forking =
         table
@@ -1249,7 +1423,7 @@ let ``a game continued after an edit is played legally, and Sage's plan still fo
     let solved = set [ "Sage"; "Ally" ]
 
     let sage =
-        Sage(Strategy.Decider.Default, "Sage", supporters = [ "Ally" ], study = study.Value, budget = budget)
+        Sage("Sage", supporters = [ "Ally" ], study = study.Value, budget = budget)
 
     let erinAsked = ref false
 
@@ -1381,7 +1555,7 @@ let private behind (score: uint) (solved: string list) (seed: int) (decider: Str
                 Player.Make(name, strategy, firmScore = score, targeting = targeting)
         ]
 
-    let seated = {
+    let tableSeated = {
         Event = TableSeated
         Players = players
         Deck = Deck.Full
@@ -1391,7 +1565,7 @@ let private behind (score: uint) (solved: string list) (seed: int) (decider: Str
     Timeline.ContinueWith
         (Random seed)
         decider
-        [ seated ]
+        [ tableSeated ]
         (players |> List.map (fun player -> player.Name))
         1u
         Map.empty
@@ -1408,10 +1582,9 @@ let private behind (score: uint) (solved: string list) (seed: int) (decider: Str
 [<Fact>]
 let ``a search plays the first line it finds that wins, whatever its budget beyond it`` () =
     let first (budget: int) : Plan =
-        let sage =
-            Sage(Strategy.Decider.Default, "Sage", study = study.Value, budget = budget)
+        let sage = Sage("Sage", study = study.Value, budget = budget)
 
-        behind 80u [ "Sage" ] 18 sage.Decider
+        behind 80u [ "Sage" ] 18 (seated sage.Strategies Strategy.Decider.Default)
         |> AsyncSeq.iter ignore
         |> Async.RunSynchronously
 
@@ -1434,9 +1607,9 @@ let ``a search departs at the supporters' answers only once the protagonist's ha
     let budget = 200
 
     let sage =
-        Sage(Strategy.Decider.Default, "Sage", supporters = [ "Ally" ], study = study.Value, budget = budget)
+        Sage("Sage", supporters = [ "Ally" ], study = study.Value, budget = budget)
 
-    behind 100u [ "Sage"; "Ally" ] 1 sage.Decider
+    behind 100u [ "Sage"; "Ally" ] 1 (seated sage.Strategies Strategy.Decider.Default)
     |> AsyncSeq.iter ignore
     |> Async.RunSynchronously
 
@@ -1457,7 +1630,6 @@ let ``cancelling the game cancels the search under way`` () =
 
     let sage =
         Sage(
-            Strategy.Decider.Default,
             "Sage",
             budget = Int32.MaxValue,
             progress =
@@ -1467,7 +1639,9 @@ let ``cancelling the game cancels the search under way`` () =
                         cancellation.Cancel()
         )
 
-    let game = behind 150u [ "Sage" ] 6 sage.Decider |> AsyncSeq.iter ignore
+    let game =
+        behind 150u [ "Sage" ] 6 (seated sage.Strategies Strategy.Decider.Default)
+        |> AsyncSeq.iter ignore
 
     Assert.ThrowsAny<OperationCanceledException>(fun () ->
         Async.RunSynchronously(game, cancellationToken = cancellation.Token)
@@ -1479,33 +1653,87 @@ let ``cancelling the game cancels the search under way`` () =
 
 // ---- refusals ----
 
+// The TableSeated instant a game of the lineup starts with
+let private sittingDown (lineup: Lineup) : Instant = {
+    Event = TableSeated
+    Players = [
+        for name, strategy, targeting in lineup -> Player.Make(name, strategy, targeting = targeting)
+    ]
+    Deck = Deck.Full
+    Discards = Deck.Empty
+}
+
 [<Fact>]
 let ``Sage refuses to support itself, to search no games, or to play a seat the table lacks`` () =
     let itself =
-        Assert.Throws<ArgumentException>(fun () ->
-            Sage(Strategy.Decider.Default, "Sage", supporters = [ "Sage" ]) |> ignore
-        )
+        Assert.Throws<ArgumentException>(fun () -> Sage("Sage", supporters = [ "Sage" ]) |> ignore)
 
     Assert.Equal("supporters", itself.ParamName)
     Assert.Contains("Sage", itself.Message)
 
     let nothing =
-        Assert.Throws<ArgumentException>(fun () -> Sage(Strategy.Decider.Default, "Sage", budget = 0) |> ignore)
+        Assert.Throws<ArgumentException>(fun () -> Sage("Sage", budget = 0) |> ignore)
 
     Assert.Equal("budget", nothing.ParamName)
 
     // Without the check nobody at the table would be the supporter, so Sage
     // would silently never answer for them
-    let seated = {
-        Event = TableSeated
-        Players = [
-            for name, strategy, targeting in lineup -> Player.Make(name, strategy, targeting = targeting)
-        ]
-        Deck = Deck.Full
-        Discards = Deck.Empty
-    }
-
-    let sage = Sage(Strategy.Decider.Default, "Sage", supporters = [ "Ally" ])
+    let sage = Sage("Sage", supporters = [ "Ally" ])
     let unseated =
-        Assert.Throws<InvalidOperationException>(fun () -> sage.Follow [ seated ])
+        Assert.Throws<InvalidOperationException>(fun () -> sage.Follow [ sittingDown lineup ])
     Assert.Contains("Ally", unseated.Message)
+
+// A seat of Sage's declared any other way than as Custom and ChoosesExternally
+// under its own name, in either part, would have the engine, or whoever the
+// label names, answer questions Sage's plans count on answering. So Sage
+// refuses it at the start of every game, whether shown the game or asked a
+// question in it, and says how to seat it
+[<Fact>]
+let ``Sage refuses a game that seats one of its players other than as Custom and ChoosesExternally under their name``
+    ()
+    =
+    // The field with Sage seated as it requires and Ally as given
+    let withAlly (strategy: Strategy) (targeting: Targeting) : Lineup =
+        sageSeat :: ("Ally", strategy, targeting) :: field
+
+    let declared =
+        withAlly (Strategy.Custom "Ally") (Targeting.ChoosesExternally "Ally")
+
+    let allySpiteful = withAlly (Strategy.Custom "Ally") Targeting.PlaysSpitefully
+
+    let strategyAlone =
+        ("Sage", Strategy.Custom "Sage", Targeting.PlaysSpitefully)
+        :: List.tail declared
+
+    // Ally on an engine strategy or targeting policy, or under Sage's label
+    // in either part or both, and Sage declared Custom for its strategy
+    // alone, each with the seat the refusal is about
+    let refused = [
+        "Ally", withAlly Strategy.MaximizesExpectedValue (Targeting.ChoosesExternally "Ally")
+        "Ally", allySpiteful
+        "Ally", withAlly (Strategy.Custom "Sage") (Targeting.ChoosesExternally "Ally")
+        "Ally", withAlly (Strategy.Custom "Ally") (Targeting.ChoosesExternally "Sage")
+        "Ally", withAlly (Strategy.Custom "Sage") (Targeting.ChoosesExternally "Sage")
+        "Sage", strategyAlone
+    ]
+
+    for name, lineup in refused do
+        let sage = Sage("Sage", supporters = [ "Ally" ])
+        let refusal =
+            Assert.Throws<InvalidOperationException>(fun () -> sage.Follow [ sittingDown lineup ])
+        Assert.Contains($"Strategy.Custom \"{name}\"", refusal.Message)
+        Assert.Contains($"Targeting.ChoosesExternally \"{name}\"", refusal.Message)
+
+    // Seated as it requires, Sage follows the game, and asked its first
+    // question in a later game that seats Ally on spite, it refuses that game
+    let sage = Sage("Sage", supporters = [ "Ally" ])
+    sage.Follow [ sittingDown declared ]
+
+    let refusal =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            Timeline.SimulateWithDecider (Random 1) (seated sage.Strategies Strategy.Decider.Default) allySpiteful
+            |> played
+            |> ignore
+        )
+
+    Assert.Contains("Targeting.ChoosesExternally \"Ally\"", refusal.Message)
