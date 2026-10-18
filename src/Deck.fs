@@ -86,27 +86,64 @@ module public Deck =
 #endif
 
     /// <summary>
-    /// Parses a deck from an array of lines, where each line is in the format
-    /// "Card: Count".
+    /// Parses a deck from the lines Serialize writes: one "Card: Count" line
+    /// per card, every card once. Raises a FormatException naming the problem
+    /// for anything else: the wrong number of lines, a null line, a line of
+    /// another form, an unknown card, a count that is not a uint in plain
+    /// digits, a card listed twice, or more copies of a card than the full deck
+    /// holds.
     /// </summary>
     let public Deserialize (lines: string seq) : Deck =
+        let lines = Seq.toArray lines
+
+        if lines.Length <> Map.count Full then
+            raise (
+                System.FormatException
+                    $"Invalid deck: expected {Map.count Full} lines, one per card, but got {lines.Length}"
+            )
+
+        // With one line per card, a card listed twice leaves another one
+        // missing, so no card can go uncounted once every line has been read
         lines
-        |> Seq.take (Full |> Map.keys |> Seq.length)
-        |> Seq.map (fun line ->
-            match line.Split ": " with
-            | [| cardStr; countStr |] -> Card.Parse cardStr, System.UInt32.Parse countStr
-            | _ -> raise (System.FormatException $"Invalid line format: {line}")
-        )
-        |> Map.ofSeq
-        |> fun deck ->
-            if Map.count deck <> Map.count Full then
-                raise (System.FormatException "Invalid deck - expected a count for every card")
-            else
-                deck
+        |> Array.fold
+            (fun (deck: Deck) line ->
+                if isNull line then
+                    raise (System.FormatException "Invalid deck: a line is null")
+
+                let card, count =
+                    match line.Split ": " with
+                    | [| cardStr; countStr |] ->
+                        match Card.TryParse cardStr, System.UInt32.TryParse countStr with
+                        | None, _ ->
+                            raise (System.FormatException $"Invalid deck line '{line}': unknown card '{cardStr}'")
+                        // Comparing with the count written back rejects the
+                        // signs, spaces and leading zeros UInt32 also reads
+                        | Some card, (true, count) when string count = countStr -> card, count
+                        | Some _, _ ->
+                            raise (
+                                System.FormatException
+                                    $"Invalid deck line '{line}': the count '{countStr}' is not a uint in plain digits"
+                            )
+                    | _ -> raise (System.FormatException $"Invalid deck line '{line}': expected 'Card: Count'")
+
+                let copies = Map.find card Full
+
+                if Map.containsKey card deck then
+                    raise (System.FormatException $"Invalid deck: {card} is listed twice, so another card is missing")
+                elif count > copies then
+                    raise (
+                        System.FormatException
+                            $"Invalid deck line '{line}': {count} copies of {card} is more than the {copies} in a full deck"
+                    )
+                else
+                    Map.add card count deck
+            )
+            Map.empty
 
     /// <summary>
-    /// Tries to parse a deck from an array of lines, where each line is in the
-    /// format "Card: Count".
+    /// Tries to parse a deck from the lines Serialize writes: one "Card: Count"
+    /// line per card, every card once. Returns None for anything Deserialize
+    /// rejects rather than raising.
     /// </summary>
     let public TryDeserialize (lines: string seq) : Deck option =
         try
@@ -148,11 +185,16 @@ module public Deck =
     /// Draws a card from the deck using the given source of randomness,
     /// returning the new deck, the new discards, and the drawn card. If the
     /// deck is empty, the discards are shuffled and become the new deck, and
-    /// the discards become empty.
+    /// the discards become empty. Raises an InvalidOperationException if the
+    /// deck and the discards run out before every card is drawn.
     /// </summary>
     let rec internal DrawWith (random: System.Random) (decks: Deck * Deck) (count: uint) : (Deck * Deck) * Card list =
         let deck, discards = decks
-        assert (Count deck + Count discards >= bigint count)
+
+        // Two empty piles are refused rather than shuffled into each other
+        // forever. A draw of more cards than the piles hold ends up here too
+        if IsEmpty deck && IsEmpty discards then
+            raise (System.InvalidOperationException "Cannot draw a card: the deck and the discards are both empty")
 
         if IsEmpty deck then
             DrawWith random (discards, Empty) count
@@ -199,7 +241,8 @@ module public Deck =
     /// Draws one card from the deck using the given source of randomness,
     /// returning the new deck, the new discards, and the drawn card. If the
     /// deck is empty, the discards are shuffled and become the new deck, and
-    /// the discards become empty.
+    /// the discards become empty. Raises an InvalidOperationException if the
+    /// deck and the discards are both empty.
     /// </summary>
     let public Draw1With (random: System.Random) (decks: Deck * Deck) =
         DrawWith random decks 1u |> fun (decks, cards) -> decks, cards.Head
@@ -218,7 +261,8 @@ module public Deck =
     /// Draws three cards from the deck using the given source of randomness,
     /// returning the new deck, the new discards and the drawn cards. If the
     /// deck is empty, the discards are shuffled and become the new deck, and
-    /// the discards become empty.
+    /// the discards become empty. Raises an InvalidOperationException if the
+    /// deck and the discards run out before every card is drawn.
     /// </summary>
     let public Draw3With (random: System.Random) (decks: Deck * Deck) = DrawWith random decks 3u
 
@@ -242,7 +286,9 @@ module public Deck =
 
     /// <summary>
     /// The cumulative distribution function of the deck, which maps each card
-    /// to the probability of drawing that card or a lower card from the deck.
+    /// to the probability of drawing that card or one ordered before it from
+    /// the deck. The order is Card's structural order: the actions, then the
+    /// modifiers, then the values.
     /// </summary>
     let public cdf (deck: Deck) : Map<Card, float> =
         deck
