@@ -501,15 +501,22 @@ let ``fitting a handful of games names each targeting, and a player who takes si
     ]
 
     for targeting, expected in cases do
-        let model = Inference.FitAims(aimsAs targeting) |> List.exactlyOne
-        let likeliest, probability = List.head model.Posterior
+        let model = Inference.Fit(aimsAs targeting) |> List.exactlyOne
+        let likeliest, probability = List.head model.AimPosterior
         Assert.Equal(expected, likeliest)
         Assert.True(probability > 0.9, $"{targeting} was fitted as {likeliest} at {probability}")
-        Assert.Equal(1.0, model.Posterior |> List.sumBy snd, 1e-12)
+        Assert.Equal(1.0, model.AimPosterior |> List.sumBy snd, 1e-12)
 
         // Twenty games show Ann making about fifty aims among two or more
         // candidates, and the fit should rest on no fewer than forty
         Assert.True(model.Aims >= 40, $"{targeting} was fitted from only {model.Aims} aims")
+
+        // Only her aims are fitted, so how she plays is the prior, even over
+        // the candidates, and her hit rate is NaN
+        Assert.Equal(0, model.Observations)
+        Assert.True(Double.IsNaN model.HitRate, $"{targeting} was fitted with a hit rate of {model.HitRate}")
+
+        Assert.Equal<(Strategy * float) list>(strategyPrior, model.Posterior)
 
 // Evidence of each aim on its own, scored over the names of its own table,
 // folds into the evidence of them all scored at once over every name, even as
@@ -558,32 +565,28 @@ let ``aim evidence folded one aim at a time is the evidence scored at once`` () 
     // The default rate of out-of-character aims
     let epsilon = 0.1
 
+    let evidenceOf (names: string list) (observations: Observation list) =
+        Inference.EvidenceWith epsilon Inference.DefaultCandidates Inference.DefaultTargetings names "Ann" observations
+
     let folded =
         aims
-        |> List.map (fun (names, aim) ->
-            Inference.AimEvidenceWith epsilon Inference.DefaultTargetings "Ann" names [ aim ]
-        )
-        |> List.reduce Inference.CombineAims
+        |> List.map (fun (names, aim) -> evidenceOf names [ aim ])
+        |> List.reduce Inference.Combine
 
-    let atOnce =
-        Inference.AimEvidenceWith
-            epsilon
-            Inference.DefaultTargetings
-            "Ann"
-            [ "Abe"; "Ann"; "Bob"; "Carol"; "Eve" ]
-            (List.map snd aims)
+    let atOnce = evidenceOf [ "Abe"; "Ann"; "Bob"; "Carol"; "Eve" ] (List.map snd aims)
 
     Assert.Equal(atOnce, folded)
 
-    // And each candidate's sum is the log of the likelihood of every aim
+    // And each candidate's sum is the log of the likelihood of every aim,
+    // which is the same under any strategy
     Assert.Equal<(Aiming * float) list>(
-        atOnce.LogLikelihoods
+        atOnce.AimLogLikelihoods
         |> List.map (fun (candidate, _) ->
             candidate,
             aims
-            |> List.sumBy (fun (_, aim) -> log (Inference.AimLikelihood epsilon candidate aim))
+            |> List.sumBy (fun (_, aim) -> log (Inference.Likelihood epsilon Strategy.AlwaysHits candidate aim))
         ),
-        atOnce.LogLikelihoods
+        atOnce.AimLogLikelihoods
     )
 
     Assert.Equal<string list>([ "Abe"; "Ann"; "Bob"; "Carol"; "Eve" ], folded.Names)
@@ -592,7 +595,7 @@ let ``aim evidence folded one aim at a time is the evidence scored at once`` () 
     // Every policy played plainly, and with every way of favouring one of the
     // five names, opposing one, or favouring one and opposing another, each
     // once
-    let grid = atOnce.LogLikelihoods |> List.map fst
+    let grid = atOnce.AimLogLikelihoods |> List.map fst
     Assert.Equal(Inference.DefaultTargetings.Length * (1 + 5 + 5 + 5 * 4), grid.Length)
     Assert.Equal(grid.Length, (List.distinct grid).Length)
 
@@ -605,18 +608,24 @@ let ``with no aims seen, taking sides with a policy weighs as much as playing it
     let mismatches = [
         for count in [ 1; 3; 12 ] do
             let model =
-                Inference.AimModelFrom(
-                    Inference.AimEvidenceWith 0.1 Inference.DefaultTargetings "Ann" (List.take count seatNames) []
+                Inference.ModelFrom(
+                    Inference.EvidenceWith
+                        0.1
+                        Inference.DefaultCandidates
+                        Inference.DefaultTargetings
+                        (List.take count seatNames)
+                        "Ann"
+                        []
                 )
 
             for policy in Inference.DefaultTargetings do
                 let plainly =
-                    model.Posterior
+                    model.AimPosterior
                     |> List.find (fun (aiming, _) -> aiming = Aiming.Plays policy)
                     |> snd
 
                 let sided =
-                    model.Posterior
+                    model.AimPosterior
                     |> List.sumBy (fun (aiming, probability) ->
                         match aiming with
                         | Aiming.TakesSides(_, _, otherwise) when otherwise = policy -> probability

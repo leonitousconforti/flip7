@@ -190,7 +190,7 @@ let ``Fit names a bust-probability threshold from clean decisions with little do
 
     Assert.Equal("Mom", model.Name)
     Assert.Equal(List.length momsDecisions, model.Observations)
-    Assert.Equal(Strategy.HitUntilBustProbability 0.4, Inference.MostLikely model)
+    Assert.Equal(Strategy.HitUntilBustProbability 0.4, fst (Inference.MostLikely model))
 
     // Named by the evidence rather than by the order of the grid. The
     // posterior is a distribution over the whole grid, without which a high
@@ -199,6 +199,10 @@ let ``Fit names a bust-probability threshold from clean decisions with little do
     Assert.True(head > 0.85, $"named at only {head}")
     Assert.Equal(Inference.DefaultCandidates.Length, model.Posterior.Length)
     Assert.Equal(1.0, model.Posterior |> List.sumBy snd, 1e-12)
+
+    // Mom was never seen aim, so how she aims is the prior
+    Assert.Equal(0, model.Aims)
+    Assert.Equal<(Aiming * float) list>(aimPrior, model.AimPosterior)
 
 // Standing with no Ones in the deck, when nothing can bust her, is as out of
 // character as Mom gets. Flipping her decision at two Ones or at five instead
@@ -215,7 +219,43 @@ let ``one out-of-character decision does not rule out the strategy behind the re
         )
 
     let model = Inference.Fit decisions |> List.exactlyOne
-    Assert.Equal(Strategy.HitUntilBustProbability 0.4, Inference.MostLikely model)
+    Assert.Equal(Strategy.HitUntilBustProbability 0.4, fst (Inference.MostLikely model))
+
+// A sample rolls once for the strategy and then once for the aiming, and takes
+// the first candidate whose share of its posterior the roll falls within. The
+// shares are exact in binary, so the rolls split at them exactly, and a
+// hundred seeds draw every pair
+[<Fact>]
+let ``SampleWith draws a strategy and then an aiming, each from its posterior`` () =
+    let model: PlayerModel = {
+        Name = "Ann"
+        Observations = 4
+        HitRate = 0.75
+        Posterior = [ Strategy.HitUntilScore 20u, 0.75; Strategy.AlwaysHits, 0.25 ]
+        Aims = 2
+        AimPosterior = [
+            Aiming.Plays Targeting.PlaysSpitefully, 0.5
+            Aiming.Plays Targeting.ChoosesRandomly, 0.5
+        ]
+    }
+
+    let pick (roll: float) (posterior: ('candidate * float) list) : 'candidate =
+        match posterior with
+        | [ likelier, share; other, _ ] -> if roll < share then likelier else other
+        | _ -> failwith "a posterior of two candidates"
+
+    let samples = [
+        for seed in 1..100 ->
+            let random = System.Random seed
+            let strategy = pick (random.NextDouble()) model.Posterior
+            let aiming = pick (random.NextDouble()) model.AimPosterior
+            (strategy, aiming), Inference.SampleWith (System.Random seed) model
+    ]
+
+    for expected, sampled in samples do
+        Assert.Equal(expected, sampled)
+
+    Assert.Equal(4, samples |> List.map snd |> List.distinct |> List.length)
 
 // The grids are lists rather than matches, so nothing warns when a strategy or
 // a targeting the engine plays is left out of them, and a player who plays it
@@ -267,19 +307,37 @@ let ``evidence folded one decision at a time is the evidence scored at once`` ()
 
     Assert.True(decisions.Length > 1, "Bob decided at most once, so nothing was folded: pick a new seed")
 
+    let atOnce = Inference.Evidence "Bob" decisions
+
     Assert.Equal(
-        Inference.Evidence "Bob" decisions,
+        atOnce,
         decisions
         |> List.map (fun decision -> Inference.Evidence "Bob" [ decision ])
         |> List.reduce Inference.Combine
     )
 
+    // And each candidate's sum is the log of the likelihood of every decision,
+    // which is the same under any aiming
+    Assert.Equal<(Strategy * float) list>(
+        atOnce.LogLikelihoods
+        |> List.map (fun (candidate, _) ->
+            candidate,
+            decisions
+            |> List.sumBy (fun decision ->
+                log (Inference.Likelihood 0.1 candidate (Aiming.Plays Targeting.PlaysSpitefully) decision)
+            )
+        ),
+        atOnce.LogLikelihoods
+    )
+
 // FromTimeline hands Inference a game's aims among its hit-or-stand
-// decisions. Each side reads only its own kind, so reading the whole stream is
-// reading that kind alone, and a player seen only aiming gets no model of how
-// they hit, nor one seen only deciding a model of how they aim
+// decisions. A decision says nothing about how a player aims, nor an aim about
+// how they hit or stand, so each part of a player's evidence and model is what
+// their observations of its kind alone make it, and a player seen only aiming
+// is modelled by the prior of how they play, as one seen only deciding is by
+// the prior of how they aim
 [<Fact>]
-let ``Inference reads only its own kind of observation from a game's stream`` () =
+let ``each kind of observation in a game's stream informs only its own part of a model`` () =
     let observations = observationsOfGame 3 threeSeats
     let decisions, aims = observations |> List.partition decides
 
@@ -290,24 +348,83 @@ let ``Inference reads only its own kind of observation from a game's stream`` ()
         "no aim had more than one candidate: pick a new seed"
     )
 
-    // The fits and Accuracy filter out the other kind
-    Assert.Equal<PlayerModel list>(Inference.Fit decisions, Inference.Fit observations)
-    Assert.Equal<AimingModel list>(Inference.FitAims aims, Inference.FitAims observations)
-    Assert.Equal(Inference.Accuracy Strategy.AlwaysHits decisions, Inference.Accuracy Strategy.AlwaysHits observations)
-    Assert.Empty(Inference.Fit aims)
-    Assert.Empty(Inference.FitAims decisions)
+    // A decision's likelihood is the same under every aiming, and an aim's
+    // under every strategy
+    let strategies = [ Strategy.AlwaysStands; Strategy.AlwaysHits; Strategy.HitUntilScore 20u ]
 
-    // So does each player's evidence
+    let aimings = [
+        Aiming.Plays Targeting.PlaysSpitefully
+        Aiming.Plays Targeting.ChoosesRandomly
+        Aiming.TakesSides(Some "Ann", Some "Bob", Targeting.PlaysSpitefully)
+    ]
+
+    for decision in decisions do
+        for strategy in strategies do
+            let under =
+                aimings
+                |> List.map (fun aiming -> Inference.Likelihood 0.1 strategy aiming decision)
+                |> List.distinct
+
+            Assert.Equal(1, under.Length)
+
+    for aim in aims do
+        for aiming in aimings do
+            let under =
+                strategies
+                |> List.map (fun strategy -> Inference.Likelihood 0.1 strategy aiming aim)
+                |> List.distinct
+
+            Assert.Equal(1, under.Length)
+
+    // So each part of a player's evidence is the evidence of their
+    // observations of its kind alone
+    let strategyPart (evidence: PlayerEvidence) =
+        evidence.Observations, evidence.Hits, evidence.LogLikelihoods
+
+    let aimPart (evidence: PlayerEvidence) =
+        evidence.Aims, evidence.Names, evidence.AimLogLikelihoods
+
     for name in [ "Ann"; "Bob"; "Carol" ] do
         let theirs = observations |> List.where (fun observation -> observation.Name = name)
         let decided, aimed = theirs |> List.partition decides
+        let evidence = Inference.Evidence name theirs
 
-        Assert.Equal(Inference.Evidence name decided, Inference.Evidence name theirs)
-        Assert.Equal(Inference.AimEvidence name aimed, Inference.AimEvidence name theirs)
+        Assert.Equal(strategyPart (Inference.Evidence name decided), strategyPart evidence)
+        Assert.Equal(aimPart (Inference.Evidence name aimed), aimPart evidence)
 
-    // And each kind's likelihood gives the other kind one
-    for aim in aims do
-        Assert.Equal(1.0, Inference.Likelihood 0.1 Strategy.AlwaysStands aim)
+    // And so is each part of the fits, which model a player seen only aiming
+    // as never seen decide, and one seen only deciding as never seen aim
+    let byName (models: PlayerModel list) =
+        models |> List.sortBy (fun model -> model.Name)
 
-    for decision in decisions do
-        Assert.Equal(1.0, Inference.AimLikelihood 0.1 (Aiming.Plays Targeting.PlaysSpitefully) decision)
+    let strategyOf (model: PlayerModel) =
+        model.Name, model.Observations, model.HitRate, model.Posterior
+
+    let aimingOf (model: PlayerModel) =
+        model.Name, model.Aims, model.AimPosterior
+
+    let fitted = byName (Inference.Fit observations)
+
+    Assert.Equal<(string * int * float * (Strategy * float) list) list>(
+        byName (Inference.Fit decisions) |> List.map strategyOf,
+        fitted
+        |> List.where (fun model -> model.Observations > 0)
+        |> List.map strategyOf
+    )
+
+    Assert.Equal<(string * int * (Aiming * float) list) list>(
+        byName (Inference.Fit aims) |> List.map aimingOf,
+        fitted |> List.where (fun model -> model.Aims > 0) |> List.map aimingOf
+    )
+
+    for model in Inference.Fit aims do
+        Assert.Equal(0, model.Observations)
+        Assert.True(System.Double.IsNaN model.HitRate, $"{model.Name} has a hit rate of {model.HitRate}")
+        Assert.Equal<(Strategy * float) list>(strategyPrior, model.Posterior)
+
+    for model in Inference.Fit decisions do
+        Assert.Equal(0, model.Aims)
+        Assert.Equal<(Aiming * float) list>(aimPrior, model.AimPosterior)
+
+    // Accuracy reads the decisions alone
+    Assert.Equal(Inference.Accuracy Strategy.AlwaysHits decisions, Inference.Accuracy Strategy.AlwaysHits observations)

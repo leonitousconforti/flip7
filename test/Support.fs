@@ -8,9 +8,10 @@ open FsCheck.FSharp
 open Flip7
 
 // What the test files share: decks and hands built from their cards, a
-// timeline played out and the questions it shows, a decider that notes every
-// question before passing it on, a Random that logs every call made on it,
-// and the generators the properties draw from.
+// timeline played out and the questions it shows, how Inference models a
+// player it never saw decide or aim, a decider that notes every question
+// before passing it on, a Random that logs every call made on it, and the
+// generators the properties draw from.
 
 // A table to seat: each player's name, strategy and targeting
 type Lineup = (string * Strategy * Targeting) list
@@ -40,6 +41,19 @@ let played (stream: AsyncSeq<'T>) : 'T list =
 // asked them
 let observationsOf (timeline: Instant list) : Observation list =
     timeline |> AsyncSeq.ofSeq |> Observation.FromTimeline |> played
+
+// How Inference models a player never seen decide: by the prior, even over
+// every strategy of the default grid
+let strategyPrior: (Strategy * float) list =
+    Inference.DefaultCandidates
+    |> List.map (fun candidate -> candidate, 1.0 / float Inference.DefaultCandidates.Length)
+
+// How Inference models a player never seen aim at two or more players: by the
+// prior, which over nobody to take sides with is even over every policy of the
+// default grid played plainly
+let aimPrior: (Aiming * float) list =
+    Inference.DefaultTargetings
+    |> List.map (fun targeting -> Aiming.Plays targeting, 1.0 / float Inference.DefaultTargetings.Length)
 
 // A question the engine puts to a decider, with everything it shows the
 // decider besides the question's Random and the game so far

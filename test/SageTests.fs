@@ -318,15 +318,15 @@ let ``shown the finished game, Sage reads everyone by all of it`` () =
     let sage = studiedSage ()
     let timeline = Timeline.SimulateWithDecider (Random 5) sage.Decider lineup |> played
 
-    let read (sage: Sage) = [ for name, _, _ in lineup -> sage.ModelOf name, sage.AimingOf name ]
+    let read (sage: Sage) = [ for name, _, _ in lineup -> sage.ModelOf name ]
 
     let asked = read sage
     sage.Follow timeline
     let shown = Sage(Strategy.Decider.Default, "Sage", study = study.Value)
     shown.Follow timeline
 
-    Assert.NotEqual<(PlayerModel option * AimingModel option) list>(asked, read sage)
-    Assert.Equal<(PlayerModel option * AimingModel option) list>(read shown, read sage)
+    Assert.NotEqual<PlayerModel option list>(asked, read sage)
+    Assert.Equal<PlayerModel option list>(read shown, read sage)
 
 [<Fact>]
 let ``studying the field names every opponent's strategy and targeting`` () =
@@ -342,7 +342,9 @@ let ``studying the field names every opponent's strategy and targeting`` () =
     // never tell from greedy at higher thresholds to bank at, so that it is
     // only among the likeliest
     for name, _, targeting in field do
-        let posterior = (Study.AimingOf study.Value name).Value.Posterior
+        let model = (Study.ModelOf study.Value name).Value
+        Assert.True(model.Aims > 0, $"{name} was never seen aim at one of several players")
+        let posterior = model.AimPosterior
         let declared = posterior |> List.find (fst >> (=) (Aiming.Plays targeting)) |> snd
         Assert.Equal(snd (List.head posterior), declared)
 
@@ -361,7 +363,6 @@ let ``Sage adds every decision and aim a game shows to what it studied`` () =
 
     for name, _, _ in lineup do
         Assert.Equal(Study.ModelOf study.Value name, sage.ModelOf name)
-        Assert.Equal(Study.AimingOf study.Value name, sage.AimingOf name)
 
     let timeline = Timeline.SimulateWithDecider (Random 5) sage.Decider lineup |> played
     let observations = observationsOf timeline
@@ -388,20 +389,20 @@ let ``Sage adds every decision and aim a game shows to what it studied`` () =
 
     for name, _, _ in field do
         let decided, aimed = shown name
-        let studied = (Study.ModelOf study.Value name).Value.Observations
-        let studiedAims = (Study.AimingOf study.Value name).Value.Aims
-        Assert.InRange((sage.ModelOf name).Value.Observations, studied + min 1 decided, studied + decided)
-        Assert.InRange((sage.AimingOf name).Value.Aims, studiedAims + min 1 aimed, studiedAims + aimed)
+        let studied = (Study.ModelOf study.Value name).Value
+        let model = (sage.ModelOf name).Value
+        Assert.InRange(model.Observations, studied.Observations + min 1 decided, studied.Observations + decided)
+        Assert.InRange(model.Aims, studied.Aims + min 1 aimed, studied.Aims + aimed)
 
     // Shown the finished game, Sage has added every one of them
     sage.Follow timeline
 
     for name, _, _ in field do
         let decided, aimed = shown name
-        let studied = (Study.ModelOf study.Value name).Value.Observations
-        let studiedAims = (Study.AimingOf study.Value name).Value.Aims
-        Assert.Equal(studied + decided, (sage.ModelOf name).Value.Observations)
-        Assert.Equal(studiedAims + aimed, (sage.AimingOf name).Value.Aims)
+        let studied = (Study.ModelOf study.Value name).Value
+        let model = (sage.ModelOf name).Value
+        Assert.Equal(studied.Observations + decided, model.Observations)
+        Assert.Equal(studied.Aims + aimed, model.Aims)
 
 // At a table of two, the first 26 instants of seed 13 end with Bob freezing
 // himself, the only one left in the round, and before it he never aims at
@@ -432,20 +433,24 @@ let ``an aim with no choice of players shows nothing of how a player aims`` () =
         "the quit game does not end with Bob's forced aims alone; pick a new seed"
     )
 
-    let evidence = Inference.AimEvidence "Bob" forced
+    let evidence = Inference.Evidence "Bob" forced
     Assert.Equal(0, evidence.Aims)
     Assert.Empty evidence.Names
-    Assert.Empty(Inference.FitAims forced)
+    Assert.Empty(Inference.Fit forced)
 
-    // What a Sage shown a game makes of how Bob aims
-    let following (timeline: Instant list) : AimingModel option =
+    // How many of Bob's aims a model counts, none for no model at all
+    let aimsIn (model: PlayerModel option) : int =
+        model |> Option.map (fun model -> model.Aims) |> Option.defaultValue 0
+
+    // What a Sage shown a game makes of Bob
+    let following (timeline: Instant list) : PlayerModel option =
         let sage = Sage(Strategy.Decider.Default, "Ann")
         sage.Follow timeline
-        sage.AimingOf "Bob"
+        sage.ModelOf "Bob"
 
     let quitStudy = Study.OfTimelines [ AsyncSeq.ofSeq quit ] |> Async.RunSynchronously
-    Assert.Equal(None, Study.AimingOf quitStudy "Bob")
-    Assert.Equal(None, following quit)
+    Assert.Equal(0, aimsIn (Study.ModelOf quitStudy "Bob"))
+    Assert.Equal(0, aimsIn (following quit))
 
     let chosen =
         aimsOf whole
@@ -455,8 +460,65 @@ let ``an aim with no choice of players shows nothing of how a player aims`` () =
     let wholeStudy =
         Study.OfTimelines [ AsyncSeq.ofSeq whole ] |> Async.RunSynchronously
     Assert.True(chosen > 0, "Bob never aimed at one of several players in the whole game; pick a new seed")
-    Assert.Equal(chosen, (Study.AimingOf wholeStudy "Bob").Value.Aims)
-    Assert.Equal(chosen, (following whole).Value.Aims)
+    Assert.Equal(chosen, aimsIn (Study.ModelOf wholeStudy "Bob"))
+    Assert.Equal(chosen, aimsIn (following whole))
+
+// At a table of two, the first three instants of seed 171 show Bob only
+// dealing three to himself once Ann froze herself, and those of seed 1 show
+// him only dealing three to Ann while both were in the round. Neither a study
+// of a game nor a Sage following it models a player it never saw decide or aim
+// at one of two or more players, and both model one seen only aiming as
+// fitting does. That model's hit rate is NaN, which equality on an option of
+// it compares as unequal to itself, so the models are compared bare
+[<Fact>]
+let ``a player seen only aiming is modelled once seen aiming at one of two or more players`` () =
+    let lineup = [
+        "Ann", Strategy.HitUntilScore 25u, Targeting.ChoosesRandomly
+        "Bob", Strategy.HitUntilScore 20u, Targeting.ChoosesRandomly
+    ]
+
+    // Bob's observations in the first three instants of a seed's game, and
+    // what a study of them and a Sage shown them make of him
+    let opening (seed: int) =
+        let instants = Timeline.SimulateWith (Random seed) lineup |> played |> List.take 3
+        let study = Study.OfTimelines [ AsyncSeq.ofSeq instants ] |> Async.RunSynchronously
+        let sage = Sage(Strategy.Decider.Default, "Ann")
+        sage.Follow instants
+
+        let bobs =
+            observationsOf instants
+            |> List.where (fun observation -> observation.Name = "Bob")
+
+        bobs, Study.ModelOf study "Bob", sage.ModelOf "Bob"
+
+    // A change to how the game draws can move either seed off its road
+    let aimsAmong (candidates: int -> bool) (observations: Observation list) =
+        not observations.IsEmpty
+        && observations
+           |> List.forall (fun aim -> aim.Choice.IsChoice2Of2 && candidates aim.OtherPlayers.Length)
+
+    let forced, studied, followed = opening 171
+
+    Assert.True(
+        aimsAmong (fun count -> count = 1) forced,
+        "Bob does more than aim with no choice of players in seed 171's opening; pick a new seed"
+    )
+
+    Assert.Equal(None, studied)
+    Assert.Equal(None, followed)
+
+    let chosen, studied, followed = opening 1
+
+    Assert.True(
+        aimsAmong (fun count -> count > 1) chosen,
+        "Bob does more than aim at one of several players in seed 1's opening; pick a new seed"
+    )
+
+    let fitted = Inference.Fit chosen |> List.exactlyOne
+    Assert.Equal(0, fitted.Observations)
+    Assert.Equal(chosen.Length, fitted.Aims)
+    Assert.Equal(fitted, studied.Value)
+    Assert.Equal(fitted, followed.Value)
 
 // Dave hits until a card is 35% likely to bust him, between two points of the
 // default grid, so that no study over it could ever name his strategy, but a
@@ -483,8 +545,8 @@ let ``a study over a grid of one's own names a strategy between the default grid
     let own = studied (Study.OfTimelinesWith(Inference.DefaultCandidates @ [ between ]))
     let model = (Study.ModelOf own "Dave").Value
 
-    Assert.NotEqual(between, Inference.MostLikely (Study.ModelOf plain "Dave").Value)
-    Assert.Equal(between, Inference.MostLikely model)
+    Assert.NotEqual(between, fst (Inference.MostLikely (Study.ModelOf plain "Dave").Value))
+    Assert.Equal(between, fst (Inference.MostLikely model))
     Assert.Equal(Inference.DefaultCandidates.Length + 1, model.Posterior.Length)
 
     let sage = Sage(Strategy.Decider.Default, "Sage", study = own, budget = budget)
@@ -495,7 +557,7 @@ let ``a study over a grid of one's own names a strategy between the default grid
 
     let followed = (sage.ModelOf "Dave").Value
     Assert.True(followed.Observations > model.Observations)
-    Assert.Equal(between, Inference.MostLikely followed)
+    Assert.Equal(between, fst (Inference.MostLikely followed))
     Assert.Equal(model.Posterior.Length, followed.Posterior.Length)
 
 // Games read lazily off one Random are the games that Random plays one after
@@ -521,13 +583,11 @@ let ``a study reads its games once each, in order, and scores them as Inference 
     // Everyone decided and someone aimed at one of several players, so the
     // comparisons are not all of nothing with nothing
     let models = Inference.Fit observations
-    let aimings = Inference.FitAims observations
-    Assert.Equal(table.Length, models.Length)
-    Assert.NotEmpty aimings
+    Assert.Equal(table.Length, models |> List.where (fun model -> model.Observations > 0) |> List.length)
+    Assert.Contains(models, (fun model -> model.Aims > 0))
 
     for name, _, _ in table do
         Assert.Equal(models |> List.tryFind (fun model -> model.Name = name), Study.ModelOf lazily name)
-        Assert.Equal(aimings |> List.tryFind (fun model -> model.Name = name), Study.AimingOf lazily name)
 
 // ---- playing a plan ----
 
@@ -763,7 +823,7 @@ let private partisanStudy =
 let ``Sage replays players who take sides as it fitted them, and its plan foresees them`` () =
     for name in [ "Bob"; "Carol" ] do
         let likeliest, probability =
-            List.head (Study.AimingOf partisanStudy.Value name).Value.Posterior
+            List.head (Study.ModelOf partisanStudy.Value name).Value.AimPosterior
 
         Assert.Equal(partisan, likeliest)
         Assert.True(probability > 0.9, $"{name} aims {likeliest} at {probability}")
@@ -796,15 +856,19 @@ let ``Sage replays players who take sides as it fitted them, and its plan forese
 let ``a replay aims as declared, or as Sage made of one who aims as they please, never at random if they take sides``
     ()
     =
-    // Evidence over one name whose posterior is as given. The prior subtracts
-    // log (n * n + n) from the weight of each way of taking sides among n
-    // names, which over one name is log 2, so adding log 2 here cancels it
-    let model (posterior: (Aiming * float) list) : AimingEvidence option =
+    // Evidence of ten aims over one name whose aim posterior is as given, and
+    // of no decisions. The prior subtracts log (n * n + n) from the weight of
+    // each way of taking sides among n names, which over one name is log 2, so
+    // adding log 2 here cancels it
+    let model (posterior: (Aiming * float) list) : PlayerEvidence option =
         Some {
             Name = "Bob"
+            Observations = 0
+            Hits = 0
+            LogLikelihoods = Inference.DefaultCandidates |> List.map (fun candidate -> candidate, 0.0)
             Aims = 10
             Names = [ "Carol" ]
-            LogLikelihoods =
+            AimLogLikelihoods =
                 posterior
                 |> List.map (fun (aiming, probability) ->
                     match aiming with
@@ -820,9 +884,15 @@ let ``a replay aims as declared, or as Sage made of one who aims as they please,
     let sidesAtRandom = Aiming.TakesSides(Some "Carol", None, Targeting.ChoosesRandomly)
     let sides = Aiming.TakesSides(Some "Carol", None, spite)
 
-    // Never seen aiming: as declared, or spitefully for ChoosesExternally
+    // Never seen aiming: as declared, or spitefully for ChoosesExternally,
+    // even with evidence of how they hit or stand, which holds no aims
+    let decidedOnly =
+        model [ Aiming.Plays Targeting.ChoosesRandomly, 1.0 ]
+        |> Option.map (fun evidence -> { evidence with Observations = 10; Aims = 0 })
+
     Assert.Equal(Aiming.Plays greedy, Replayed.Aiming None greedy)
     Assert.Equal(Aiming.Plays spite, Replayed.Aiming None external)
+    Assert.Equal(Aiming.Plays spite, Replayed.Aiming decidedOnly external)
 
     // A declared policy whatever the aims seen of it suggest, even one off the
     // grid, since the engine plays it on the replay's own dice: a few aims at
@@ -843,7 +913,7 @@ let ``a replay aims as declared, or as Sage made of one who aims as they please,
         ]
 
     Assert.Equal(Aiming.Plays(Targeting.PlaysGreedily(0.3, 0.2)), Replayed.Aiming tied external)
-    Assert.Equal(Inference.MostLikelyAiming(Inference.AimModelFrom tied.Value), Replayed.Aiming tied external)
+    Assert.Equal(snd (Inference.MostLikely(Inference.ModelFrom tied.Value)), Replayed.Aiming tied external)
 
     // Taking sides at random is replayed as the likeliest aiming that decides,
     // but a plain random chooser stays random, since they may roll the dice
@@ -926,12 +996,11 @@ let ``Sage replays a player it has never seen decide as maximizing expected valu
         $"{game}: Sage saw a decision before its search; pick a new seed"
     )
 
-    let fitted =
-        seen |> List.filter (fun aim -> aim.Name <> "Sage") |> Inference.FitAims
+    let fitted = seen |> List.filter (fun aim -> aim.Name <> "Sage") |> Inference.Fit
 
     Assert.True(
         fitted
-        |> List.exists (fun model -> Inference.MostLikelyAiming model <> Aiming.Plays targeting),
+        |> List.exists (fun model -> snd (Inference.MostLikely model) <> Aiming.Plays targeting),
         $"{game}: every aim before the search fits as declared; pick a new seed"
     )
 
@@ -1093,7 +1162,6 @@ let ``a new game starts afresh, keeping only what Sage studied`` () =
 
     for name, _, _ in lineup do
         Assert.Equal(fresh.ModelOf name, used.ModelOf name)
-        Assert.Equal(fresh.AimingOf name, used.AimingOf name)
 
 // Plays a game up to the first hit-or-stand question the trigger picks, shown
 // every one before it is asked, edits the table there as the play editor does,
@@ -1219,12 +1287,22 @@ let ``a game continued after an edit is played legally, and Sage's plan still fo
     // A study of the edited game scores Erin's decisions with those turns
     let wholeStudy =
         Study.OfTimelines [ AsyncSeq.ofSeq whole ] |> Async.RunSynchronously
-    let erinsDecisions =
+    let erinsObservations =
         observationsOf whole
         |> List.filter (fun observation -> observation.Name = "Erin")
 
     Assert.Equal(
-        Some(Inference.ModelFrom(Inference.EvidenceWith 0.1 Inference.DefaultCandidates "Erin" erinsDecisions)),
+        Some(
+            Inference.ModelFrom(
+                Inference.EvidenceWith
+                    0.1
+                    Inference.DefaultCandidates
+                    Inference.DefaultTargetings
+                    []
+                    "Erin"
+                    erinsObservations
+            )
+        ),
         Study.ModelOf wholeStudy "Erin"
     )
 
