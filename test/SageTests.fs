@@ -242,12 +242,12 @@ let ``until the seed is pinned the solved seats answer unaided, and Sage searche
 
     let timeline, asked = playSolved (Random 2026) sage
 
-    // How many instants the solver had seen when it pinned the seed: the
-    // scan's first state is the solver before any instant
+    // How many instants the oracle had seen when it pinned the seed: the
+    // scan's first state is the oracle before any instant
     let pinned =
         timeline
-        |> List.scan Solver.Observe Solver.Start
-        |> List.findIndex (fun solver -> (Solver.SeedsOf solver).IsPinned)
+        |> List.scan Oracle.Observe Oracle.Start
+        |> List.findIndex (fun oracle -> (Oracle.SeedsOf oracle).IsPinned)
 
     let before, after =
         asked |> List.partition (fun question -> question.Shown < pinned)

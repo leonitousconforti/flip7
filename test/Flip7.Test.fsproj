@@ -20,7 +20,7 @@
     <Compile Include="ObservationTests.fs" />
     <Compile Include="InferenceTests.fs" />
     <Compile Include="LookaheadTests.fs" />
-    <Compile Include="SolverTests.fs" />
+    <Compile Include="OracleTests.fs" />
     <Compile Include="AimTests.fs" />
     <Compile Include="SageTests.fs" />
     <Compile Include="PropertyTests.fs" />

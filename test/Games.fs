@@ -8,7 +8,7 @@ open FsCheck.FSharp
 open Flip7
 open Support
 
-// Games as the play editor plays them, which SolverTests and AimTests both
+// Games as the play editor plays them, which OracleTests and AimTests both
 // hold their subjects to: seats that answer with randomness of their own, the
 // edits the editor can make at a question, the games the properties play, and
 // one harness that plays a game on a Recording, forks it at a question and
@@ -171,7 +171,7 @@ let private genEdit: Gen<Edit> =
     ]
 
 // A game of two to twelve seats on every kind of targeting, a third of them
-// forked at a hit-or-stand question, with an edit or without. SolverTests and
+// forked at a hit-or-stand question, with an edit or without. OracleTests and
 // AimTests play the same games
 let genGameWithFork: Gen<int * Lineup * Fork<Edit> option> = gen {
     let! seed = genSeed
@@ -203,7 +203,7 @@ let rarestRoadsLineup: Lineup = [
     "Frank", Strategy.AlwaysHits, Targeting.ChoosesRandomly
 ]
 
-// How many times a game went down the rarer roads. SolverTests counts the
+// How many times a game went down the rarer roads. OracleTests counts the
 // roads through a deal3, from the calls the interpreter reads off the
 // timeline, and AimTests the roads an aim takes, from the questions the
 // engine asked, so each counts the fields of its own half and leaves the rest

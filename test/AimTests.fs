@@ -13,8 +13,8 @@ open Games
 // Observation reads every question a player was asked off a timeline, and
 // Inference fits how a player aims from the aims among them. The first half
 // holds the questions a timeline reveals to the ones the engine asked, call by
-// call, the way SolverTests holds the interpreter to the game's Random, over
-// the games SolverTests plays too. The second half holds the aiming model to
+// call, the way OracleTests holds the interpreter to the game's Random, over
+// the games OracleTests plays too. The second half holds the aiming model to
 // the engine's own deciders.
 
 // ---- Observation: the questions a timeline reveals ----

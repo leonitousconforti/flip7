@@ -1,4 +1,4 @@
-module SolverTests
+module OracleTests
 
 open System
 open System.Numerics
@@ -14,7 +14,7 @@ open Games
 // Seed recovery rests on facts about .NET's seeded System.Random that were
 // proved over every seed by scripts far too slow for a test suite. These
 // check a fast sample of them against the real System.Random, then hold the
-// interpreter to the engine call by call, then run the solver over whole
+// interpreter to the engine call by call, then run the oracle over whole
 // games.
 
 [<Literal>]
@@ -33,7 +33,7 @@ let private everySeed = float (1L <<< 31)
 let private fullDeck = int (Deck.Count Deck.Full)
 
 // Random(s) deals what Random(-s) does, and Random(Int32.MinValue) what
-// Random(Int32.MaxValue) does, so the solver reports the seed from 0 up
+// Random(Int32.MaxValue) does, so the oracle reports the seed from 0 up
 let private canonical (seed: int) : int =
     if seed = Int32.MinValue then Int32.MaxValue else abs seed
 
@@ -168,7 +168,7 @@ let ``every value a seeded Random draws is the affine form of its seed's class``
     // Every class was among the seeds checked
     Assert.Equal(4, seeds |> List.map classOf |> List.distinct |> List.length)
 
-// The solver searches only the 2^31 seeds from 0 to Int32.MaxValue, because
+// The oracle searches only the 2^31 seeds from 0 to Int32.MaxValue, because
 // System.Random deals a negative seed as its absolute value and Int32.MinValue
 // as Int32.MaxValue. That is .NET's behaviour, not ours, so this holds it to
 // it: a runtime that changed it would leave half of all games unsolvable
@@ -730,7 +730,7 @@ let ``the interpreter passes no second chance to a player an edit un-busted`` ()
         "no second chance was discarded during a deal3's flips after the edit: pick a new seed"
     )
 
-// ---- the solver end to end ----
+// ---- the oracle end to end ----
 
 // Alice plays like a human and aims spitefully, Bob maximizes his expected
 // value and aims greedily, and Carol answers every question with randomness of
@@ -788,7 +788,7 @@ type private Paused = {
 [<InlineData(Int32.MinValue, "six hitters")>]
 // A seed of class 2, which no other row's is
 [<InlineData(1000000000, "twelve seats")>]
-let ``the solver pins the true seed and its Random plays the rest of the game again`` (seed: int, lineup: string) =
+let ``the oracle pins the true seed and its Random plays the rest of the game again`` (seed: int, lineup: string) =
     let game = Recording seed
     let paused = ResizeArray<Paused>()
 
@@ -812,15 +812,15 @@ let ``the solver pins the true seed and its Random plays the rest of the game ag
         |> AsyncSeq.toArrayAsync
         |> Async.RunSynchronously
 
-    let solvers = timeline |> Array.scan Solver.Observe Solver.Start |> Array.tail
+    let oracles = timeline |> Array.scan Oracle.Observe Oracle.Start |> Array.tail
 
     // The true seed agrees after every instant, and is all that is left by the
     // end, with every call of the game accounted for. Seeds are listed only
     // once few enough are expected to agree, so a listing never comes near the
     // tens of millions one at the first draw would hold, and the bound leaves
     // room to retune when listing starts
-    for solver in solvers do
-        match Solver.SeedsOf solver with
+    for oracle in oracles do
+        match Oracle.SeedsOf oracle with
         | Seeds.Unlisted _ -> ()
         | Seeds.Agreeing seeds ->
             Assert.Contains(canonical seed, seeds)
@@ -828,18 +828,18 @@ let ``the solver pins the true seed and its Random plays the rest of the game ag
         | Seeds.Pinned pinned -> Assert.Equal(canonical seed, pinned)
         | Seeds.NoneAgree -> Assert.Fail "the true seed was dropped"
 
-    Assert.Equal(Seeds.Pinned(canonical seed), Solver.SeedsOf(Array.last solvers))
-    Assert.Equal(Some game.Calls, Solver.CallsOf(Array.last solvers))
+    Assert.Equal(Seeds.Pinned(canonical seed), Oracle.SeedsOf(Array.last oracles))
+    Assert.Equal(Some game.Calls, Oracle.CallsOf(Array.last oracles))
 
     // From the first hit-or-stand question once the seed is pinned, the game
     // plays out again exactly, given what led to the question
     let pinned =
-        solvers |> Array.findIndex (fun solver -> (Solver.SeedsOf solver).IsPinned)
+        oracles |> Array.findIndex (fun oracle -> (Oracle.SeedsOf oracle).IsPinned)
 
     let at = paused |> Seq.find (fun at -> at.Shown > pinned)
     let history = List.ofArray timeline[.. at.Shown - 1]
-    let random = Solver.RandomOf solvers[at.Shown - 1]
-    Assert.True(random.IsSome, "the pinned solver handed out no Random")
+    let random = Oracle.RandomOf oracles[at.Shown - 1]
+    Assert.True(random.IsSome, "the pinned oracle handed out no Random")
 
     let replayed =
         Timeline.ContinueWith
@@ -869,22 +869,22 @@ let ``a lone seed agreeing by chance is never pinned nor handed out as a Random`
     let mutable alone = 0
 
     for seed in 10..12 do
-        let solvers =
+        let oracles =
             Timeline.SimulateWithDecider (usedOnce seed) own mixedTable
             |> played
-            |> List.scan Solver.Observe Solver.Start
+            |> List.scan Oracle.Observe Oracle.Start
 
-        for solver in solvers do
-            match Solver.SeedsOf solver with
+        for oracle in oracles do
+            match Oracle.SeedsOf oracle with
             | Seeds.Pinned pinned -> Assert.Fail $"seed {pinned} was pinned by chance"
             | Seeds.Agreeing [| _ |] -> alone <- alone + 1
             | _ -> ()
 
-            Assert.True((Solver.RandomOf solver).IsNone, "a solver that had not pinned the seed handed out a Random")
+            Assert.True((Oracle.RandomOf oracle).IsNone, "an oracle that had not pinned the seed handed out a Random")
 
-        let solver = List.last solvers
-        Assert.Equal(Seeds.NoneAgree, Solver.SeedsOf solver)
-        Assert.True((Solver.CallsOf solver).IsSome, "the solver stopped following a game the engine played")
+        let oracle = List.last oracles
+        Assert.Equal(Seeds.NoneAgree, Oracle.SeedsOf oracle)
+        Assert.True((Oracle.CallsOf oracle).IsSome, "the oracle stopped following a game the engine played")
 
     Assert.True(alone > 0, "no seed was ever left alone by chance in these games: pick a new seed")
 
@@ -922,25 +922,25 @@ let ``a timeline whose decks the draws could not have left is not read past them
         let tampered = List.updateAt index altered timeline
         Assert.Equal(Error index, interpreted tampered |> Result.map ignore)
 
-        let solver = Solver.FromInstants(List.take (index + 1) tampered)
-        Assert.Equal(Seeds.NoneAgree, Solver.SeedsOf solver)
-        Assert.True((Solver.CallsOf solver).IsNone, "the solver still follows a timeline it could not read")
+        let oracle = Oracle.FromInstants(List.take (index + 1) tampered)
+        Assert.Equal(Seeds.NoneAgree, Oracle.SeedsOf oracle)
+        Assert.True((Oracle.CallsOf oracle).IsNone, "the oracle still follows a timeline it could not read")
 
 [<Fact>]
 let ``before any instant every seed agrees, seating draws nothing, and a timeline that skips its TableSeated is not followed``
     ()
     =
-    Assert.Equal(Seeds.Unlisted everySeed, Solver.SeedsOf Solver.Start)
-    Assert.True((Solver.CallsOf Solver.Start).IsNone, "the solver counted calls before any instant")
+    Assert.Equal(Seeds.Unlisted everySeed, Oracle.SeedsOf Oracle.Start)
+    Assert.True((Oracle.CallsOf Oracle.Start).IsNone, "the oracle counted calls before any instant")
 
     let timeline = Timeline.SimulateWithDecider (Random 1) own twoSeats |> played
 
-    let seated = Solver.FromInstants [ List.head timeline ]
-    Assert.Equal(Seeds.Unlisted everySeed, Solver.SeedsOf seated)
-    Assert.Equal(Some 0, Solver.CallsOf seated)
+    let seated = Oracle.FromInstants [ List.head timeline ]
+    Assert.Equal(Seeds.Unlisted everySeed, Oracle.SeedsOf seated)
+    Assert.Equal(Some 0, Oracle.CallsOf seated)
 
-    // The solver takes the game's Random to be fresh from its seed at the
+    // The oracle takes the game's Random to be fresh from its seed at the
     // TableSeated, so without one it cannot tell how many calls came before
-    let unseated = Solver.FromInstants(List.tail timeline)
-    Assert.Equal(Seeds.NoneAgree, Solver.SeedsOf unseated)
-    Assert.True((Solver.CallsOf unseated).IsNone, "the solver followed a timeline that skips its TableSeated")
+    let unseated = Oracle.FromInstants(List.tail timeline)
+    Assert.Equal(Seeds.NoneAgree, Oracle.SeedsOf unseated)
+    Assert.True((Oracle.CallsOf unseated).IsNone, "the oracle followed a timeline that skips its TableSeated")
