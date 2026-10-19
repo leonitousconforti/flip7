@@ -497,6 +497,24 @@ module public Timeline =
                     $"Player names must be unique, but these are seated more than once: {duplicated}"
             )
 
+    // A targeting that takes sides more than Targeting.SidesLimit deep would
+    // raise at the first aim the engine's decider came to, so it is refused
+    // where a game or a continuation is set up instead, and eagerly for the
+    // same reason as a duplicate name.
+    let private EnsureSidesWithinLimit (players: Player list) : unit =
+        let tooDeep =
+            players
+            |> List.where (fun player -> Targeting.TakesSidesTooDeep player.Targeting)
+            |> List.map (fun player -> player.Name)
+
+        if not (List.isEmpty tooDeep) then
+            let tooDeep = String.concat ", " tooDeep
+
+            raise (
+                System.ArgumentException
+                    $"A targeting may take sides at most {Targeting.SidesLimit} deep, but these players take them deeper: {tooDeep}"
+            )
+
     // Every player must be named in the seating exactly once: a player it left
     // out would never be dealt into a later round, and a name it repeated would
     // be dealt in twice. Checked where a continuation is set up, and eagerly
@@ -549,7 +567,10 @@ module public Timeline =
     /// but the timeline yields only the continuation's own instants. A decider
     /// that reads the history enumerates it afresh each time, so pass a
     /// snapshot, such as a list or an array, rather than a timeline, which
-    /// would play its game again.
+    /// would play its game again. Players sharing a name, a seating that is not
+    /// the table, or a targeting that takes sides more than three deep are
+    /// refused with an ArgumentException at the call, before anything is
+    /// enumerated.
     /// </summary>
     let public ContinueWith
         (random: System.Random)
@@ -564,6 +585,7 @@ module public Timeline =
         : Timeline =
         let everyone = startingActive @ startingFinished
         EnsureDistinctNames everyone
+        EnsureSidesWithinLimit everyone
         EnsureAllSeated seating everyone
 
         if List.isEmpty everyone then
@@ -681,6 +703,9 @@ module public Timeline =
     /// and cannot shift the cards the game deals by drawing from its own. The
     /// seed it comes with is the game's own next draw, so in a seeded game it
     /// gives the game's seed away to a decider that sets out to work it back.
+    /// Players sharing a name, or a targeting that takes sides more than three
+    /// deep, are refused with an ArgumentException at the call, before anything
+    /// is enumerated.
     /// </summary>
     let public SimulateWithDecider
         (random: System.Random)
@@ -692,6 +717,7 @@ module public Timeline =
             |> List.map (fun (name, strategy, targeting) -> Player.Make(name, strategy, targeting = targeting))
 
         EnsureDistinctNames startingPlayers
+        EnsureSidesWithinLimit startingPlayers
 
         let seated = {
             Event = TableSeated
