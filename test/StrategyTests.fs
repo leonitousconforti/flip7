@@ -463,7 +463,8 @@ let ``a decider taught several names answers every one of them`` () =
 let ``a strategy string that does not parse is None rather than an exception`` () =
     Assert.Equal(None, Strategy.TryParse "Bogus")
     Assert.Equal(None, Strategy.TryParse "HitUntilScore")
-    // A count outside uint's range overflows rather than failing to format
+    // A count is read only as a uint in plain digits, so a sign is refused,
+    // and so is a count outside uint's range rather than overflowing
     Assert.Equal(None, Strategy.TryParse "HitUntilScore -1")
     Assert.Equal(None, Strategy.TryParse "HitUntilScore 99999999999")
     Assert.Equal(None, Strategy.TryParse "PlaysLikeAHuman -5")
@@ -483,11 +484,301 @@ let ``a targeting string that does not parse is None rather than an exception`` 
     Assert.Equal(None, Targeting.TryParse "ChoosesExternally")
     Assert.Equal(None, Targeting.TryParse "PlaysGreedily 0.5")
 
+    // Taking sides is strict: names quoted and escaped, the favoured before the
+    // opposed, and always an otherwise that parses
+    let malformed = [
+        "TakesSides"
+        "TakesSides for \"Carol\""
+        "TakesSides for Carol otherwise PlaysSpitefully"
+        "TakesSides for \"Carol otherwise PlaysSpitefully"
+        "TakesSides against \"Bob\" for \"Carol\" otherwise PlaysSpitefully"
+        "TakesSides for \"Carol\" and against \"Bob\" otherwise PlaysSpitefully"
+        "TakesSides for \"Carol\"otherwise PlaysSpitefully"
+        "TakesSides for \"Ca\\rol\" otherwise PlaysSpitefully"
+        "TakesSides for \"Carol\\\" otherwise PlaysSpitefully"
+        "TakesSides otherwise "
+        "TakesSides otherwise Bogus"
+        "TakesSidesotherwise PlaysSpitefully"
+    ]
+
+    for text in malformed do
+        Assert.True(Targeting.TryParse text = None, $"{text} parsed")
+
 [<Fact>]
 let ``a targeting policy round-trips through its string form`` () =
     let property =
         Prop.forAll (Arb.fromGen genTargeting) (fun targeting -> Targeting.Parse(string targeting) = targeting)
 
-    // Each of the four targeting cases is a quarter of the draws, so a hundred
-    // cases all but never miss one
+    // Each of the five targeting cases is at least a seventh of the draws,
+    // taking sides over awkward names a quarter, and taking them three deep a
+    // twelfth, so a hundred cases all but never miss one
     Check.One(Config.QuickThrowOnFailure.WithMaxTest 100, property)
+
+// Numbers are read strictly, and the same on .NET and in JavaScript. Each of
+// these floats is refused, a fullwidth one and an infinity sign among them,
+// though .NET's own parser reads "1,5" as 15 and "0.5\n" as a half, and
+// Fable's reads "0x10" as 16 and "1_0" as 10
+let private malformedFloats = [
+    ""
+    "-"
+    "."
+    "+0.5"
+    "--1"
+    "1,5"
+    "0x10"
+    "1_0"
+    " 0.5"
+    "0.5\n"
+    "0.5\t"
+    "１"
+    "1e"
+    "1e+"
+    "e5"
+    "1.2.3"
+    "1e5.5"
+    "nan"
+    "inf"
+    "Infinity0"
+    "∞"
+]
+
+// A count is read only as a uint in plain digits, so signs, spaces, leading
+// zeros, other notations, other digits and anything outside uint's range are
+// all refused
+let private malformedCounts = [
+    "-1"
+    "-0"
+    "+1"
+    "01"
+    " 1"
+    "1\n"
+    "0x10"
+    "1_0"
+    "1,000"
+    "1.0"
+    "1e3"
+    "１"
+    "4294967296"
+    "99999999999"
+]
+
+// TryParse refuses the string, and Parse raises its own FormatException naming
+// it, rather than an OverflowException or the error of a platform's parser
+let private refusedBy (tryParse: string -> 'T option) (parse: string -> 'T) (kind: string) (text: string) =
+    Assert.True((tryParse text).IsNone, $"{text} parsed")
+    let error = Assert.Throws<FormatException>(fun () -> parse text |> ignore)
+    Assert.Equal($"Invalid {kind} string: {text}", error.Message)
+
+[<Fact>]
+let ``a malformed number is refused with the parser's own FormatException`` () =
+    let strategy = refusedBy Strategy.TryParse Strategy.Parse "strategy"
+    let targeting = refusedBy Targeting.TryParse Targeting.Parse "targeting"
+
+    // The strings that a review of the JavaScript found throwing from TryParse
+    targeting "PlaysGreedily a b"
+    targeting "TakesSides otherwise PlaysGreedily a b"
+
+    for number in malformedFloats do
+        strategy $"RandomWithProbability {number}"
+        strategy $"SoftHitUntilScore 20 {number}"
+        targeting $"PlaysGreedily {number} 0.1"
+        targeting $"TakesSides for \"Carol\" otherwise PlaysGreedily 0.5 {number}"
+
+    for count in malformedCounts do
+        strategy $"HitUntilScore {count}"
+        strategy $"ChasesFlip7 3 {count}"
+        strategy $"SoftHitUntilScore {count} 0.5"
+
+// Whether two doubles are the same: by their bits, so that -0 is not 0, or by
+// both being NaN, since a NaN is not equal even to itself and its bits need
+// not survive being written
+let private sameDouble (read: float) (value: float) =
+    if Double.IsNaN value then
+        Double.IsNaN read
+    else
+        BitConverter.DoubleToInt64Bits read = BitConverter.DoubleToInt64Bits value
+
+// Every form either platform writes is read, and to the same double on both:
+// .NET writes 1E-05 where JavaScript writes 1e-5 and 1e+21, and a point may
+// have digits on only one side. An exponent past the largest double reads as
+// Infinity, and a count reaches the top of uint's range
+[<Fact>]
+let ``a number in any form either platform writes parses to its value`` () =
+    let accepted = [
+        "1E-05", 1e-5
+        "1e-5", 1e-5
+        "5.", 5.0
+        ".5", 0.5
+        "-0", -0.0
+        "1e+21", 1e21
+        "5E-324", Double.Epsilon
+        "1.7976931348623157E+308", Double.MaxValue
+        "NaN", nan
+        "Infinity", infinity
+        "-Infinity", -infinity
+        "1e999", infinity
+    ]
+
+    for text, value in accepted do
+        match
+            Strategy.TryParse $"SoftHitUntilScore 20 {text}",
+            Targeting.TryParse $"TakesSides otherwise PlaysGreedily {text} 0.25"
+        with
+        | Some(Strategy.SoftHitUntilScore(20u, temperature)),
+          Some(Targeting.TakesSides(None, None, Targeting.PlaysGreedily(banksAbove, deal3sBelow))) ->
+            Assert.True(
+                sameDouble temperature value
+                && sameDouble banksAbove value
+                && deal3sBelow = 0.25,
+                $"{text} read as {temperature}, {banksAbove} and {deal3sBelow}"
+            )
+        | strategy, targeting -> Assert.Fail $"{text} parsed as {strategy} and {targeting}"
+
+    Assert.Equal(Some(Strategy.ChasesFlip7(0u, UInt32.MaxValue)), Strategy.TryParse "ChasesFlip7 0 4294967295")
+
+// Any double at all, from a random 64-bit pattern. The exponent is left as
+// drawn, or cleared for the zeros and subnormals, or filled for the
+// infinities and NaN, and the fraction is left as drawn or cleared, so the
+// zeros and the infinities are each a twelfth of the draws and the subnormals
+// and NaN each a quarter
+let private genAnyDouble: Gen<float> = gen {
+    let! quarters = Gen.listOfLength 4 (Gen.choose (0, 0xFFFF))
+    let! exponent = Gen.elements [ None; Some 0L; Some 0x7FFL ]
+    let! clearsFraction = Gen.frequency [ 3, Gen.constant false; 1, Gen.constant true ]
+    let drawn =
+        quarters |> List.fold (fun bits quarter -> (bits <<< 16) ||| int64 quarter) 0L
+
+    let withExponent =
+        match exponent with
+        | Some exponent -> (drawn &&& ~~~(0x7FFL <<< 52)) ||| (exponent <<< 52)
+        | None -> drawn
+
+    let bits =
+        if clearsFraction then
+            withExponent &&& ~~~((1L <<< 52) - 1L)
+        else
+            withExponent
+
+    return BitConverter.Int64BitsToDouble bits
+}
+
+[<Fact>]
+let ``any double round-trips through a strategy and a targeting string`` () =
+    let property =
+        Prop.forAll
+            (Arb.fromGen (Gen.zip genAnyDouble genAnyDouble))
+            (fun (first, second) ->
+                match
+                    Strategy.Parse(string (Strategy.RandomWithProbability first)),
+                    Targeting.Parse(string (Targeting.PlaysGreedily(first, second)))
+                with
+                | Strategy.RandomWithProbability read, Targeting.PlaysGreedily(banksAbove, deal3sBelow) ->
+                    sameDouble read first
+                    && sameDouble banksAbove first
+                    && sameDouble deal3sBelow second
+                | _ -> false
+            )
+
+    // Two hundred cases miss the zeros or the infinities in about one run in
+    // eighteen million
+    Check.One(Config.QuickThrowOnFailure.WithMaxTest 200, property)
+
+// A chain of TakesSides holds at most three, counting the outermost. Three are
+// written and read back as they were and play to the end of the chain: Bob is
+// favoured and so left out of a freeze, Eve is not at the table, and the
+// third opposes Dave, where spite among the rest would freeze Carol. A fourth
+// is refused by Parse, though ToString still writes it, and by the engine's
+// decider, which judges even a chain a million deep at once. Parse refuses the
+// fourth the moment it begins: the one below is malformed too, with its name
+// unquoted, so only a parser that stops there names the limit. ToString writes
+// a chain far past the limit, a link at a time, where writing it by recursion
+// would overflow the stack
+[<Fact>]
+let ``a targeting takes sides three deep, but not four`` () =
+    let spite = Targeting.PlaysSpitefully
+
+    let three =
+        Targeting.TakesSides(
+            Some "Bob",
+            None,
+            Targeting.TakesSides(Some "Eve", None, Targeting.TakesSides(None, Some "Dave", spite))
+        )
+
+    let written =
+        "TakesSides for \"Bob\" otherwise TakesSides for \"Eve\" otherwise TakesSides against \"Dave\" otherwise PlaysSpitefully"
+
+    Assert.Equal(written, string three)
+    Assert.Equal(Some three, Targeting.TryParse written)
+    Assert.Equal("Dave", aimedAt three Strategy.Ask.WhoToFreeze player opponents)
+    Assert.Equal("Bob", aimedAt three Strategy.Ask.WhoReceivesSecondChance player opponents)
+
+    let four = Targeting.TakesSides(None, None, three)
+    Assert.Equal("TakesSides otherwise " + written, string four)
+    Assert.Equal(None, Targeting.TryParse(string four))
+
+    let early =
+        Assert.Throws<FormatException>(fun () ->
+            Targeting.Parse(String.replicate 3 "TakesSides otherwise " + "TakesSides for Carol")
+            |> ignore
+        )
+
+    Assert.Contains("more than 3 deep", early.Message)
+
+    let refused =
+        Assert.Throws<InvalidOperationException>(fun () ->
+            aimedAt four Strategy.Ask.WhoToFreeze player opponents |> ignore
+        )
+
+    Assert.Contains("at most 3 deep", refused.Message)
+
+    let mutable deep = spite
+
+    for _ in 1..1_000_000 do
+        deep <- Targeting.TakesSides(None, None, deep)
+
+    Assert.Throws<InvalidOperationException>(fun () -> aimedAt deep Strategy.Ask.WhoToFreeze player opponents |> ignore)
+    |> ignore
+
+    let mutable farPast = spite
+
+    for _ in 1..10_000 do
+        farPast <- Targeting.TakesSides(None, None, farPast)
+
+    Assert.Equal(10_000 * "TakesSides otherwise ".Length + "PlaysSpitefully".Length, (string farPast).Length)
+
+// Parse reads a string once, with a running index, and unescapes a name in one
+// pass, so neither a chain far too deep nor a long name costs more than reading
+// it. A chain of two thousand is refused at its fourth link, two long runs of
+// escapes never close their quote, and a name of 240,000 characters, a third
+// of them escaped, is read back. Each parse allocates a few megabytes at most,
+// so the bound of 32 megabytes fails a parser that copied what is left at
+// every link, which allocates 168 megabytes for this chain, or built a name a
+// character at a time, which allocates gigabytes for these names. The sizes
+// keep even such a parser's live memory under a quarter of a gigabyte, so a
+// regression fails rather than fills the machine
+[<Fact>]
+let ``parsing a targeting costs no more than reading it`` () =
+    let parsed (text: string) =
+        let before = GC.GetAllocatedBytesForCurrentThread()
+        let targeting = Targeting.TryParse text
+        let allocated = GC.GetAllocatedBytesForCurrentThread() - before
+        Assert.True(allocated < 32_000_000L, $"parsing {text.Length} characters allocated {allocated} bytes")
+        targeting
+
+    Assert.Equal(None, parsed (String.replicate 2_000 "TakesSides otherwise " + "PlaysSpitefully"))
+
+    Assert.Equal(
+        None,
+        parsed (
+            "TakesSides for \""
+            + String.replicate 100_000 "\\\""
+            + " otherwise PlaysSpitefully"
+        )
+    )
+
+    Assert.Equal(None, parsed ("TakesSides against \"" + String.replicate 100_000 "\\\\"))
+
+    let long =
+        Targeting.TakesSides(Some(String.replicate 40_000 "ab\"c\\d"), Some "Bob", Targeting.PlaysSpitefully)
+
+    Assert.Equal(Some long, parsed (string long))

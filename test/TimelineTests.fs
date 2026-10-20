@@ -198,6 +198,44 @@ let ``continuing with a seating that is not the table is refused`` (seating: str
     Assert.Contains("The seating must name every player once", exn.Message)
     Assert.Contains(problem, exn.Message)
 
+// A targeting takes sides at most three deep, counting the outermost, so a
+// player seated on a deeper one is refused where the lineup was written, in a
+// whole game or a continuation, active or finished, rather than at the first
+// aim that comes to them. Three deep plays a whole game
+[<Fact>]
+let ``seating a player who takes sides four deep is refused, and three deep plays`` () =
+    let rec deep (depth: int) : Targeting =
+        if depth = 0 then
+            Targeting.PlaysSpitefully
+        else
+            Targeting.TakesSides(Some "Bob", Some "Carol", deep (depth - 1))
+
+    let game (targeting: Targeting) =
+        Timeline.SimulateWith (System.Random 1) [
+            "Alice", Strategy.HitUntilScore 20u, targeting
+            "Bob", Strategy.HitUntilScore 20u, Targeting.ChoosesRandomly
+            "Carol", Strategy.HitUntilScore 20u, Targeting.PlaysSpitefully
+        ]
+
+    let whole =
+        Assert.Throws<System.ArgumentException>(fun () -> game (deep 4) |> ignore)
+
+    Assert.Contains("at most 3 deep", whole.Message)
+    Assert.Contains("take them deeper: Alice", whole.Message)
+
+    let active = [ Player.Make("A", Strategy.AlwaysStands, targeting = deep 4) ]
+    let finished = [ Player.Make("B", Strategy.AlwaysStands, targeting = deep 5) ]
+
+    let continued =
+        Assert.Throws<System.ArgumentException>(fun () -> continueAt 1u [ "A"; "B" ] active finished |> ignore)
+
+    Assert.Contains("at most 3 deep", continued.Message)
+    Assert.Contains("take them deeper: A, B", continued.Message)
+
+    let last = game (deep 3) |> played |> List.last
+    Assert.True(last.Event.IsRoundEnded, "the game did not end with a round")
+    Assert.Contains(last.Players, (fun player -> player.FirmScore >= 200u))
+
 // ---- continuations ----
 
 [<Fact>]

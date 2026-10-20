@@ -50,10 +50,10 @@ let strategyPrior: (Strategy * float) list =
 
 // How Inference models a player never seen aim at two or more players: by the
 // prior, which over nobody to take sides with is even over every policy of the
-// default grid played plainly
-let aimPrior: (Aiming * float) list =
+// default grid, none of which takes sides
+let aimPrior: (Targeting * float) list =
     Inference.DefaultTargetings
-    |> List.map (fun targeting -> Aiming.Plays targeting, 1.0 / float Inference.DefaultTargetings.Length)
+    |> List.map (fun targeting -> targeting, 1.0 / float Inference.DefaultTargetings.Length)
 
 // A question the engine puts to a decider, with everything it shows the
 // decider besides the question's Random and the game so far
@@ -264,10 +264,29 @@ let genEvent: Gen<Event> =
         |> Gen.map (Map.ofList >> RoundEnded)
     ]
 
-// Every targeting policy DecideTargetWith can evaluate: ChoosesExternally is
-// decided by an injected decider and raises there, so it stays out of engine
-// draws
-let genEngineTargeting: Gen<Targeting> =
+// Taking sides one to Targeting.SidesLimit deep, each depth as likely as the
+// next, each side one of the names or nobody, and at the end of the chain
+// otherwise aiming by the policy
+let genSides (names: Gen<string>) (policy: Gen<Targeting>) : Gen<Targeting> =
+    let side = Gen.frequency [ 1, Gen.constant None; 2, Gen.map Some names ]
+
+    let takingSides (otherwise: Targeting) =
+        Gen.map2 (fun favours opposes -> Targeting.TakesSides(favours, opposes, otherwise)) side side
+
+    let rec chain (depth: int) (otherwise: Targeting) : Gen<Targeting> =
+        if depth = 0 then
+            Gen.constant otherwise
+        else
+            takingSides otherwise |> Gen.bind (chain (depth - 1))
+
+    gen {
+        let! depth = Gen.choose (1, Targeting.SidesLimit)
+        let! otherwise = policy
+        return! chain depth otherwise
+    }
+
+// The policies that decide for themselves or pick at random, taking no sides
+let private genEnginePolicy: Gen<Targeting> =
     Gen.oneof [
         Gen.constant Targeting.ChoosesRandomly
         Gen.constant Targeting.PlaysSpitefully
@@ -277,8 +296,47 @@ let genEngineTargeting: Gen<Targeting> =
             genProbability
     ]
 
+// Every targeting policy DecideTargetWith can evaluate, taking sides among the
+// names the lineups seat and a stranger's among them. ChoosesExternally is
+// decided by an injected decider and raises there, alone or as what one who
+// takes sides otherwise does, so it stays out of engine draws
+let genEngineTargeting: Gen<Targeting> =
+    Gen.frequency [
+        3, genEnginePolicy
+        1, genSides (Gen.elements [ "Alice"; "Bob"; "Carol"; "Dave"; "Eve"; "Stranger" ]) genEnginePolicy
+    ]
+
+// Names that are awkward to write between quotes: empty, all spaces, holding
+// quotes and backslashes, the words a side is written with, or characters
+// beyond ASCII, one of them a surrogate pair
+let private genAwkwardName: Gen<string> =
+    Gen.frequency [
+        2,
+        Gen.elements [
+            ""
+            " "
+            "\""
+            "\\"
+            "\\\""
+            "Carol \\"
+            "a \"b\" c"
+            "for"
+            "against"
+            "otherwise"
+            " otherwise "
+            "\" otherwise PlaysSpitefully"
+            "for \"Bob\" against"
+            "Zo\u00EB \u6771\u4EAC \U0001F600"
+        ]
+        1, genName
+    ]
+
+// Every targeting, taking sides over awkward names and plain ones alike
 let genTargeting: Gen<Targeting> =
-    Gen.frequency [ 3, genEngineTargeting; 1, Gen.map Targeting.ChoosesExternally genName ]
+    let policy =
+        Gen.frequency [ 3, genEnginePolicy; 1, Gen.map Targeting.ChoosesExternally genName ]
+
+    Gen.frequency [ 3, policy; 1, genSides genAwkwardName policy ]
 
 // One to five uniquely named players on any engine strategies and policies
 let genLineup: Gen<Lineup> = gen {

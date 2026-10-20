@@ -147,16 +147,24 @@ let private genHittingStrategy: Gen<Strategy> =
         2, Gen.constant (Strategy.Custom "Own")
     ]
 
-// Every kind of targeting, Own among them
-let private genAnyTargeting: Gen<Targeting> =
-    Gen.oneof [
-        Gen.constant Targeting.ChoosesRandomly
-        Gen.constant Targeting.PlaysSpitefully
-        Gen.map2
-            (fun banksAbove deal3sBelow -> Targeting.PlaysGreedily(banksAbove, deal3sBelow))
-            genProbability
-            genProbability
-        Gen.constant (Targeting.ChoosesExternally "Own")
+// Every kind of targeting, Own among them, and taking sides among the names
+// at the table, otherwise by a policy the engine plays, since a decider
+// registered for Own answers only for ChoosesExternally "Own" itself
+let private genAnyTargeting (names: string list) : Gen<Targeting> =
+    let policy =
+        Gen.oneof [
+            Gen.constant Targeting.ChoosesRandomly
+            Gen.constant Targeting.PlaysSpitefully
+            Gen.map2
+                (fun banksAbove deal3sBelow -> Targeting.PlaysGreedily(banksAbove, deal3sBelow))
+                genProbability
+                genProbability
+        ]
+
+    Gen.frequency [
+        3, policy
+        1, Gen.constant (Targeting.ChoosesExternally "Own")
+        1, genSides (Gen.elements names) policy
     ]
 
 let private genEdit: Gen<Edit> =
@@ -177,7 +185,8 @@ let genGameWithFork: Gen<int * Lineup * Fork<Edit> option> = gen {
     let! seed = genSeed
     let! count = Gen.choose (2, 12)
     let! strategies = Gen.listOfLength count genHittingStrategy
-    let! targetings = Gen.listOfLength count genAnyTargeting
+    let! targetings =
+        Gen.listOfLength count (genAnyTargeting (List.take count seatNames))
 
     let! fork =
         Gen.frequency [

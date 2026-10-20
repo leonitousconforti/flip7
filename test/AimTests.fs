@@ -14,8 +14,9 @@ open Games
 // Inference fits how a player aims from the aims among them. The first half
 // holds the questions a timeline reveals to the ones the engine asked, call by
 // call, the way OracleTests holds the interpreter to the game's Random, over
-// the games OracleTests plays too. The second half holds the aiming model to
-// the engine's own deciders.
+// the games OracleTests plays too. The second half holds the model of how a
+// player aims to the engine's own decider, which plays every targeting, taking
+// sides among them.
 
 // ---- Observation: the questions a timeline reveals ----
 
@@ -341,17 +342,18 @@ let ``the aims follow a deal3 down its rarest roads`` () =
         "seed 1266 no longer passes two second chances on during one deal3's flips; pick a new seed"
     )
 
-// ---- Inference: the aiming model ----
+// ---- Inference: how a player aims ----
 
 // The aim given to another of its candidates
 let private givenTo (name: string) (aim: Observation) : Observation = { aim with Choice = Choice2Of2(askOf aim, name) }
 
-// Whom an aiming's decider gives the card of an aim to, at the aim's table
-let private pickedBy (aiming: Aiming) (aim: Observation) : string =
+// Whom the engine's decider gives the card of an aim to for a targeting, at
+// the aim's table
+let private pickedBy (targeting: Targeting) (aim: Observation) : string =
     let picked =
-        Inference.TargetDecider
-            aiming
+        Strategy.Decider.Default.Target
             (Random 0)
+            targeting
             Seq.empty
             (askOf aim)
             aim.Player
@@ -372,49 +374,59 @@ let private genAims: Gen<Observation list> =
         |> List.where (fun observation -> observation.Choice.IsChoice2Of2)
     )
 
-// The aimings an aim is judged by: each of the policies played plainly, and
-// every way of taking sides among the names at its table and a stranger's,
-// each way with the next of the policies in turn rather than with all of them,
-// which would judge as many times more aimings as there are policies
-let private aimingsAt (policies: Targeting list) (aim: Observation) : Aiming list =
+// The targetings an aim is judged by: each of the policies, and every way of
+// taking sides among the names at its table and a stranger's, each way with
+// the next of the policies in turn rather than with all of them, which would
+// judge as many times more targetings as there are policies, and every third
+// way taking sides again otherwise, the next way
+let private targetingsAt (policies: Targeting list) (aim: Observation) : Targeting list =
     let names =
         "Stranger" :: (aim.OtherPlayers |> List.map (fun candidate -> candidate.Name))
 
     let sides =
         Inference.AimingCandidates [ Targeting.PlaysSpitefully ] names
-        |> List.choose (fun aiming ->
-            match aiming with
-            | Aiming.TakesSides(favours, opposes, _) -> Some(favours, opposes)
-            | Aiming.Plays _ -> None
+        |> List.choose (fun targeting ->
+            match targeting with
+            | Targeting.TakesSides(favours, opposes, _) -> Some(favours, opposes)
+            | _ -> None
         )
 
-    (policies |> List.map Aiming.Plays)
+    policies
     @ (sides
        |> List.mapi (fun index (favours, opposes) ->
-           Aiming.TakesSides(favours, opposes, policies[index % policies.Length])
+           let policy = policies[index % policies.Length]
+
+           if index % 3 = 0 then
+               let favoured, opposed = sides[(index + 1) % sides.Length]
+               Targeting.TakesSides(favours, opposes, Targeting.TakesSides(favoured, opposed, policy))
+           else
+               Targeting.TakesSides(favours, opposes, policy)
        ))
 
-// An aiming judged at an aim: the likelihood it gives the candidate its
+// A targeting judged at an aim: the likelihood it gives the candidate its
 // decider picks, and the likelihood it gives each candidate in turn
 type private Judged = {
     Aim: Observation
-    Aiming: Aiming
+    Targeting: Targeting
     OfPick: float
     Likelihoods: float list
 }
 
-// Whether an aiming picks at random wherever it does not take a side
+// Whether a targeting picks at random wherever it does not take a side
 let private picksAtRandom (judged: Judged) : bool =
-    match judged.Aiming with
-    | Aiming.Plays Targeting.ChoosesRandomly
-    | Aiming.TakesSides(_, _, Targeting.ChoosesRandomly) -> true
-    | _ -> false
+    let rec atRandom (targeting: Targeting) =
+        match targeting with
+        | Targeting.ChoosesRandomly -> true
+        | Targeting.TakesSides(_, _, otherwise) -> atRandom otherwise
+        | _ -> false
+
+    atRandom judged.Targeting
 
 // Greedy at thresholds of its own joins the engine's policies. A policy that
 // decides puts all of the probability on the candidate its decider picks, and
 // one that picks at random spreads it evenly over everyone it picks among
 [<Fact>]
-let ``every aiming's likelihood is one where its decider aims, or even over a random pick, and sums to one`` () =
+let ``every targeting's likelihood is one where its decider aims, or even over a random pick, and sums to one`` () =
     let property =
         Prop.forAll
             (Arb.fromGen (Gen.zip genAims (Gen.zip genProbability genProbability)))
@@ -424,23 +436,24 @@ let ``every aiming's likelihood is one where its decider aims, or even over a ra
 
                 let judged = [
                     for aim in aims do
-                        for aiming in aimingsAt policies aim ->
+                        for targeting in targetingsAt policies aim ->
                             let likelihood (name: string) =
-                                Inference.ProbabilityOfTarget aiming (givenTo name aim)
+                                Inference.ProbabilityOfTarget targeting (givenTo name aim)
 
                             {
                                 Aim = aim
-                                Aiming = aiming
-                                OfPick = likelihood (pickedBy aiming aim)
+                                Targeting = targeting
+                                OfPick = likelihood (pickedBy targeting aim)
                                 Likelihoods = aim.OtherPlayers |> List.map (fun candidate -> likelihood candidate.Name)
                             }
                 ]
 
-                // A claim, labelled with the first aiming and aim it fails for
+                // A claim, labelled with the first targeting and aim that fail
+                // it
                 let labelled (claim: string) (holds: Judged -> bool) =
                     match judged |> List.tryFind (holds >> not) with
                     | None -> Prop.label claim true
-                    | Some failed -> Prop.label $"{claim}, but not {failed.Aiming} at %A{failed.Aim}" false
+                    | Some failed -> Prop.label $"{claim}, but not {failed.Targeting} at %A{failed.Aim}" false
 
                 labelled
                     "a policy that decides puts all of the probability where its decider aims"
@@ -459,12 +472,12 @@ let ``every aiming's likelihood is one where its decider aims, or even over a ra
                     (fun judged -> abs (List.sum judged.Likelihoods - 1.0) < 1e-12)
             )
 
-    // Each game judges each of its aims by tens to hundreds of aimings, so
+    // Each game judges each of its aims by tens to hundreds of targetings, so
     // twenty games are already a broad check
     Check.One(Config.QuickThrowOnFailure.WithMaxTest 20, property)
 
 // Ann's aims over twenty games of a table whose first seat, Ann, aims as
-// given, where the targeting named Sides favours Carol and opposes Bob
+// given
 let private aimsAs (targeting: Targeting) : Observation list =
     let lineup = [
         "Ann", Strategy.HitUntilScore 25u, targeting
@@ -474,15 +487,7 @@ let private aimsAs (targeting: Targeting) : Observation list =
         "Eve", Strategy.HitUntilScore 30u, Targeting.ChoosesRandomly
     ]
 
-    let decider =
-        Strategy.Decider.Default
-        |> Strategy.addTargetingStrategy
-            "Sides"
-            (Inference.TargetDecider(Aiming.TakesSides(Some "Carol", Some "Bob", Targeting.PlaysSpitefully)))
-
-    [
-        for seed in 1..20 -> Timeline.SimulateWithDecider (Random seed) decider lineup
-    ]
+    [ for seed in 1..20 -> Timeline.SimulateWith (Random seed) lineup ]
     |> Observation.FromTimelines
     |> AsyncSeq.filter (fun aim -> aim.Name = "Ann" && aim.Choice.IsChoice2Of2)
     |> played
@@ -494,16 +499,16 @@ let private aimsAs (targeting: Targeting) : Observation list =
 [<Fact>]
 let ``fitting a handful of games names each targeting, and a player who takes sides`` () =
     let cases = [
-        Targeting.ChoosesRandomly, Aiming.Plays Targeting.ChoosesRandomly
-        Targeting.PlaysSpitefully, Aiming.Plays Targeting.PlaysSpitefully
-        Targeting.PlaysGreedily(0.2, 0.1), Aiming.Plays(Targeting.PlaysGreedily(0.2, 0.1))
-        Targeting.ChoosesExternally "Sides", Aiming.TakesSides(Some "Carol", Some "Bob", Targeting.PlaysSpitefully)
+        Targeting.ChoosesRandomly
+        Targeting.PlaysSpitefully
+        Targeting.PlaysGreedily(0.2, 0.1)
+        Targeting.TakesSides(Some "Carol", Some "Bob", Targeting.PlaysSpitefully)
     ]
 
-    for targeting, expected in cases do
+    for targeting in cases do
         let model = Inference.Fit(aimsAs targeting) |> List.exactlyOne
         let likeliest, probability = List.head model.AimPosterior
-        Assert.Equal(expected, likeliest)
+        Assert.Equal(targeting, likeliest)
         Assert.True(probability > 0.9, $"{targeting} was fitted as {likeliest} at {probability}")
         Assert.Equal(1.0, model.AimPosterior |> List.sumBy snd, 1e-12)
 
@@ -579,7 +584,7 @@ let ``aim evidence folded one aim at a time is the evidence scored at once`` () 
 
     // And each candidate's sum is the log of the likelihood of every aim,
     // which is the same under any strategy
-    Assert.Equal<(Aiming * float) list>(
+    Assert.Equal<(Targeting * float) list>(
         atOnce.AimLogLikelihoods
         |> List.map (fun (candidate, _) ->
             candidate,
@@ -592,12 +597,26 @@ let ``aim evidence folded one aim at a time is the evidence scored at once`` () 
     Assert.Equal<string list>([ "Abe"; "Ann"; "Bob"; "Carol"; "Eve" ], folded.Names)
     Assert.Equal(aims.Length, folded.Aims)
 
-    // Every policy played plainly, and with every way of favouring one of the
+    // Every policy as it is, and with every way of favouring one of the
     // five names, opposing one, or favouring one and opposing another, each
     // once
     let grid = atOnce.AimLogLikelihoods |> List.map fst
     Assert.Equal(Inference.DefaultTargetings.Length * (1 + 5 + 5 + 5 * 4), grid.Length)
     Assert.Equal(grid.Length, (List.distinct grid).Length)
+
+    // The grid the evidence is given holds policies that take no sides, since
+    // it adds the ways of taking sides itself and Combine rebuilds the grid
+    // from the policies alone, so a grid that takes sides is refused
+    let spite = Targeting.PlaysSpitefully
+    let sided = Targeting.TakesSides(Some "Bob", None, spite)
+
+    let refused =
+        Assert.Throws<ArgumentException>(fun () ->
+            Inference.EvidenceWith epsilon Inference.DefaultCandidates [ spite; sided ] [] "Ann" (List.map snd aims)
+            |> ignore
+        )
+
+    Assert.Contains(string sided, refused.Message)
 
 // The prior shares the weight of taking sides with a policy among however many
 // ways the names allow, so with nothing seen, the ways together weigh as much
@@ -621,14 +640,14 @@ let ``with no aims seen, taking sides with a policy weighs as much as playing it
             for policy in Inference.DefaultTargetings do
                 let plainly =
                     model.AimPosterior
-                    |> List.find (fun (aiming, _) -> aiming = Aiming.Plays policy)
+                    |> List.find (fun (targeting, _) -> targeting = policy)
                     |> snd
 
                 let sided =
                     model.AimPosterior
-                    |> List.sumBy (fun (aiming, probability) ->
-                        match aiming with
-                        | Aiming.TakesSides(_, _, otherwise) when otherwise = policy -> probability
+                    |> List.sumBy (fun (targeting, probability) ->
+                        match targeting with
+                        | Targeting.TakesSides(_, _, otherwise) when otherwise = policy -> probability
                         | _ -> 0.0
                     )
 
@@ -638,7 +657,7 @@ let ``with no aims seen, taking sides with a policy weighs as much as playing it
 
     Assert.Empty(mismatches)
 
-// ---- Inference: taking sides ----
+// ---- Taking sides ----
 
 // A player at the table, and hands one card is unlikely and likely to bust
 let private player (name: string) (firmScore: uint) (hand: Hand) : Player =
@@ -675,10 +694,11 @@ let private aimAt (ask: Strategy.Ask) (chooser: Player) (candidates: Player list
         Discards = Deck.Empty
     }
 
-// Whom an aiming picks, by its decider and by its likelihood, which must agree
-let private pickOf (aiming: Aiming) (aim: Observation) : string =
-    let picked = pickedBy aiming aim
-    Assert.Equal(1.0, Inference.ProbabilityOfTarget aiming (givenTo picked aim))
+// Whom a targeting picks, by the engine's decider and by its likelihood, which
+// must agree
+let private pickOf (targeting: Targeting) (aim: Observation) : string =
+    let picked = pickedBy targeting aim
+    Assert.Equal(1.0, Inference.ProbabilityOfTarget targeting (givenTo picked aim))
     picked
 
 let private ann = player "Ann" 10u []
@@ -686,7 +706,8 @@ let private spite = Targeting.PlaysSpitefully
 
 // Ann aims at Bob, Carol and Dan, of whom Carol shows the most and Dan the
 // least: spite freezes whoever shows the most and gives a second chance to
-// whoever shows the least, so a side taken shows wherever it picks someone else
+// whoever shows the least, so a side taken shows wherever it picks someone
+// else. Taking sides again otherwise takes them among the rest
 [<Fact>]
 let ``one who takes sides freezes the opposed and passes a second chance to the favoured, leaving both out of the rest``
     ()
@@ -700,12 +721,18 @@ let ``one who takes sides freezes the opposed and passes a second chance to the 
     let freeze = aimAt Strategy.Ask.WhoToFreeze ann (showing @ [ ann ])
     let secondChance = aimAt Strategy.Ask.WhoReceivesSecondChance ann showing
 
-    Assert.Equal("Carol", pickOf (Aiming.Plays spite) freeze)
-    Assert.Equal("Bob", pickOf (Aiming.TakesSides(Some "Carol", None, spite)) freeze)
-    Assert.Equal("Dan", pickOf (Aiming.TakesSides(None, Some "Dan", spite)) freeze)
-    Assert.Equal("Dan", pickOf (Aiming.Plays spite) secondChance)
-    Assert.Equal("Bob", pickOf (Aiming.TakesSides(None, Some "Dan", spite)) secondChance)
-    Assert.Equal("Carol", pickOf (Aiming.TakesSides(Some "Carol", None, spite)) secondChance)
+    Assert.Equal("Carol", pickOf spite freeze)
+    Assert.Equal("Bob", pickOf (Targeting.TakesSides(Some "Carol", None, spite)) freeze)
+    Assert.Equal("Dan", pickOf (Targeting.TakesSides(None, Some "Dan", spite)) freeze)
+    Assert.Equal("Dan", pickOf spite secondChance)
+    Assert.Equal("Bob", pickOf (Targeting.TakesSides(None, Some "Dan", spite)) secondChance)
+    Assert.Equal("Carol", pickOf (Targeting.TakesSides(Some "Carol", None, spite)) secondChance)
+
+    let again (favours: string option) (opposes: string option) =
+        Targeting.TakesSides(favours, opposes, spite)
+
+    Assert.Equal("Dan", pickOf (Targeting.TakesSides(Some "Carol", None, again None (Some "Dan"))) freeze)
+    Assert.Equal("Carol", pickOf (Targeting.TakesSides(None, Some "Dan", again (Some "Carol") None)) secondChance)
 
 // A deal3 goes to the favoured when one card is unlikely to bust them, or else
 // to the opposed when one is likely to, and otherwise as spite deals it, to
@@ -728,12 +755,12 @@ let ``one who takes sides deals three to the favoured while safe, to the opposed
             ann
         ]
 
-    // The thresholds, private to Inference: a deal3 goes to the favoured at
+    // The thresholds, private to Strategy: a deal3 goes to the favoured at
     // one chance in ten or less of busting on a card, and to the opposed at
     // 0.35 or more
     let safe, atRisk = 0.1, 0.35
 
-    let sides = Aiming.TakesSides(Some "Carol", Some "Dan", spite)
+    let sides = Targeting.TakesSides(Some "Carol", Some "Dan", spite)
 
     // Carol busts on any of the eight Nines left, just under one in ten, and
     // Dan on four Fives, seven Eights, ten Elevens and ten Twelves, just over
@@ -769,8 +796,8 @@ let ``one who takes sides deals three to the favoured while safe, to the opposed
     let rest = deal3 likely [ ValueCard Card.Twelve; ValueCard Card.Eleven ]
     Assert.True(busts rest "Dan" > busts rest "Bob", "Dan is no likelier to bust than Bob")
     Assert.True(busts rest "Dan" < atRisk, "Dan is likely enough to bust to be dealt three as the opposed")
-    Assert.Equal("Carol", pickOf (Aiming.Plays spite) rest)
-    Assert.Equal("Dan", pickOf (Aiming.TakesSides(Some "Carol", None, spite)) rest)
+    Assert.Equal("Carol", pickOf spite rest)
+    Assert.Equal("Dan", pickOf (Targeting.TakesSides(Some "Carol", None, spite)) rest)
     Assert.Equal("Bob", pickOf sides rest)
 
     // Frozen, Ann hands out a card she set aside to Carol or Dan alone, and
@@ -786,18 +813,143 @@ let ``one who takes sides deals three to the favoured while safe, to the opposed
     Assert.True(busts named "Dan" < atRisk, "Dan is likely enough to bust to be dealt three as the opposed")
     Assert.Equal("Dan", pickOf sides named)
 
-// The end-of-game summary prints a fitted aiming this way, so a player who
-// takes sides must read as whom they favour and whom they oppose
+// Taking sides with nobody plays exactly as otherwise, dice and all, at every
+// aim of the games
 [<Fact>]
-let ``a player who takes sides reads as whom they favour and oppose`` () =
-    let greedy = Targeting.PlaysGreedily(0.3, 0.2)
+let ``taking sides with nobody aims as otherwise would`` () =
+    let property =
+        Prop.forAll
+            (Arb.fromGen (Gen.zip genAims genSeed))
+            (fun (aims, seed) ->
+                let aimedBy (targeting: Targeting) (aim: Observation) =
+                    Strategy.Decider.Default.Target
+                        (Random seed)
+                        targeting
+                        Seq.empty
+                        (askOf aim)
+                        aim.Player
+                        aim.OtherPlayers
+                        aim.FinishedPlayers
+                        (aim.Deck, aim.Discards)
+                    |> Async.RunSynchronously
 
-    let aimings = [
-        Aiming.Plays spite, "PlaysSpitefully"
-        Aiming.TakesSides(Some "Carol", Some "Bob", spite), "for Carol and against Bob, otherwise PlaysSpitefully"
-        Aiming.TakesSides(Some "Carol", None, greedy), "for Carol, otherwise PlaysGreedily 0.3 0.2"
-        Aiming.TakesSides(None, Some "Bob", Targeting.ChoosesRandomly), "against Bob, otherwise ChoosesRandomly"
-        Aiming.TakesSides(None, None, spite), "PlaysSpitefully"
+                [
+                    for aim in aims do
+                        for otherwise in Targeting.PlaysGreedily(0.25, 0.15) :: Inference.DefaultTargetings ->
+                            aimedBy (Targeting.TakesSides(None, None, otherwise)) aim = aimedBy otherwise aim
+                ]
+                |> List.forall id
+            )
+
+    Check.One(Config.QuickThrowOnFailure.WithMaxTest 20, property)
+
+// A decider registered for a label answers only for ChoosesExternally of that
+// label itself, so one who takes sides and otherwise chooses externally raises
+// in the engine's decider wherever they come to aim otherwise, as a bare
+// ChoosesExternally does anywhere, but not where they take a side
+[<Fact>]
+let ``taking sides and otherwise choosing externally raises in the engine's decider where it comes to choose`` () =
+    let external = Targeting.ChoosesExternally "Ann"
+
+    let showing = [
+        player "Bob" 50u unlikely
+        player "Carol" 80u unlikely
+        player "Dan" 30u unlikely
     ]
 
-    Assert.Equal<(Aiming * string) list>(aimings, aimings |> List.map (fun (aiming, _) -> aiming, string aiming))
+    let target (targeting: Targeting) (ask: Strategy.Ask) =
+        Strategy.Decider.Default.Target (Random 0) targeting Seq.empty ask ann showing [] (Deck.Full, Deck.Empty)
+        |> Async.RunSynchronously
+
+    let decider =
+        Strategy.Decider.Default
+        |> Strategy.addTargetingStrategy "Ann" (fun _ _ _ _ candidates _ _ -> async.Return(List.last candidates))
+
+    let registered (targeting: Targeting) (ask: Strategy.Ask) =
+        decider.Target (Random 0) targeting Seq.empty ask ann showing [] (Deck.Full, Deck.Empty)
+        |> Async.RunSynchronously
+
+    let sides = Targeting.TakesSides(Some "Carol", None, external)
+
+    Assert.Equal("Carol", (target sides Strategy.Ask.WhoReceivesSecondChance).Name)
+    Assert.Throws<InvalidOperationException>(fun () -> target sides Strategy.Ask.WhoToFreeze |> ignore)
+    |> ignore
+    Assert.Throws<InvalidOperationException>(fun () -> target external Strategy.Ask.WhoToFreeze |> ignore)
+    |> ignore
+
+    Assert.Equal("Dan", (registered external Strategy.Ask.WhoToFreeze).Name)
+    Assert.Throws<InvalidOperationException>(fun () -> registered sides Strategy.Ask.WhoToFreeze |> ignore)
+    |> ignore
+
+    Assert.Throws<InvalidOperationException>(fun () ->
+        Inference.ProbabilityOfTarget sides (givenTo "Bob" (aimAt Strategy.Ask.WhoToFreeze ann showing))
+        |> ignore
+    )
+    |> ignore
+
+// The likelihood judges by the engine's own rules, so it reads one who takes
+// sides three deep as the engine plays them, and refuses a fourth as the
+// engine does. Carol is favoured and so left out of a freeze, Eve is not at
+// the table, and the third opposes Dan, where spite among the rest would
+// freeze Bob
+[<Fact>]
+let ``the likelihood reads one who takes sides three deep, and refuses four`` () =
+    let showing = [
+        player "Bob" 50u unlikely
+        player "Carol" 80u unlikely
+        player "Dan" 30u unlikely
+    ]
+
+    let freeze = aimAt Strategy.Ask.WhoToFreeze ann (showing @ [ ann ])
+
+    let three =
+        Targeting.TakesSides(
+            Some "Carol",
+            None,
+            Targeting.TakesSides(Some "Eve", None, Targeting.TakesSides(None, Some "Dan", spite))
+        )
+
+    Assert.Equal("Bob", pickOf (Targeting.TakesSides(Some "Carol", None, spite)) freeze)
+    Assert.Equal("Dan", pickOf three freeze)
+
+    let four = Targeting.TakesSides(None, None, three)
+    let aimed = givenTo "Dan" freeze
+
+    let refused =
+        Assert.Throws<InvalidOperationException>(fun () -> Inference.ProbabilityOfTarget four aimed |> ignore)
+
+    Assert.Contains("at most 3 deep", refused.Message)
+
+    Assert.Throws<InvalidOperationException>(fun () ->
+        Inference.Likelihood 0.1 Strategy.AlwaysHits four aimed |> ignore
+    )
+    |> ignore
+
+// The end-of-game summary prints a fitted targeting as it is written, so a
+// player who takes sides must read as whom they favour and whom they oppose,
+// and what they do otherwise, and read back as they were
+[<Fact>]
+let ``a player who takes sides is written as whom they favour and oppose, and read back`` () =
+    let greedy = Targeting.PlaysGreedily(0.3, 0.2)
+
+    let written = [
+        Targeting.TakesSides(Some "Carol", Some "Bob", spite),
+        "TakesSides for \"Carol\" against \"Bob\" otherwise PlaysSpitefully"
+        Targeting.TakesSides(Some "Carol", None, greedy), "TakesSides for \"Carol\" otherwise PlaysGreedily 0.3 0.2"
+        Targeting.TakesSides(None, Some "Bob", Targeting.ChoosesRandomly),
+        "TakesSides against \"Bob\" otherwise ChoosesRandomly"
+        Targeting.TakesSides(None, None, spite), "TakesSides otherwise PlaysSpitefully"
+        Targeting.TakesSides(Some "Ann", None, Targeting.TakesSides(None, Some "Bob", spite)),
+        "TakesSides for \"Ann\" otherwise TakesSides against \"Bob\" otherwise PlaysSpitefully"
+        Targeting.TakesSides(None, Some "Bob", Targeting.ChoosesExternally "Some Name"),
+        "TakesSides against \"Bob\" otherwise ChoosesExternally Some Name"
+        Targeting.TakesSides(Some "Ann \"Bob\" \\ for", Some "", spite),
+        "TakesSides for \"Ann \\\"Bob\\\" \\\\ for\" against \"\" otherwise PlaysSpitefully"
+    ]
+
+    Assert.Equal<(Targeting * string) list>(
+        written,
+        written |> List.map (fun (targeting, _) -> targeting, string targeting)
+    )
+
+    Assert.Equal<(Targeting * string) list>(written, written |> List.map (fun (_, text) -> Targeting.Parse text, text))

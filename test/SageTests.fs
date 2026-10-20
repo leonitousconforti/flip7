@@ -464,7 +464,7 @@ let ``studying the field names every opponent's strategy and targeting`` () =
         let model = (Study.ModelOf study.Value name).Value
         Assert.True(model.Aims > 0, $"{name} was never seen aim at one of several players")
         let posterior = model.AimPosterior
-        let declared = posterior |> List.find (fst >> (=) (Aiming.Plays targeting)) |> snd
+        let declared = posterior |> List.find (fst >> (=) targeting) |> snd
         Assert.Equal(snd (List.head posterior), declared)
 
         if name <> "Dave" then
@@ -956,15 +956,16 @@ let ``once the seed is pinned the live game follows Sage's plan, which wins most
     Assert.True(won.Length >= 8, $"won {won.Length} of 10")
 
 // Bob and Carol play as the field's players of the same names do, but under
-// ChoosesExternally and taking sides: for Dave and against Sage, and otherwise
-// spitefully. Sage, which used to replay anyone who declared ChoosesExternally
-// as spiteful, fits how they aim from twenty games of the table
+// ChoosesExternally and taking sides, as the engine plays it: for Dave and
+// against Sage, and otherwise spitefully. Sage, which used to replay anyone who
+// declared ChoosesExternally as spiteful, fits how they aim from twenty games
+// of the table
 let private partisan =
-    Aiming.TakesSides(Some "Dave", Some "Sage", Targeting.PlaysSpitefully)
+    Targeting.TakesSides(Some "Dave", Some "Sage", Targeting.PlaysSpitefully)
 
 let private partisans: Strategy.Decider =
     Strategy.Decider.Default
-    |> Strategy.addTargetingStrategy "Partisan" (Inference.TargetDecider partisan)
+    |> Strategy.addTargetingStrategy "Partisan" (fun random -> Strategy.Decider.Default.Target random partisan)
 
 let private partisanField: Lineup =
     let takingSides (name, strategy, _) =
@@ -1014,7 +1015,7 @@ let ``Sage replays players who take sides as it fitted them, and its plan forese
             |> List.filter (fun aim ->
                 (aim.Name = "Bob" || aim.Name = "Carol")
                 && aim.Choice.IsChoice2Of2
-                && Inference.ProbabilityOfTarget (Aiming.Plays Targeting.PlaysSpitefully) aim = 0.0
+                && Inference.ProbabilityOfTarget Targeting.PlaysSpitefully aim = 0.0
             )
 
         Assert.True(not unlikeSpite.IsEmpty, $"{game}: Bob and Carol aimed as spite would; pick a new seed")
@@ -1027,7 +1028,7 @@ let ``a replay aims as declared, or as Sage made of one who aims as they please,
     // of no decisions. The prior subtracts log (n * n + n) from the weight of
     // each way of taking sides among n names, which over one name is log 2, so
     // adding log 2 here cancels it
-    let model (posterior: (Aiming * float) list) : PlayerEvidence option =
+    let model (posterior: (Targeting * float) list) : PlayerEvidence option =
         Some {
             Name = "Bob"
             Observations = 0
@@ -1037,61 +1038,108 @@ let ``a replay aims as declared, or as Sage made of one who aims as they please,
             Names = [ "Carol" ]
             AimLogLikelihoods =
                 posterior
-                |> List.map (fun (aiming, probability) ->
-                    match aiming with
-                    | Aiming.Plays _ -> aiming, log probability
-                    | Aiming.TakesSides _ -> aiming, log probability + log 2.0
+                |> List.map (fun (targeting, probability) ->
+                    match targeting with
+                    | Targeting.TakesSides _ -> targeting, log probability + log 2.0
+                    | _ -> targeting, log probability
                 )
         }
 
     let spite = Targeting.PlaysSpitefully
     let external = Targeting.ChoosesExternally "Bob"
     let greedy = Targeting.PlaysGreedily(0.4, 0.2)
-    let random = Aiming.Plays Targeting.ChoosesRandomly
-    let sidesAtRandom = Aiming.TakesSides(Some "Carol", None, Targeting.ChoosesRandomly)
-    let sides = Aiming.TakesSides(Some "Carol", None, spite)
+    let random = Targeting.ChoosesRandomly
+    let sidesAtRandom =
+        Targeting.TakesSides(Some "Carol", None, Targeting.ChoosesRandomly)
+    let sides = Targeting.TakesSides(Some "Carol", None, spite)
 
     // Never seen aiming: as declared, or spitefully for ChoosesExternally,
     // even with evidence of how they hit or stand, which holds no aims
     let decidedOnly =
-        model [ Aiming.Plays Targeting.ChoosesRandomly, 1.0 ]
+        model [ Targeting.ChoosesRandomly, 1.0 ]
         |> Option.map (fun evidence -> { evidence with Observations = 10; Aims = 0 })
 
-    Assert.Equal(Aiming.Plays greedy, Replayed.Aiming None greedy)
-    Assert.Equal(Aiming.Plays spite, Replayed.Aiming None external)
-    Assert.Equal(Aiming.Plays spite, Replayed.Aiming decidedOnly external)
+    Assert.Equal(greedy, Replayed.Aiming None greedy)
+    Assert.Equal(spite, Replayed.Aiming None external)
+    Assert.Equal(spite, Replayed.Aiming decidedOnly external)
 
     // A declared policy whatever the aims seen of it suggest, even one off the
-    // grid, since the engine plays it on the replay's own dice: a few aims at
-    // random can look spiteful
-    let spiteful = model [ Aiming.Plays spite, 0.9; random, 0.1 ]
+    // grid or one that takes sides at random, since the engine plays it on the
+    // replay's own dice: a few aims at random can look spiteful
+    let spiteful = model [ spite, 0.9; random, 0.1 ]
     let offGrid = Targeting.PlaysGreedily(0.25, 0.15)
     Assert.Equal(random, Replayed.Aiming spiteful Targeting.ChoosesRandomly)
-    Assert.Equal(Aiming.Plays offGrid, Replayed.Aiming spiteful offGrid)
-    Assert.Equal(Aiming.Plays spite, Replayed.Aiming spiteful external)
+    Assert.Equal(offGrid, Replayed.Aiming spiteful offGrid)
+    Assert.Equal(sidesAtRandom, Replayed.Aiming spiteful sidesAtRandom)
+    Assert.Equal(spite, Replayed.Aiming spiteful external)
 
     // One who aims as they please aims as the posterior's head, which of
     // equals is the first
-    let tied =
-        model [
-            Aiming.Plays(Targeting.PlaysGreedily(0.3, 0.2)), 0.4
-            Aiming.Plays greedy, 0.4
-            sides, 0.2
-        ]
+    let tied = model [ Targeting.PlaysGreedily(0.3, 0.2), 0.4; greedy, 0.4; sides, 0.2 ]
 
-    Assert.Equal(Aiming.Plays(Targeting.PlaysGreedily(0.3, 0.2)), Replayed.Aiming tied external)
+    Assert.Equal(Targeting.PlaysGreedily(0.3, 0.2), Replayed.Aiming tied external)
     Assert.Equal(snd (Inference.MostLikely(Inference.ModelFrom tied.Value)), Replayed.Aiming tied external)
 
-    // Taking sides at random is replayed as the likeliest aiming that decides,
-    // but a plain random chooser stays random, since they may roll the dice
-    // the engine hands them
+    // Taking sides at random is replayed as the likeliest targeting that
+    // decides, but a plain random chooser stays random, since they may roll the
+    // dice the engine hands them
     let atRandom = model [ sidesAtRandom, 0.6; random, 0.3; sides, 0.1 ]
     Assert.Equal(sides, Replayed.Aiming atRandom external)
     Assert.Equal(random, Replayed.Aiming (model [ random, 0.7; sides, 0.3 ]) external)
 
-    // Where no aiming decides, taking sides at random stays the likeliest, as
-    // there is nothing to replace it with
+    // Where no targeting decides, taking sides at random stays the likeliest,
+    // as there is nothing to replace it with
     Assert.Equal(sidesAtRandom, Replayed.Aiming (model [ sidesAtRandom, 0.7; random, 0.3 ]) external)
+
+    // One who takes sides and otherwise chooses externally, however deep, is
+    // answered by the table's decider, sides and all, which the engine cannot
+    // play, so they are fitted just as one who declared ChoosesExternally
+    let sidesExternal = Targeting.TakesSides(Some "Carol", None, external)
+    let deeper = Targeting.TakesSides(None, Some "Dan", sidesExternal)
+    Assert.Equal(spite, Replayed.Aiming None sidesExternal)
+    Assert.Equal(spite, Replayed.Aiming spiteful deeper)
+    Assert.Equal(Targeting.PlaysGreedily(0.3, 0.2), Replayed.Aiming tied sidesExternal)
+
+// Hal takes sides for Jon and otherwise aims under a label the table's decider
+// answers, here at random among the rest. The engine cannot play that label,
+// so Sage's replays fit Hal rather than hand the label to the engine, and the
+// games Sage plays at the table play to the end. In both seeds a replay
+// reaches Hal's label, which the engine refused when the replays kept his
+// declaration
+[<Fact>]
+let ``Sage plays at a table whose decider answers one who takes sides and otherwise chooses externally`` () =
+    let leaning: Strategy.Decider = {
+        Strategy.Decider.Default with
+            Target =
+                fun random targeting ->
+                    match targeting with
+                    | Targeting.TakesSides(favours, opposes, Targeting.ChoosesExternally "Lean") ->
+                        Strategy.Decider.Default.Target
+                            random
+                            (Targeting.TakesSides(favours, opposes, Targeting.ChoosesRandomly))
+                    | targeting -> Strategy.Decider.Default.Target random targeting
+    }
+
+    let lineup: Lineup = [
+        sageSeat
+        "Hal",
+        Strategy.MaximizesExpectedValue,
+        Targeting.TakesSides(Some "Jon", None, Targeting.ChoosesExternally "Lean")
+        "Jon", Strategy.HitUntilScore 25u, Targeting.PlaysSpitefully
+        "Kim", Strategy.HitUntilNumCards 4u, Targeting.PlaysSpitefully
+    ]
+
+    for seed in 1..2 do
+        let sage = Sage("Sage", budget = 50)
+
+        let timeline =
+            Timeline.SimulateWithDecider (Random seed) (seated sage.Strategies leaning) lineup
+            |> played
+
+        match List.last timeline with
+        | { Event = RoundEnded _; Players = players } ->
+            Assert.True(players |> List.exists (fun player -> player.FirmScore >= 200u), $"seed {seed}")
+        | instant -> Assert.Fail $"seed {seed}: the game ended at {instant.Event}"
 
 // Sage seated first at twelve, before eleven people who play under a Custom
 // label and aim on the given policy, which the engine plays for them
@@ -1167,7 +1215,7 @@ let ``Sage replays a player it has never seen decide as maximizing expected valu
 
     Assert.True(
         fitted
-        |> List.exists (fun model -> snd (Inference.MostLikely model) <> Aiming.Plays targeting),
+        |> List.exists (fun model -> snd (Inference.MostLikely model) <> targeting),
         $"{game}: every aim before the search fits as declared; pick a new seed"
     )
 

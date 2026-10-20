@@ -58,7 +58,8 @@ let private gameOf (seed: int) : Timeline =
 let ``an instant written to a directory reads back identically`` () =
     inTempDirectory (fun directory ->
         // Each field the files hold, with strategies and targetings that take
-        // arguments and that do not, a hand of each kind of card, an empty
+        // arguments and that do not, a targeting that takes sides twice over
+        // names written with escapes, a hand of each kind of card, an empty
         // hand, a firm score of zero and two partly filled decks
         let instant = {
             Event = Drew("Alice", ValueCard Card.Seven)
@@ -69,7 +70,17 @@ let ``an instant written to a directory reads back identically`` () =
                     100u,
                     [ ValueCard Card.Seven; ModifierCard Card.Double ]
                 )
-                Player.Make("Bob", Strategy.RandomWithProbability 0.25, 55u, [], Targeting.PlaysSpitefully)
+                Player.Make(
+                    "Bob",
+                    Strategy.RandomWithProbability 0.25,
+                    55u,
+                    [],
+                    Targeting.TakesSides(
+                        Some "Ann \"Bob\" \\ for",
+                        Some "",
+                        Targeting.TakesSides(None, Some "Carol", Targeting.PlaysSpitefully)
+                    )
+                )
                 Player.Make(
                     "Carol",
                     Strategy.AlwaysStands,
