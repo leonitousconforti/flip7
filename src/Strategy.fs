@@ -166,6 +166,114 @@ module public rec Strategy =
                 )
             |> async.Return
 
+    // The chance of busting on one card at or below which one who takes sides
+    // gives the favoured player a deal3, and at or above which they give it to
+    // the opposed one. At one in ten, three cards pass safely about three times
+    // in four, and at a little over one in three, one of them busts the hand
+    // about three times in four. They are fixed rather than fitted, since every
+    // pair of them would multiply the candidates Inference fits who take sides
+    [<Literal>]
+    let private Kind = 0.1
+
+    [<Literal>]
+    let private Cruel = 0.35
+
+    /// <summary>
+    /// How likely one more card is to bust a player's hand, as the targeting
+    /// policies judge it. Deliberately not the only-player form: a policy is
+    /// comparing players here, and the extra risk a lone player carries would
+    /// distort the comparison.
+    /// </summary>
+    let internal BustProbability ((deck, discards): Deck * Deck) (player: Player) : float =
+        Simulation.probabilityToBust deck discards player.Hand false
+
+    /// <summary>
+    /// Where a targeting gives a card among the candidates, judging busts by
+    /// the given function: Choice1Of2 the player it decides on, or Choice2Of2
+    /// the players it picks among at random. Shared with Inference so that a
+    /// fitted targeting and a played one cannot drift apart. ChoosesExternally,
+    /// alone or as what one who takes sides otherwise does, has no rule here
+    /// and raises InvalidOperationException, as does a targeting that takes
+    /// sides more than Targeting.SidesLimit deep, before it takes any side.
+    /// </summary>
+    let rec internal TargetOf
+        (targeting: Targeting)
+        (ask: Ask)
+        (chooser: string)
+        (bust: Player -> float)
+        (candidates: Player list)
+        : Choice<Player, Player list> =
+        if Targeting.TakesSidesTooDeep targeting then
+            raise (
+                System.InvalidOperationException
+                    $"A targeting takes sides at most {Targeting.SidesLimit} deep, and this one takes them deeper"
+            )
+
+        let self = candidates |> List.tryFind (fun candidate -> candidate.Name = chooser)
+
+        let opponents =
+            candidates |> List.where (fun candidate -> candidate.Name <> chooser)
+
+        // Hurts the most: the player nearest to winning, or the one nearest to
+        // busting when the card is three forced flips. With no opponent to aim
+        // at the card is forced back on the chooser
+        let hurts () =
+            match ask, opponents with
+            | _, [] -> List.head candidates
+            | Ask.WhoReceivesDeal3, opponents -> opponents |> List.maxBy bust
+            | _, opponents -> opponents |> List.maxBy Player.Showing
+
+        // Helps the least: whoever is furthest behind
+        let helpsLeast () = candidates |> List.minBy Player.Showing
+
+        match targeting with
+        | Targeting.ChoosesRandomly -> Choice2Of2 candidates
+        | Targeting.PlaysSpitefully ->
+            match ask with
+            | Ask.WhoReceivesSecondChance -> Choice1Of2(helpsLeast ())
+            | Ask.WhoToFreeze -> Choice1Of2(hurts ())
+            | Ask.WhoReceivesDeal3 -> Choice1Of2(hurts ())
+        | Targeting.PlaysGreedily(banksAbove, deal3sBelow) ->
+            match ask, self with
+            | Ask.WhoReceivesSecondChance, _ -> Choice1Of2(helpsLeast ())
+            | Ask.WhoToFreeze, Some self when bust self >= banksAbove -> Choice1Of2 self
+            | Ask.WhoReceivesDeal3, Some self when bust self <= deal3sBelow -> Choice1Of2 self
+            | _ -> Choice1Of2(hurts ())
+        | Targeting.TakesSides(favours, opposes, otherwise) ->
+            let named (name: string option) =
+                name
+                |> Option.bind (fun name -> candidates |> List.tryFind (fun candidate -> candidate.Name = name))
+
+            let favoured, opposed = named favours, named opposes
+
+            let picked =
+                match ask with
+                | Ask.WhoReceivesSecondChance -> favoured
+                | Ask.WhoToFreeze -> opposed
+                | Ask.WhoReceivesDeal3 ->
+                    match favoured, opposed with
+                    | Some favoured, _ when bust favoured <= Kind -> Some favoured
+                    | _, Some opposed when bust opposed >= Cruel -> Some opposed
+                    | _ -> None
+
+            match picked with
+            | Some picked -> Choice1Of2 picked
+            | None ->
+                let named =
+                    List.choose id [ favoured; opposed ] |> List.map (fun player -> player.Name)
+
+                match
+                    candidates
+                    |> List.where (fun candidate -> not (List.contains candidate.Name named))
+                with
+                | [] -> TargetOf otherwise ask chooser bust candidates
+                | others -> TargetOf otherwise ask chooser bust others
+        | Targeting.ChoosesExternally name ->
+            raise (
+                System.InvalidOperationException
+                    $"ChoosesExternally {name} targeting is decided externally: it has to be added to a Decider via `Strategy.addTargetingStrategy` and simulated via `Timeline.SimulateWithDecider`, and has no likelihood to fit"
+            )
+
     /// <summary>
     /// Evaluates a targeting policy using the given source of randomness: which
     /// of the candidates a player gives an action card to. No policy reads the
@@ -173,54 +281,17 @@ module public rec Strategy =
     /// the engine, and are never empty. For a freeze or a deal3 the chooser is
     /// usually among them, but not always: a player frozen earlier still hands
     /// out the cards they set aside during a deal3, and can no longer keep one
-    /// for themselves.
+    /// for themselves. Where TargetOf decides on a player that player is the
+    /// answer and nothing is drawn, and where it picks among players at random
+    /// one of them is drawn from the Random. Where TargetOf raises, for
+    /// ChoosesExternally or for a targeting that takes sides too deep, so does
+    /// this.
     /// </summary>
     let private DecideTargetWith (random: System.Random) (targeting: Targeting) : TargetDecider =
         fun _history ask chooser candidates _finishedPlayers decks ->
-            let deck, discards = decks
-
-            let self =
-                candidates |> List.tryFind (fun candidate -> candidate.Name = chooser.Name)
-
-            let opponents =
-                candidates |> List.where (fun candidate -> candidate.Name <> chooser.Name)
-
-            // Whether one more card busts them. Deliberately not the
-            // only-player form: a policy is comparing players here, and the
-            // extra risk a lone player carries would distort the comparison
-            let bustProbability (player: Player) =
-                Simulation.probabilityToBust deck discards player.Hand false
-
-            // Hurts the most: the player nearest to winning, or the one nearest
-            // to busting when the card is three forced flips. With no opponent
-            // to aim at the card is forced back on the chooser
-            let hurts () =
-                match ask, opponents with
-                | _, [] -> List.head candidates
-                | Ask.WhoReceivesDeal3, opponents -> opponents |> List.maxBy bustProbability
-                | _, opponents -> opponents |> List.maxBy Player.Showing
-
-            // Helps the least: whoever is furthest behind
-            let helpsLeast () = candidates |> List.minBy Player.Showing
-
-            match targeting with
-            | Targeting.ChoosesRandomly -> candidates |> List.randomChoiceWith random
-            | Targeting.PlaysSpitefully ->
-                match ask with
-                | Ask.WhoReceivesSecondChance -> helpsLeast ()
-                | Ask.WhoToFreeze -> hurts ()
-                | Ask.WhoReceivesDeal3 -> hurts ()
-            | Targeting.PlaysGreedily(banksAbove, deal3sBelow) ->
-                match ask, self with
-                | Ask.WhoReceivesSecondChance, _ -> helpsLeast ()
-                | Ask.WhoToFreeze, Some self when bustProbability self >= banksAbove -> self
-                | Ask.WhoReceivesDeal3, Some self when bustProbability self <= deal3sBelow -> self
-                | _ -> hurts ()
-            | Targeting.ChoosesExternally name ->
-                raise (
-                    System.InvalidOperationException
-                        $"ChoosesExternally {name} targeting should be added to a Decider via `Strategy.Decider.addTargetingStrategy` and then simulated via `Timeline.SimulateWithDecider`, not by DecideTargetWith"
-                )
+            match TargetOf targeting ask chooser.Name (BustProbability decks) candidates with
+            | Choice1Of2 picked -> picked
+            | Choice2Of2 among -> among |> List.randomChoiceWith random
             |> async.Return
 
     /// <summary>
