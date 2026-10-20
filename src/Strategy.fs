@@ -179,15 +179,6 @@ module public rec Strategy =
     let private Cruel = 0.35
 
     /// <summary>
-    /// How likely one more card is to bust a player's hand, as the targeting
-    /// policies judge it. Deliberately not the only-player form: a policy is
-    /// comparing players here, and the extra risk a lone player carries would
-    /// distort the comparison.
-    /// </summary>
-    let internal BustProbability ((deck, discards): Deck * Deck) (player: Player) : float =
-        Simulation.probabilityToBust deck discards player.Hand false
-
-    /// <summary>
     /// Where a targeting gives a card among the candidates, judging busts by
     /// the given function: Choice1Of2 the player it decides on, or Choice2Of2
     /// the players it picks among at random. Shared with Inference so that a
@@ -289,7 +280,11 @@ module public rec Strategy =
     /// </summary>
     let private DecideTargetWith (random: System.Random) (targeting: Targeting) : TargetDecider =
         fun _history ask chooser candidates _finishedPlayers decks ->
-            match TargetOf targeting ask chooser.Name (BustProbability decks) candidates with
+            let deck, discards = decks
+            let bust (player: Player) : float =
+                Simulation.probabilityToBust deck discards player.Hand false
+
+            match TargetOf targeting ask chooser.Name bust candidates with
             | Choice1Of2 picked -> picked
             | Choice2Of2 among -> among |> List.randomChoiceWith random
             |> async.Return
