@@ -182,7 +182,11 @@ module public Inference =
                 1.0
             else
                 0.0
-        | Strategy.Custom name -> invalidOp $"Custom {name} strategy is decided externally; it has no likelihood to fit"
+        | Strategy.Custom name ->
+            raise (
+                System.InvalidOperationException
+                    $"Custom {name} strategy is decided externally; it has no likelihood to fit"
+            )
 
     // The probability that a targeting gives the card to the target an aim
     // observed among its candidates, judging busts by the chance of busting on

@@ -65,7 +65,7 @@ let searcher =
 let priced (result: Result<float, LookaheadError>) : float =
     match result with
     | Ok worth -> worth
-    | Error error -> invalidOp $"%A{error}"
+    | Error error -> failwith $"%A{error}"
 
 let gains =
     try
