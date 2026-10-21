@@ -1,5 +1,7 @@
 module InferenceTests
 
+open System
+open FSharp.Control
 open Microsoft.FSharp.Reflection
 open Xunit
 open Flip7
@@ -401,3 +403,294 @@ let ``each kind of observation in a game's stream informs only its own part of a
     for model in modelsOf decisions do
         Assert.Equal(0, model.Aims)
         Assert.Equal<(Targeting * float) list>(aimPrior, model.TargetingPosterior)
+
+// ---- studies ----
+
+[<Fact>]
+let ``studying the field names every opponent's strategy and targeting`` () =
+    // Named with next to no doubt, rather than by the order of the grid
+    for name, strategy, _ in field do
+        let likeliest, probability =
+            List.head (Study.ModelOf fieldStudy.Value name).Value.StrategyPosterior
+
+        Assert.Equal(strategy, likeliest)
+        Assert.True(probability > 0.9, $"{name} is {likeliest} at {probability}")
+
+    // So is how they otherwise aim, whatever sides they took, but for Dave's
+    // greedy targeting, which ten games never tell from greedy at higher
+    // thresholds to bank at, so that it is only among the likeliest. Bob and
+    // Dave aim as their targetings decide, so no sides explain them better
+    // than none. Carol and Erin aim at random, and the study carries sides from
+    // game to game, so a run of the last few games in which a random aimer's
+    // picks happen to favour someone can make taking that side likelier than
+    // playing plainly, as it does for Carol
+    for name, _, targeting in field do
+        let model = (Study.ModelOf fieldStudy.Value name).Value
+        Assert.True(model.Aims > 0, $"{name} was never seen aim at one of several players")
+
+        let policies =
+            model.TargetingPosterior
+            |> List.groupBy (fun (candidate, _) ->
+                match candidate with
+                | Targeting.TakesSides(_, _, otherwise) -> otherwise
+                | policy -> policy
+            )
+            |> List.map (fun (policy, candidates) -> policy, List.sumBy snd candidates)
+            |> List.sortByDescending snd
+
+        let declared = policies |> List.find (fst >> (=) targeting) |> snd
+        Assert.Equal(snd (List.head policies), declared)
+
+        if name <> "Dave" then
+            Assert.True(declared > 0.9, $"{name} otherwise aims {targeting} at {declared}")
+
+        if targeting <> Targeting.ChoosesRandomly then
+            let posterior = model.TargetingPosterior
+            let plainly = posterior |> List.find (fst >> (=) targeting) |> snd
+            Assert.Equal(snd (List.head posterior), plainly)
+
+// Games read lazily off one Random are the games that Random plays one after
+// another only if the study reads each once, in order. Every player is then
+// scored exactly as Inference scores each game over everyone at the table,
+// with as many choices out of character as the study was continued with,
+// carrying the games before into each next one, since both sum the same terms
+// in the same order
+[<Fact>]
+let ``a study reads its games once each, in order, and scores them as Inference does`` () =
+    let table = standIn :: field
+    let names = table |> List.map (fun (name, _, _) -> name)
+    let shared = Random 7
+
+    let lazily =
+        Study.Nothing
+        |> Study.ContinueWith 0.05 [ for _ in 1..3 -> Timeline.SimulateWith shared table ]
+        |> Async.RunSynchronously
+
+    let inTurn = Random 7
+    let games = [ for _ in 1..3 -> Timeline.SimulateWith inTurn table |> played ]
+
+    let scored (name: string) : PlayerModel =
+        games
+        |> List.map (fun game ->
+            observationsOf game
+            |> List.where (fun observation -> observation.Name = name)
+            |> Inference.Evidence
+                0.05
+                Inference.DefaultStrategyCandidates
+                Inference.DefaultTargetingCandidates
+                names
+                name
+        )
+        |> List.reduce (fun before game -> Inference.Combine (Inference.Carry Study.Stickiness names before) game)
+        |> Inference.ModelFrom
+
+    // Everyone decided in every game, which the exact comparison needs, since
+    // a study starts on a player only at the first game that shows something
+    // of them, and someone aimed at one of several players, so the comparisons
+    // are not all of nothing with nothing
+    Assert.True(
+        games
+        |> List.forall (fun game ->
+            let deciders =
+                observationsOf game
+                |> List.where (fun observation -> observation.Choice.IsChoice1Of2)
+                |> List.map (fun observation -> observation.Name)
+
+            names |> List.forall (fun name -> List.contains name deciders)
+        ),
+        "someone never decided in a game; pick a new seed"
+    )
+
+    let models = names |> List.map scored
+    Assert.Contains(models, (fun model -> model.Aims > 0))
+
+    for model in models do
+        Assert.Equal(Some model, Study.ModelOf lazily model.Name)
+
+// Dave hits until a card is 35% likely to bust him, between two points of the
+// default grid of strategies, and freezes himself whenever a Freeze lets him,
+// as no policy of the default grid of policies does, so that no study over
+// the default grids could ever name how he plays or aims, but a study over
+// grids that hold both does, and keeps both grids, and what it named, when its
+// sitting is concluded
+[<Fact>]
+let ``a study over grids of one's own names a strategy and a policy the default grids lack`` () =
+    let between = Strategy.HitUntilBustProbability 0.35
+    let freezesHimself = Targeting.PlaysGreedily(0.0, 0.2)
+
+    Assert.DoesNotContain(between, Inference.DefaultStrategyCandidates)
+    Assert.DoesNotContain(freezesHimself, Inference.DefaultTargetingCandidates)
+
+    let strategies = Inference.DefaultStrategyCandidates @ [ between ]
+    let policies = Inference.DefaultTargetingCandidates @ [ freezesHimself ]
+
+    let fieldWithDaveOff =
+        field
+        |> List.map (fun (name, strategy, targeting) ->
+            if name = "Dave" then name, between, freezesHimself else name, strategy, targeting
+        )
+
+    // The policies a posterior over targetings is over, each played plainly
+    // and taking sides
+    let policiesOf (model: PlayerModel) : Set<Targeting> =
+        model.TargetingPosterior
+        |> List.map fst
+        |> List.where (fun targeting -> not targeting.IsTakesSides)
+        |> set
+
+    let own =
+        [
+            for seed in 1..10 -> Timeline.SimulateWith (Random(300 + seed)) (standIn :: fieldWithDaveOff)
+        ]
+        |> Study.OfTimelinesWith strategies policies
+        |> Async.RunSynchronously
+
+    let model = (Study.ModelOf own "Dave").Value
+
+    Assert.Equal((between, freezesHimself), Inference.MostLikely model)
+    Assert.Equal(strategies.Length, model.StrategyPosterior.Length)
+    Assert.Equal<Set<Targeting>>(set policies, policiesOf model)
+
+    let concluded = Study.Conclude own
+    let forgotten = (Study.ModelOf concluded "Dave").Value
+
+    Assert.Equal<Strategy list>(strategies, Study.StrategiesOf concluded)
+    Assert.Equal<Targeting list>(policies, Study.TargetingsOf concluded)
+    Assert.Equal((between, freezesHimself), Inference.MostLikely forgotten)
+    Assert.Equal<Set<Targeting>>(set policies, policiesOf forgotten)
+
+// Bob takes Dave's side against Sage for eight games, then Erin's against
+// Carol for eight more, all in one sitting. The study carries each game's
+// sides into the next, so it learns the sides he took last
+[<Fact>]
+let ``a study learns the sides a player took last in a sitting`` () =
+    let siding (favours: string) (opposes: string) : Lineup =
+        let sides =
+            Targeting.TakesSides(Some favours, Some opposes, Targeting.PlaysSpitefully)
+
+        [ standIn; ("Bob", Strategy.HitUntilScore 24u, sides); carol; dave; erin ]
+
+    let study =
+        [
+            for seed in 1..8 -> Timeline.SimulateWith (Random(600 + seed)) (siding "Dave" "Sage")
+            for seed in 9..16 -> Timeline.SimulateWith (Random(600 + seed)) (siding "Erin" "Carol")
+        ]
+        |> Study.OfTimelines
+        |> Async.RunSynchronously
+
+    let likeliest, probability =
+        List.head (Study.ModelOf study "Bob").Value.TargetingPosterior
+
+    Assert.Equal(Targeting.TakesSides(Some "Erin", Some "Carol", Targeting.PlaysSpitefully), likeliest)
+    Assert.True(probability > 0.5, $"Bob aims {likeliest} at {probability}")
+
+// Concluding the study of a sitting forgets the sides Bob and Carol took for
+// Dave and against Sage, but not that they otherwise aim spitefully, nor how
+// they hit or stand
+[<Fact>]
+let ``concluding a study forgets the sides everyone took, but not how they otherwise aim or play`` () =
+    let concluded = Study.Conclude partisanStudy.Value
+
+    for name in [ "Bob"; "Carol" ] do
+        let sitting = (Study.ModelOf partisanStudy.Value name).Value
+        let model = (Study.ModelOf concluded name).Value
+
+        Assert.Equal<Set<Targeting>>(
+            set Inference.DefaultTargetingCandidates,
+            set (List.map fst model.TargetingPosterior)
+        )
+        Assert.Equal<(Strategy * float) list>(sitting.StrategyPosterior, model.StrategyPosterior)
+        Assert.Equal((sitting.Observations, sitting.Aims), (model.Observations, model.Aims))
+
+        let likeliest, probability = List.head model.TargetingPosterior
+        Assert.Equal(Targeting.PlaysSpitefully, likeliest)
+
+        let spiteful =
+            sitting.TargetingPosterior
+            |> List.sumBy (fun (targeting, probability) ->
+                match targeting with
+                | Targeting.PlaysSpitefully
+                | Targeting.TakesSides(_, _, Targeting.PlaysSpitefully) -> probability
+                | _ -> 0.0
+            )
+
+        Assert.InRange(probability - spiteful, -1e-12, 1e-12)
+
+// Games studied onto a study continue its sitting, as though studied with its
+// own at once, while a study concluded first starts a new sitting, in which
+// the sides Bob took before count for nothing
+[<Fact>]
+let ``studying more games continues the study's sitting, unless it was concluded`` () =
+    let games = [
+        for seed in 1..6 ->
+            Timeline.SimulateWithDecider (Random(200 + seed)) partisans (standIn :: partisanField)
+            |> played
+    ]
+
+    let studied (timelines: Instant list list) : Study =
+        timelines |> List.map AsyncSeq.ofSeq |> Study.OfTimelines |> Async.RunSynchronously
+
+    let continuing (study: Study) : Study =
+        Study.ContinueWith 0.1 (games |> List.skip 4 |> List.map AsyncSeq.ofSeq) study
+        |> Async.RunSynchronously
+
+    let first = studied (List.take 4 games)
+    let continued = continuing first
+    let atOnce = studied games
+
+    for name in [ "Sage"; "Bob"; "Carol"; "Dave"; "Erin" ] do
+        Assert.Equal(Study.ModelOf atOnce name, Study.ModelOf continued name)
+
+    let afresh = continuing (Study.Conclude first)
+    Assert.True(aimsAs partisan afresh "Bob" < aimsAs partisan continued "Bob")
+
+// A study refuses a grid it could not score anyone over as it is made, before
+// it reads a game, rather than once some game shows it a decision or an aim it
+// cannot score, which for a study of no games would be in the middle of a
+// Sage's game. Each refusal names the grid at fault and shows what it refused
+[<Fact>]
+let ``a study refuses an empty grid, a strategy or policy decided externally, or a policy that takes sides`` () =
+    let refused (argument: string) (culprit: string) (strategies: Strategy list) (targetings: Targeting list) =
+        let error =
+            Assert.Throws<ArgumentException>(fun () -> Study.OfTimelinesWith strategies targetings [] |> ignore)
+
+        Assert.Equal(argument, error.ParamName)
+        Assert.Contains(culprit, error.Message)
+
+    let strategies = Inference.DefaultStrategyCandidates
+    let policies = Inference.DefaultTargetingCandidates
+    let sided = Targeting.TakesSides(Some "Ann", None, Targeting.PlaysSpitefully)
+
+    refused "strategies" "at least one" [] policies
+    refused "targetings" "at least one" strategies []
+    refused "strategies" "Custom Ann" (strategies @ [ Strategy.Custom "Ann" ]) policies
+    refused "targetings" "ChoosesExternally Ann" strategies (policies @ [ Targeting.ChoosesExternally "Ann" ])
+    refused "targetings" (string sided) strategies (policies @ [ sided ])
+
+// A study refuses to continue at an epsilon that is no probability above 0 as
+// it is asked, before it reads a game: at 0 a single choice out of character
+// would rule out every candidate that would not have made it, and above 1 the
+// likelihoods would not be probabilities
+[<Fact>]
+let ``a study refuses to continue at an epsilon that is not above 0 and at most 1`` () =
+    for epsilon in [ 0.0; -0.1; 1.5; nan ] do
+        let error =
+            Assert.Throws<ArgumentException>(fun () -> Study.ContinueWith epsilon [] Study.Nothing |> ignore)
+
+        Assert.Equal("epsilon", error.ParamName)
+        Assert.Contains(string epsilon, error.Message)
+
+// A grid that held a policy twice would give it twice the prior of any other,
+// so a study counts each strategy and policy its grids hold once, in the order
+// they first appear
+[<Fact>]
+let ``a study counts a strategy or policy its grid holds twice once`` () =
+    let strategies = Inference.DefaultStrategyCandidates
+    let policies = Inference.DefaultTargetingCandidates
+
+    let study =
+        Study.OfTimelinesWith (strategies @ strategies) (policies @ [ Targeting.PlaysSpitefully ]) []
+        |> Async.RunSynchronously
+
+    Assert.Equal<Strategy list>(strategies, Study.StrategiesOf study)
+    Assert.Equal<Targeting list>(policies, Study.TargetingsOf study)

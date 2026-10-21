@@ -10,9 +10,10 @@ open Flip7
 // What the test files share: decks and hands built from their cards, a
 // timeline played out and the questions it shows, how Inference models a
 // player it never saw decide or aim and what it makes of the observations of
-// those it did, a decider that notes every question
-// before passing it on, a Random that logs every call made on it, and the
-// generators the properties draw from.
+// those it did, the field that studies and Sage are tested against, studied
+// as it plays and taking sides, a decider that notes every question before
+// passing it on, a Random that logs every call made on it, and the generators
+// the properties draw from.
 
 // A table to seat: each player's name, strategy and targeting
 type Lineup = (string * Strategy * Targeting) list
@@ -76,6 +77,65 @@ let modelsOf (observations: Observation list) : PlayerModel list =
 // strategy changes
 let probabilityOfTarget (targeting: Targeting) (aim: Observation) : float =
     Inference.Likelihood 0.0 Strategy.AlwaysHits targeting aim
+
+// Opponents whose strategies the default candidate grid holds and which ten
+// games tell apart from every other candidate in it, so that a study of them
+// names each one exactly and a replay predicts every answer they give: their
+// targeting is an engine policy, which a replay keeps. Fewer games left Bob's
+// HitUntilScore 24 tied with ChasesFlip7 (25, 6), which only the order of the
+// grid broke
+let bob = "Bob", Strategy.HitUntilScore 24u, Targeting.PlaysSpitefully
+let carol = "Carol", Strategy.HitUntilNumCards 4u, Targeting.ChoosesRandomly
+let dave =
+    "Dave", Strategy.MaximizesExpectedValue, Targeting.PlaysGreedily(0.3, 0.2)
+let erin = "Erin", Strategy.StandsAfterTurn 3u, Targeting.ChoosesRandomly
+let field: Lineup = [ bob; carol; dave; erin ]
+
+// Who sits in Sage's seat in the games Sage studies, which have no Sage
+let standIn =
+    "Sage", Strategy.MaximizesExpectedValue, Targeting.PlaysSpitefully
+
+// Ten games of the field with the stand-in in Sage's seat, studied once for
+// every test that needs them
+let fieldStudy =
+    lazy
+        ([
+            for seed in 1..10 -> Timeline.SimulateWith (Random(100 + seed)) (standIn :: field)
+         ]
+         |> Study.OfTimelines
+         |> Async.RunSynchronously)
+
+// Bob and Carol play as the field's players of the same names do, but under
+// ChoosesExternally and taking sides, as the engine plays it: for Dave and
+// against Sage, and otherwise spitefully. Sage, which used to replay anyone who
+// declared ChoosesExternally as spiteful, fits how they aim from twenty games
+// of the table
+let partisan =
+    Targeting.TakesSides(Some "Dave", Some "Sage", Targeting.PlaysSpitefully)
+
+let partisans: Strategy.Decider =
+    Strategy.Decider.Default
+    |> Strategy.addTargetingStrategy "Partisan" (fun random -> Strategy.Decider.Default.Target random partisan)
+
+let partisanField: Lineup =
+    let takingSides (name, strategy, _) =
+        name, strategy, Targeting.ChoosesExternally "Partisan"
+
+    [ takingSides bob; takingSides carol; dave; erin ]
+
+let partisanStudy =
+    lazy
+        ([
+            for seed in 1..20 -> Timeline.SimulateWithDecider (Random(200 + seed)) partisans (standIn :: partisanField)
+         ]
+         |> Study.OfTimelines
+         |> Async.RunSynchronously)
+
+// How likely a study makes it that a player aims as a targeting
+let aimsAs (targeting: Targeting) (study: Study) (name: string) : float =
+    (Study.ModelOf study name).Value.TargetingPosterior
+    |> List.find (fst >> (=) targeting)
+    |> snd
 
 // A question the engine puts to a decider, with everything it shows the
 // decider besides the question's Random and the game so far

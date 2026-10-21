@@ -1,5 +1,7 @@
 namespace Flip7
 
+open FSharp.Control
+
 /// <summary>
 /// A fitted model of one player: a posterior distribution over candidate
 /// strategies given the hit-or-stand decisions they were observed making, and
@@ -562,3 +564,223 @@ module public Inference =
     /// </summary>
     let public MostLikely (model: PlayerModel) : Strategy * Targeting =
         fst (List.head model.StrategyPosterior), fst (List.head model.TargetingPosterior)
+
+/// <summary>
+/// What Sage has learnt of the players from games already played: the evidence
+/// each player's choices in them carry, their hit-or-stand decisions over a
+/// grid of candidate strategies, Inference.DefaultStrategyCandidates unless the
+/// study was given one, and their aims over a grid of targeting policies that
+/// take no sides, Inference.DefaultTargetingCandidates unless the study was
+/// given one, each played plainly and taking sides among everyone at their
+/// tables, kept by name rather than by declared strategy or targeting, since at
+/// a real table people play under Custom and ChoosesExternally labels and only
+/// their names say who they are. A Sage scores the decisions and aims of the
+/// game it plays over its study's grids too.
+///
+/// Games are studied in sittings, such as a day's games played one after
+/// another: how a player hits or stands and how they otherwise aim are learnt
+/// from every game alike, but the sides they take are carried from one game of
+/// a sitting into the next as Inference.Carry carries them, kept with
+/// probability 0.8, and forgotten when Conclude ends the sitting. A Sage plays
+/// its game as the next of the study's sitting, so conclude a study whose last
+/// games were played on another day. It is immutable, so one study serves any
+/// number of Sages, playing games one after another or all at once.
+/// </summary>
+type public Study =
+    private | Study of Strategies: Strategy list * Targetings: Targeting list * Evidence: Map<string, PlayerEvidence>
+
+module public Study =
+    /// <summary>
+    /// A study of no games over the default grids: it knows nobody.
+    /// </summary>
+    let public Nothing: Study =
+        Study(Inference.DefaultStrategyCandidates, Inference.DefaultTargetingCandidates, Map.empty)
+
+    // How likely a player is to keep the sides they took in one game of a
+    // sitting in the next. Fixed rather than learnt: over sixteen games of a
+    // player who kept their sides throughout, took new ones every game, changed
+    // them halfway or took none, a stickiness learnt from the games themselves
+    // predicted their aims at most 1.3 nats better than 0.8 did
+    [<Literal>]
+    let internal Stickiness = 0.8
+
+    /// <summary>
+    /// Studies more games, played after those a study holds in the order given,
+    /// as more of its sitting: whole games, such as a day's games read with
+    /// Persistence.ReadTimeline. The timelines are read once each, one after
+    /// another, so they may share a Random, and every voluntary decision and
+    /// every aim in them is extracted as Observation.FromTimeline extracts it.
+    /// Each game is scored apart, each player's decisions in it against the
+    /// study's grid of strategies and their aims over its grid of policies,
+    /// each played plainly and taking sides among everyone seated at it, as
+    /// Inference.Evidence scores them for a player who makes each choice out of
+    /// character with probability epsilon, the players in parallel, and what
+    /// the study holds of everyone seated at it from the games before is
+    /// carried into it with Inference.Carry, whether or not it asks them
+    /// anything. A study concluded with Conclude starts a new sitting. It
+    /// raises ArgumentException at the call, before it reads any game, for an
+    /// epsilon that is not above 0 and at most 1.
+    /// </summary>
+    let public ContinueWith (epsilon: float) (timelines: Timeline seq) (study: Study) : Async<Study> =
+        if not (epsilon > 0.0 && epsilon <= 1.0) then
+            invalidArg
+                (nameof epsilon)
+                $"The epsilon is the probability of a choice out of character, above 0 and at most 1, but was {epsilon}"
+
+        async {
+            let (Study(strategies, targetings, studied)) = study
+
+            // Every game in order, as everyone seated at it and every question
+            // it asked them
+            let! games: (string list * Observation array) array =
+                timelines
+                |> AsyncSeq.ofSeq
+                |> AsyncSeq.mapAsync (fun timeline -> async {
+                    let! instants = AsyncSeq.toArrayAsync timeline
+
+                    let! observations =
+                        instants |> AsyncSeq.ofSeq |> Observation.FromTimeline |> AsyncSeq.toArrayAsync
+
+                    let table =
+                        instants
+                        |> Array.tryHead
+                        |> Option.map (fun first -> first.Players |> List.map (fun player -> player.Name))
+                        |> Option.defaultValue []
+
+                    return table, observations
+                })
+                |> AsyncSeq.toArrayAsync
+
+            // What each game shows of everyone seated at it, scored in
+            // parallel, in the order of the games
+            let shown =
+                games
+                |> Array.collect (fun (table, observations) ->
+                    let seated =
+                        table @ [ for observation in observations -> observation.Name ] |> List.distinct
+
+                    [| for name in seated -> seated, name, observations |]
+                )
+                |> Array.Parallel.map (fun (seated, name, observations) ->
+                    seated,
+                    name,
+                    Inference.Evidence epsilon strategies targetings seated name [
+                        for observation in observations do
+                            if observation.Name = name then
+                                observation
+                    ]
+                )
+
+            // Everyone seated at a game is carried into it, even if it never
+            // asks them anything, as a Sage carries everyone at its table, but a
+            // player is studied only once a game shows something of them
+            let evidence =
+                shown
+                |> Array.fold
+                    (fun (evidence: Map<string, PlayerEvidence>) (seated, name, game) ->
+                        match Map.tryFind name evidence with
+                        | Some before ->
+                            let carried = Inference.Carry Stickiness seated before
+                            evidence |> Map.add name (Inference.Combine carried game)
+                        | None when game.Observations > 0 || game.Aims > 0 -> evidence |> Map.add name game
+                        | None -> evidence
+                    )
+                    studied
+
+            return Study(strategies, targetings, evidence)
+        }
+
+    /// <summary>
+    /// Studies whole games, such as every game a household has played in one
+    /// sitting, in the order given, over grids of one's own, as ContinueWith
+    /// studies them with 10% of each choice out of character onto a study that
+    /// knows nobody: a grid of candidate strategies, such as the default grid
+    /// together with strategies a table is known to play between its points,
+    /// which no study over the default grid could ever name, and a grid of
+    /// targeting policies that take no sides, such as the default grid together
+    /// with policies a table is known to aim by, each of which the study plays
+    /// plainly and taking sides every way. A strategy or policy a grid holds
+    /// more than once counts once. Studying no games gives a study over the
+    /// grids that knows nobody. It raises ArgumentException at the call, before
+    /// it reads any game, for an empty grid, for a Custom strategy or a policy
+    /// decided externally, which have no likelihood to fit, and for a policy
+    /// that takes sides, since the study adds every way of taking sides itself.
+    /// </summary>
+    let public OfTimelinesWith
+        (strategies: Strategy list)
+        (targetings: Targeting list)
+        (timelines: Timeline seq)
+        : Async<Study> =
+        if strategies.IsEmpty then
+            invalidArg (nameof strategies) "A study needs at least one candidate strategy"
+
+        if targetings.IsEmpty then
+            invalidArg (nameof targetings) "A study needs at least one targeting policy"
+
+        match strategies |> List.where (fun strategy -> strategy.IsCustom) with
+        | [] -> ()
+        | custom ->
+            let custom = custom |> List.map string |> String.concat "; "
+            invalidArg
+                (nameof strategies)
+                $"The strategies must have a likelihood to fit, but these are decided externally: {custom}"
+
+        match
+            targetings
+            |> List.where (fun targeting -> targeting.IsTakesSides || targeting.IsChoosesExternally)
+        with
+        | [] -> ()
+        | refused ->
+            let refused = refused |> List.map string |> String.concat "; "
+            invalidArg
+                (nameof targetings)
+                $"The targetings must be policies that take no sides, since the study adds every way of taking sides itself, and none decided externally, which have no likelihood to fit, but these are not: {refused}"
+
+        ContinueWith 0.1 timelines (Study(List.distinct strategies, List.distinct targetings, Map.empty))
+
+    /// <summary>
+    /// Studies whole games over the default grids, as OfTimelinesWith studies
+    /// them over grids of one's own.
+    /// </summary>
+    let public OfTimelines (timelines: Timeline seq) : Async<Study> =
+        OfTimelinesWith Inference.DefaultStrategyCandidates Inference.DefaultTargetingCandidates timelines
+
+    /// <summary>
+    /// Ends a study's sitting, as at the end of a day's games: what it holds of
+    /// each player concluded with Inference.Conclude, so the sides they took
+    /// are forgotten while how they otherwise aim and how they hit or stand are
+    /// kept. Games studied onto it with ContinueWith, or played by a Sage that
+    /// studied it, start a new sitting.
+    /// </summary>
+    let public Conclude (study: Study) : Study =
+        let (Study(strategies, targetings, evidence)) = study
+        Study(strategies, targetings, evidence |> Map.map (fun _ evidence -> Inference.Conclude evidence))
+
+    /// <summary>
+    /// The strategies a study scored every decision against.
+    /// </summary>
+    let internal StrategiesOf (study: Study) : Strategy list =
+        let (Study(strategies, _, _)) = study
+        strategies
+
+    /// <summary>
+    /// The targeting policies a study scored every aim over, each played
+    /// plainly and taking sides.
+    /// </summary>
+    let internal TargetingsOf (study: Study) : Targeting list =
+        let (Study(_, targetings, _)) = study
+        targetings
+
+    /// <summary>
+    /// The evidence a study holds of a player, by name.
+    /// </summary>
+    let internal EvidenceOf (study: Study) (name: string) : PlayerEvidence option =
+        let (Study(_, _, evidence)) = study
+        evidence |> Map.tryFind name
+
+    /// <summary>
+    /// What a study makes of a player, by name, or None for a player it never
+    /// saw decide or aim at one of two or more players.
+    /// </summary>
+    let public ModelOf (study: Study) (name: string) : PlayerModel option =
+        EvidenceOf study name |> Option.map Inference.ModelFrom
