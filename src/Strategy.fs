@@ -160,8 +160,10 @@ module public rec Strategy =
                 else
                     Stand
             | Strategy.Custom name ->
-                invalidOp
-                    $"Custom {name} strategy should be added to a Decider via `Strategy.Decider.addHitOrStandStrategy` and then simulated via `Timeline.SimulateWithDecider`, not by DecideHitOrStandWith"
+                raise (
+                    System.InvalidOperationException
+                        $"Custom {name} strategy should be added to a Decider via `Strategy.Decider.addHitOrStandStrategy` and then simulated via `Timeline.SimulateWithDecider`, not by DecideHitOrStandWith"
+                )
             |> async.Return
 
     // The chance of busting on one card at or below which one who takes sides
@@ -193,7 +195,10 @@ module public rec Strategy =
         (candidates: Player list)
         : Choice<Player, Player list> =
         if Targeting.TakesSidesTooDeep targeting then
-            invalidOp $"A targeting takes sides at most {Targeting.SidesLimit} deep, and this one takes them deeper"
+            raise (
+                System.InvalidOperationException
+                    $"A targeting takes sides at most {Targeting.SidesLimit} deep, and this one takes them deeper"
+            )
 
         let self = candidates |> List.tryFind (fun candidate -> candidate.Name = chooser)
 
@@ -255,8 +260,10 @@ module public rec Strategy =
                 | [] -> TargetOf otherwise ask chooser bust candidates
                 | others -> TargetOf otherwise ask chooser bust others
         | Targeting.ChoosesExternally name ->
-            invalidOp
-                $"ChoosesExternally {name} targeting is decided externally: it has to be added to a Decider via `Strategy.addTargetingStrategy` and simulated via `Timeline.SimulateWithDecider`, and has no likelihood to fit"
+            raise (
+                System.InvalidOperationException
+                    $"ChoosesExternally {name} targeting is decided externally: it has to be added to a Decider via `Strategy.addTargetingStrategy` and simulated via `Timeline.SimulateWithDecider`, and has no likelihood to fit"
+            )
 
     /// <summary>
     /// Evaluates a targeting policy using the given source of randomness: which
