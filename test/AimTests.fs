@@ -384,7 +384,8 @@ let private targetingsAt (policies: Targeting list) (aim: Observation) : Targeti
         "Stranger" :: (aim.OtherPlayers |> List.map (fun candidate -> candidate.Name))
 
     let sides =
-        Inference.AimingCandidates [ Targeting.PlaysSpitefully ] names
+        (Inference.Evidence 0.1 [] [ Targeting.PlaysSpitefully ] names aim.Name []).TargetingLogLikelihoods
+        |> List.map fst
         |> List.choose (fun targeting ->
             match targeting with
             | Targeting.TakesSides(favours, opposes, _) -> Some(favours, opposes)
@@ -432,13 +433,14 @@ let ``every targeting's likelihood is one where its decider aims, or even over a
             (Arb.fromGen (Gen.zip genAims (Gen.zip genProbability genProbability)))
             (fun (aims, (banksAbove, deal3sBelow)) ->
                 let policies =
-                    Targeting.PlaysGreedily(banksAbove, deal3sBelow) :: Inference.DefaultTargetings
+                    Targeting.PlaysGreedily(banksAbove, deal3sBelow)
+                    :: Inference.DefaultTargetingCandidates
 
                 let judged = [
                     for aim in aims do
                         for targeting in targetingsAt policies aim ->
                             let likelihood (name: string) =
-                                Inference.ProbabilityOfTarget targeting (givenTo name aim)
+                                probabilityOfTarget targeting (givenTo name aim)
 
                             {
                                 Aim = aim
@@ -506,11 +508,11 @@ let ``fitting a handful of games names each targeting, and a player who takes si
     ]
 
     for targeting in cases do
-        let model = Inference.Fit(aimsAs targeting) |> List.exactlyOne
-        let likeliest, probability = List.head model.AimPosterior
+        let model = modelsOf (aimsAs targeting) |> List.exactlyOne
+        let likeliest, probability = List.head model.TargetingPosterior
         Assert.Equal(targeting, likeliest)
         Assert.True(probability > 0.9, $"{targeting} was fitted as {likeliest} at {probability}")
-        Assert.Equal(1.0, model.AimPosterior |> List.sumBy snd, 1e-12)
+        Assert.Equal(1.0, model.TargetingPosterior |> List.sumBy snd, 1e-12)
 
         // Twenty games show Ann making about fifty aims among two or more
         // candidates, and the fit should rest on no fewer than forty
@@ -521,7 +523,7 @@ let ``fitting a handful of games names each targeting, and a player who takes si
         Assert.Equal(0, model.Observations)
         Assert.True(Double.IsNaN model.HitRate, $"{targeting} was fitted with a hit rate of {model.HitRate}")
 
-        Assert.Equal<(Strategy * float) list>(strategyPrior, model.Posterior)
+        Assert.Equal<(Strategy * float) list>(strategyPrior, model.StrategyPosterior)
 
 // Evidence of each aim on its own, scored over the names of its own table,
 // folds into the evidence of them all scored at once over every name, even as
@@ -571,7 +573,13 @@ let ``aim evidence folded one aim at a time is the evidence scored at once`` () 
     let epsilon = 0.1
 
     let evidenceOf (names: string list) (observations: Observation list) =
-        Inference.EvidenceWith epsilon Inference.DefaultCandidates Inference.DefaultTargetings names "Ann" observations
+        Inference.Evidence
+            epsilon
+            Inference.DefaultStrategyCandidates
+            Inference.DefaultTargetingCandidates
+            names
+            "Ann"
+            observations
 
     let folded =
         aims
@@ -585,13 +593,13 @@ let ``aim evidence folded one aim at a time is the evidence scored at once`` () 
     // And each candidate's sum is the log of the likelihood of every aim,
     // which is the same under any strategy
     Assert.Equal<(Targeting * float) list>(
-        atOnce.AimLogLikelihoods
+        atOnce.TargetingLogLikelihoods
         |> List.map (fun (candidate, _) ->
             candidate,
             aims
             |> List.sumBy (fun (_, aim) -> log (Inference.Likelihood epsilon Strategy.AlwaysHits candidate aim))
         ),
-        atOnce.AimLogLikelihoods
+        atOnce.TargetingLogLikelihoods
     )
 
     Assert.Equal<string list>([ "Abe"; "Ann"; "Bob"; "Carol"; "Eve" ], folded.Names)
@@ -600,8 +608,8 @@ let ``aim evidence folded one aim at a time is the evidence scored at once`` () 
     // Every policy as it is, and with every way of favouring one of the
     // five names, opposing one, or favouring one and opposing another, each
     // once
-    let grid = atOnce.AimLogLikelihoods |> List.map fst
-    Assert.Equal(Inference.DefaultTargetings.Length * (1 + 5 + 5 + 5 * 4), grid.Length)
+    let grid = atOnce.TargetingLogLikelihoods |> List.map fst
+    Assert.Equal(Inference.DefaultTargetingCandidates.Length * (1 + 5 + 5 + 5 * 4), grid.Length)
     Assert.Equal(grid.Length, (List.distinct grid).Length)
 
     // The grid the evidence is given holds policies that take no sides, since
@@ -612,7 +620,13 @@ let ``aim evidence folded one aim at a time is the evidence scored at once`` () 
 
     let refused =
         Assert.Throws<ArgumentException>(fun () ->
-            Inference.EvidenceWith epsilon Inference.DefaultCandidates [ spite; sided ] [] "Ann" (List.map snd aims)
+            Inference.Evidence
+                epsilon
+                Inference.DefaultStrategyCandidates
+                [ spite; sided ]
+                []
+                "Ann"
+                (List.map snd aims)
             |> ignore
         )
 
@@ -628,23 +642,23 @@ let ``with no aims seen, taking sides with a policy weighs as much as playing it
         for count in [ 1; 3; 12 ] do
             let model =
                 Inference.ModelFrom(
-                    Inference.EvidenceWith
+                    Inference.Evidence
                         0.1
-                        Inference.DefaultCandidates
-                        Inference.DefaultTargetings
+                        Inference.DefaultStrategyCandidates
+                        Inference.DefaultTargetingCandidates
                         (List.take count seatNames)
                         "Ann"
                         []
                 )
 
-            for policy in Inference.DefaultTargetings do
+            for policy in Inference.DefaultTargetingCandidates do
                 let plainly =
-                    model.AimPosterior
+                    model.TargetingPosterior
                     |> List.find (fun (targeting, _) -> targeting = policy)
                     |> snd
 
                 let sided =
-                    model.AimPosterior
+                    model.TargetingPosterior
                     |> List.sumBy (fun (targeting, probability) ->
                         match targeting with
                         | Targeting.TakesSides(_, _, otherwise) when otherwise = policy -> probability
@@ -656,6 +670,271 @@ let ``with no aims seen, taking sides with a policy weighs as much as playing it
     ]
 
     Assert.Empty(mismatches)
+
+// ---- Inference: carrying sides from game to game ----
+
+// A table at which Ann favours Bob and opposes Cal, and otherwise aims
+// spitefully
+let private sidingTable: Lineup = [
+    "Ann", Strategy.MaximizesExpectedValue, Targeting.TakesSides(Some "Bob", Some "Cal", Targeting.PlaysSpitefully)
+    "Bob", Strategy.HitUntilScore 20u, Targeting.PlaysSpitefully
+    "Cal", Strategy.PlaysLikeAHuman 16u, Targeting.ChoosesRandomly
+    "Dee", Strategy.HitUntilBustProbability 0.3, Targeting.PlaysSpitefully
+    "Eve", Strategy.HitUntilNumCards 4u, Targeting.ChoosesRandomly
+]
+
+let private namesAt (lineup: Lineup) : string list =
+    lineup |> List.map (fun (name, _, _) -> name)
+
+// Every question a seeded game at a table asks Ann
+let private annAt (lineup: Lineup) (seed: int) : Observation list =
+    Timeline.SimulateWith (Random seed) lineup
+    |> Observation.FromTimeline
+    |> AsyncSeq.filter (fun observation -> observation.Name = "Ann")
+    |> played
+
+// The evidence of Ann's questions at a table, scored over everyone at it
+let private annsEvidenceAt (lineup: Lineup) (observations: Observation list) : PlayerEvidence =
+    Inference.Evidence
+        0.1
+        Inference.DefaultStrategyCandidates
+        Inference.DefaultTargetingCandidates
+        (namesAt lineup)
+        "Ann"
+        observations
+
+// Four games at the siding table, each of which shows Ann aiming at one of two
+// or more players, and one of them where she aims where spite would not
+let private sidingGames =
+    lazy
+        (let games = [ for seed in 1..4 -> annAt sidingTable (500 + seed) ]
+
+         let aims =
+             games
+             |> List.map (List.where (fun aim -> aim.Choice.IsChoice2Of2 && aim.OtherPlayers.Length > 1))
+
+         Assert.True(aims |> List.forall (List.isEmpty >> not), "a game shows Ann never aiming; pick new seeds")
+
+         let unlikeSpite (aim: Observation) =
+             Inference.Likelihood 0.1 Strategy.AlwaysHits Targeting.PlaysSpitefully aim < 0.1
+
+         Assert.True(aims |> List.concat |> List.exists unlikeSpite, "Ann only aims as spite would; pick new seeds")
+
+         games)
+
+// Ann's evidence of a sitting of games at the siding table, carried from each
+// game into the next
+let private sittingOf (stickiness: float) (games: Observation list list) : PlayerEvidence =
+    games
+    |> List.map (annsEvidenceAt sidingTable)
+    |> List.reduce (fun before game ->
+        Inference.Combine (Inference.Carry stickiness (namesAt sidingTable) before) game
+    )
+
+// The policy a candidate plays, taking sides or not
+let private policyOf (candidate: Targeting) : Targeting =
+    match candidate with
+    | Targeting.TakesSides(_, _, otherwise) -> otherwise
+    | policy -> policy
+
+// The posterior of each policy, whatever sides it is played with
+let private policiesIn (evidence: PlayerEvidence) : Map<Targeting, float> =
+    (Inference.ModelFrom evidence).TargetingPosterior
+    |> List.groupBy (fst >> policyOf)
+    |> List.map (fun (policy, candidates) -> policy, List.sumBy snd candidates)
+    |> Map.ofList
+
+// The greatest difference between two maps over the same keys
+let private furthest (expected: Map<'key, float>) (actual: Map<'key, float>) : float =
+    Assert.Equal<'key seq>(expected.Keys, actual.Keys)
+    expected |> Seq.map (fun pair -> abs (pair.Value - actual[pair.Key])) |> Seq.max
+
+// Carrying Ann's evidence into the next game of a sitting keeps each way of
+// taking sides with the given probability: at 1 it keeps every one, and only
+// widens the evidence to any names it never saw, and at 0 it keeps none,
+// leaving the ways of taking sides with each policy weighed as the prior
+// weighs them. At any stickiness it moves only the sides, so how she hits or
+// stands is just as likely after it as before, and over the same names, so is
+// how she otherwise aims
+[<Fact>]
+let ``carrying evidence into the next game moves only the sides, keeping each with the given probability`` () =
+    let names = namesAt sidingTable
+    let before = sittingOf 1.0 sidingGames.Value
+
+    Assert.Equal(before, Inference.Carry 1.0 names before)
+
+    let withFay =
+        ("Fay", Strategy.AlwaysHits, Targeting.ChoosesRandomly) :: sidingTable
+
+    Assert.Equal(Inference.Combine before (annsEvidenceAt withFay []), Inference.Carry 1.0 (namesAt withFay) before)
+
+    for stickiness in [ 0.0; 0.5; 0.8 ] do
+        let carried = Inference.Carry stickiness names before
+        Assert.Equal<(Strategy * float) list>(before.StrategyLogLikelihoods, carried.StrategyLogLikelihoods)
+
+        Assert.Equal<(Strategy * float) list>(
+            before.StrategyLogLikelihoods,
+            (Inference.Carry stickiness (namesAt withFay) before).StrategyLogLikelihoods
+        )
+
+        Assert.Equal(
+            (before.Name, before.Observations, before.Hits, before.Aims, before.Names),
+            (carried.Name, carried.Observations, carried.Hits, carried.Aims, carried.Names)
+        )
+
+        Assert.Equal<Targeting list>(
+            List.map fst before.TargetingLogLikelihoods,
+            List.map fst carried.TargetingLogLikelihoods
+        )
+
+        Assert.InRange(furthest (policiesIn before) (policiesIn carried), 0.0, 1e-12)
+
+    let forgotten =
+        (Inference.ModelFrom(Inference.Carry 0.0 names before)).TargetingPosterior
+
+    for policy in Inference.DefaultTargetingCandidates do
+        let plainly = forgotten |> List.find (fst >> (=) policy) |> snd
+
+        let sided =
+            forgotten
+            |> List.where (fun (candidate, _) -> candidate.IsTakesSides && policyOf candidate = policy)
+            |> List.map snd
+
+        Assert.InRange(plainly - List.sum sided, -1e-12, 1e-12)
+        Assert.InRange(List.max sided - List.min sided, 0.0, 1e-12)
+
+    for stickiness in [ -0.1; 1.1; nan ] do
+        Assert.Throws<ArgumentException>(fun () -> Inference.Carry stickiness names before |> ignore)
+        |> ignore
+
+// Carrying is the exact update for a player who keeps the sides they took in
+// one game in the next with the given probability, and otherwise takes sides
+// afresh as the prior would, among the ways of taking sides with the policy
+// they always play: over three games of a sitting, how Ann aims in the last is
+// as likely as summing over every way she could have taken sides in each game
+// makes it
+[<Fact>]
+let ``carrying from game to game is the exact update for sides kept with the given probability`` () =
+    let stickiness = 0.8
+    let games = List.take 3 sidingGames.Value
+    let grid = (annsEvidenceAt sidingTable []).TargetingLogLikelihoods |> List.map fst |> Array.ofList
+    let names = float sidingTable.Length
+
+    // The prior of a candidate among its policy's
+    let prior =
+        grid
+        |> Array.map (fun candidate ->
+            if candidate.IsTakesSides then
+                0.5 / (names * names + names)
+            else
+                0.5
+        )
+
+    // How likely each game's aims are under each candidate
+    let likelihoods =
+        games
+        |> List.map (fun observations ->
+            grid
+            |> Array.map (fun candidate ->
+                observations
+                |> List.where (fun aim -> aim.Choice.IsChoice2Of2 && aim.OtherPlayers.Length > 1)
+                |> List.fold
+                    (fun product aim -> product * Inference.Likelihood 0.1 Strategy.AlwaysHits candidate aim)
+                    1.0
+            )
+        )
+        |> Array.ofList
+
+    // The chance of taking one candidate's sides in a game after another's
+    let kept (from: int) (into: int) =
+        (if from = into then stickiness else 0.0) + (1.0 - stickiness) * prior[into]
+
+    let exact =
+        let weights =
+            grid
+            |> Array.mapi (fun last candidate ->
+                let within =
+                    [| 0 .. grid.Length - 1 |]
+                    |> Array.where (fun other -> policyOf grid[other] = policyOf candidate)
+
+                let paths =
+                    within
+                    |> Array.sumBy (fun first ->
+                        within
+                        |> Array.sumBy (fun middle ->
+                            prior[first] * likelihoods[0][first] * kept first middle
+                            * likelihoods[1][middle]
+                            * kept middle last
+                        )
+                    )
+
+                paths * likelihoods[2][last]
+            )
+
+        let total = Array.sum weights
+        Array.map2 (fun candidate weight -> candidate, weight / total) grid weights |> Map.ofArray
+
+    let carried =
+        (Inference.ModelFrom(sittingOf stickiness games)).TargetingPosterior |> Map.ofList
+
+    Assert.InRange(furthest exact carried, 0.0, 1e-12)
+
+// Concluding a sitting forgets every way Ann took sides, and with them the
+// names, keeping how she otherwise aims and how she hits or stands. Concluding
+// again changes nothing, and carried into a game, concluded evidence weighs
+// every way of taking sides with a policy as the policy. The next sitting, at
+// a table of different players, judges sides among only its own names, so
+// concluding it once combined onto the first gives what concluding it alone
+// and combining gives. With no aims seen, concluding leaves the prior over
+// the policies
+[<Fact>]
+let ``concluding a sitting forgets the sides and the names, keeping the policies`` () =
+    let sitting = sittingOf 0.8 sidingGames.Value
+    let concluded = Inference.Conclude sitting
+
+    Assert.Empty(concluded.Names)
+    Assert.Equal<Targeting list>(Inference.DefaultTargetingCandidates, List.map fst concluded.TargetingLogLikelihoods)
+    Assert.Equal<(Strategy * float) list>(sitting.StrategyLogLikelihoods, concluded.StrategyLogLikelihoods)
+
+    Assert.Equal(
+        (sitting.Name, sitting.Observations, sitting.Hits, sitting.Aims),
+        (concluded.Name, concluded.Observations, concluded.Hits, concluded.Aims)
+    )
+
+    Assert.InRange(furthest (policiesIn sitting) (policiesIn concluded), 0.0, 1e-12)
+    Assert.Equal(concluded, Inference.Conclude concluded)
+
+    let carried = Inference.Carry 0.8 (namesAt sidingTable) concluded
+    let policies = Map.ofList concluded.TargetingLogLikelihoods
+    Assert.Equal<string list>(List.sort (namesAt sidingTable), carried.Names)
+
+    for candidate, logLikelihood in carried.TargetingLogLikelihoods do
+        Assert.InRange(logLikelihood - policies[policyOf candidate], -1e-12, 1e-12)
+
+    let elsewhere: Lineup = [
+        "Abe", Strategy.AlwaysHits, Targeting.ChoosesRandomly
+        "Ann", Strategy.MaximizesExpectedValue, Targeting.PlaysSpitefully
+        "Fay", Strategy.HitUntilScore 25u, Targeting.PlaysGreedily(0.3, 0.2)
+    ]
+
+    let another = annsEvidenceAt elsewhere (annAt elsewhere 40)
+    Assert.True(another.Aims > 0, "Ann never aimed at one of several players elsewhere; pick a new seed")
+
+    let onto = Inference.Combine concluded another
+    Assert.Equal<string list>(List.sort (namesAt elsewhere), onto.Names)
+
+    Assert.InRange(
+        furthest
+            (Map.ofList (Inference.Combine concluded (Inference.Conclude another)).TargetingLogLikelihoods)
+            (Map.ofList (Inference.Conclude onto).TargetingLogLikelihoods),
+        0.0,
+        1e-12
+    )
+
+    Assert.Equal(
+        Inference.Evidence 0.1 Inference.DefaultStrategyCandidates Inference.DefaultTargetingCandidates [] "Ann" [],
+        Inference.Conclude(annsEvidenceAt sidingTable [])
+    )
 
 // ---- Taking sides ----
 
@@ -698,7 +977,7 @@ let private aimAt (ask: Strategy.Ask) (chooser: Player) (candidates: Player list
 // must agree
 let private pickOf (targeting: Targeting) (aim: Observation) : string =
     let picked = pickedBy targeting aim
-    Assert.Equal(1.0, Inference.ProbabilityOfTarget targeting (givenTo picked aim))
+    Assert.Equal(1.0, probabilityOfTarget targeting (givenTo picked aim))
     picked
 
 let private ann = player "Ann" 10u []
@@ -835,7 +1114,7 @@ let ``taking sides with nobody aims as otherwise would`` () =
 
                 [
                     for aim in aims do
-                        for otherwise in Targeting.PlaysGreedily(0.25, 0.15) :: Inference.DefaultTargetings ->
+                        for otherwise in Targeting.PlaysGreedily(0.25, 0.15) :: Inference.DefaultTargetingCandidates ->
                             aimedBy (Targeting.TakesSides(None, None, otherwise)) aim = aimedBy otherwise aim
                 ]
                 |> List.forall id
@@ -882,7 +1161,7 @@ let ``taking sides and otherwise choosing externally raises in the engine's deci
     |> ignore
 
     Assert.Throws<InvalidOperationException>(fun () ->
-        Inference.ProbabilityOfTarget sides (givenTo "Bob" (aimAt Strategy.Ask.WhoToFreeze ann showing))
+        probabilityOfTarget sides (givenTo "Bob" (aimAt Strategy.Ask.WhoToFreeze ann showing))
         |> ignore
     )
     |> ignore
@@ -916,14 +1195,11 @@ let ``the likelihood reads one who takes sides three deep, and refuses four`` ()
     let aimed = givenTo "Dan" freeze
 
     let refused =
-        Assert.Throws<InvalidOperationException>(fun () -> Inference.ProbabilityOfTarget four aimed |> ignore)
+        Assert.Throws<InvalidOperationException>(fun () ->
+            Inference.Likelihood 0.1 Strategy.AlwaysHits four aimed |> ignore
+        )
 
     Assert.Contains("at most 3 deep", refused.Message)
-
-    Assert.Throws<InvalidOperationException>(fun () ->
-        Inference.Likelihood 0.1 Strategy.AlwaysHits four aimed |> ignore
-    )
-    |> ignore
 
 // The end-of-game summary prints a fitted targeting as it is written, so a
 // player who takes sides must read as whom they favour and whom they oppose,

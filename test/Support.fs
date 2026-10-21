@@ -9,7 +9,8 @@ open Flip7
 
 // What the test files share: decks and hands built from their cards, a
 // timeline played out and the questions it shows, how Inference models a
-// player it never saw decide or aim, a decider that notes every question
+// player it never saw decide or aim and what it makes of the observations of
+// those it did, a decider that notes every question
 // before passing it on, a Random that logs every call made on it, and the
 // generators the properties draw from.
 
@@ -45,15 +46,36 @@ let observationsOf (timeline: Instant list) : Observation list =
 // How Inference models a player never seen decide: by the prior, even over
 // every strategy of the default grid
 let strategyPrior: (Strategy * float) list =
-    Inference.DefaultCandidates
-    |> List.map (fun candidate -> candidate, 1.0 / float Inference.DefaultCandidates.Length)
+    Inference.DefaultStrategyCandidates
+    |> List.map (fun candidate -> candidate, 1.0 / float Inference.DefaultStrategyCandidates.Length)
 
 // How Inference models a player never seen aim at two or more players: by the
 // prior, which over nobody to take sides with is even over every policy of the
 // default grid, none of which takes sides
 let aimPrior: (Targeting * float) list =
-    Inference.DefaultTargetings
-    |> List.map (fun targeting -> targeting, 1.0 / float Inference.DefaultTargetings.Length)
+    Inference.DefaultTargetingCandidates
+    |> List.map (fun targeting -> targeting, 1.0 / float Inference.DefaultTargetingCandidates.Length)
+
+// The evidence a player's observations carry at the default rate of
+// out-of-character choices, over the default grids and the names their aims
+// were among, as though they were of one game
+let evidenceOf (name: string) (observations: Observation list) : PlayerEvidence =
+    Inference.Evidence 0.1 Inference.DefaultStrategyCandidates Inference.DefaultTargetingCandidates [] name observations
+
+// The model of each player some observations show deciding or aiming at one
+// of two or more players, from their own observations alone
+let modelsOf (observations: Observation list) : PlayerModel list =
+    observations
+    |> List.groupBy (fun observation -> observation.Name)
+    |> List.map (fun (name, theirs) -> evidenceOf name theirs)
+    |> List.where (fun evidence -> evidence.Observations > 0 || evidence.Aims > 0)
+    |> List.map Inference.ModelFrom
+
+// The probability a targeting gives the target of an aim: the aim's
+// likelihood under a player who never aims out of character, which no
+// strategy changes
+let probabilityOfTarget (targeting: Targeting) (aim: Observation) : float =
+    Inference.Likelihood 0.0 Strategy.AlwaysHits targeting aim
 
 // A question the engine puts to a decider, with everything it shows the
 // decider besides the question's Random and the game so far
