@@ -727,9 +727,7 @@ let private sidingGames =
 let private sittingOf (stickiness: float) (games: Observation list list) : PlayerEvidence =
     games
     |> List.map (annsEvidenceAt sidingTable)
-    |> List.reduce (fun before game ->
-        Inference.Combine (Inference.Carry stickiness (namesAt sidingTable) before) game
-    )
+    |> List.reduce (fun before game -> Inference.Combine (Inference.Carry stickiness (namesAt sidingTable) before) game)
 
 // The policy a candidate plays, taking sides or not
 let private policyOf (candidate: Targeting) : Targeting =
@@ -763,8 +761,7 @@ let ``carrying evidence into the next game moves only the sides, keeping each wi
 
     Assert.Equal(before, Inference.Carry 1.0 names before)
 
-    let withFay =
-        ("Fay", Strategy.AlwaysHits, Targeting.ChoosesRandomly) :: sidingTable
+    let withFay = ("Fay", Strategy.AlwaysHits, Targeting.ChoosesRandomly) :: sidingTable
 
     Assert.Equal(Inference.Combine before (annsEvidenceAt withFay []), Inference.Carry 1.0 (namesAt withFay) before)
 
@@ -817,7 +814,10 @@ let ``carrying evidence into the next game moves only the sides, keeping each wi
 let ``carrying from game to game is the exact update for sides kept with the given probability`` () =
     let stickiness = 0.8
     let games = List.take 3 sidingGames.Value
-    let grid = (annsEvidenceAt sidingTable []).TargetingLogLikelihoods |> List.map fst |> Array.ofList
+    let grid =
+        (annsEvidenceAt sidingTable []).TargetingLogLikelihoods
+        |> List.map fst
+        |> Array.ofList
     let names = float sidingTable.Length
 
     // The prior of a candidate among its policy's
@@ -862,7 +862,9 @@ let ``carrying from game to game is the exact update for sides kept with the giv
                     |> Array.sumBy (fun first ->
                         within
                         |> Array.sumBy (fun middle ->
-                            prior[first] * likelihoods[0][first] * kept first middle
+                            prior[first]
+                            * likelihoods[0][first]
+                            * kept first middle
                             * likelihoods[1][middle]
                             * kept middle last
                         )
@@ -872,10 +874,12 @@ let ``carrying from game to game is the exact update for sides kept with the giv
             )
 
         let total = Array.sum weights
-        Array.map2 (fun candidate weight -> candidate, weight / total) grid weights |> Map.ofArray
+        Array.map2 (fun candidate weight -> candidate, weight / total) grid weights
+        |> Map.ofArray
 
     let carried =
-        (Inference.ModelFrom(sittingOf stickiness games)).TargetingPosterior |> Map.ofList
+        (Inference.ModelFrom(sittingOf stickiness games)).TargetingPosterior
+        |> Map.ofList
 
     Assert.InRange(furthest exact carried, 0.0, 1e-12)
 

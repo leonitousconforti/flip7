@@ -456,7 +456,7 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
         Strategy.Decider.Default
         |> Strategy.addTargetingStrategy
             terminalPrompt
-            (fun _random ask chooser candidates finished decks -> async {
+            (fun _random _history ask chooser candidates finished decks -> async {
                 let deck, discards = decks
 
                 dispatch (
@@ -475,11 +475,11 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
                 | Quitting -> return raise (QuitException())
                 // The engine is suspended at this one ask, and the picker is
                 // the only thing the keyboard can answer it with
-                | decision -> return raise (InvalidOperationException $"answered a target ask with {decision}")
+                | decision -> return invalidOp $"answered a target ask with {decision}"
             })
         |> Strategy.addHitOrStandStrategy
             terminalPrompt
-            (fun _random round turn player others finished decks -> async {
+            (fun _random _history round turn player others finished decks -> async {
                 let deck, discards = decks
 
                 dispatch (
@@ -499,7 +499,7 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
                 | Answered decision -> return decision
                 | Forked splice -> return raise (Editor.EditException splice)
                 | Quitting -> return raise (QuitException())
-                | decision -> return raise (InvalidOperationException $"answered a hit-or-stand ask with {decision}")
+                | decision -> return invalidOp $"answered a hit-or-stand ask with {decision}"
             })
 
     // The driver: drains the engine to disk until the game ends on its own. A
@@ -509,16 +509,24 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
     let drive (dispatch: Msg -> unit) : Task<unit> =
         let decide = decider dispatch
 
+        // Every instant drained so far, newest first, so that a game continued
+        // after an edit shows its deciders the whole game rather than only
+        // what came after the edit
+        let mutable drained: Instant list = []
+
         let rec drain (timeline: Timeline) : Async<unit> = async {
             try
                 do!
                     timeline
                     |> Persistence.WriteTimelineLazyFrom directory written
-                    |> AsyncSeq.iter (fun _ -> written <- written + 1)
+                    |> AsyncSeq.iter (fun instant ->
+                        drained <- instant :: drained
+                        written <- written + 1
+                    )
             with
             | :? QuitException -> dispatch Quitted
             | :? Editor.EditException as edit ->
-                let fork = Editor.Fork random decide edit.Splice
+                let fork = Editor.Fork random decide (List.rev drained) edit.Splice
                 return! drain fork
         }
 

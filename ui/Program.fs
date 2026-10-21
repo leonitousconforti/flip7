@@ -44,10 +44,8 @@ type public PlayArgs =
     interface IArgParserTemplate with
         member this.Usage =
             match this with
-            | PlayArgs.Names _ ->
-                "one to five human names, none of them an AI's regardless of case; Sage and then naive bots drawn from ten, each under a name of its own that it keeps from game to game, fill the remaining seats"
-            | PlayArgs.Seed _ ->
-                "seed for the lineup and the cards: with the same names in the same order, a seed deals the same lineup and first cards again; when not given, one is drawn and printed at the end"
+            | PlayArgs.Names _ -> "one to five human names; AIs fill the remaining seats"
+            | PlayArgs.Seed _ -> "seed for the game's randomness, so the run is reproducible"
             | PlayArgs.Pace _ -> "milliseconds between dealt instants"
 
 type public Arguments =
@@ -60,7 +58,7 @@ type public Arguments =
             match this with
             | Replay _ -> "replay a previously recorded game"
             | Simulate _ -> "simulate a full game and scrub through it as it unfolds"
-            | Play _ -> "play interactively; Sage and naive bots fill the seats the humans leave open"
+            | Play _ -> "play interactively; AIs fill the seats the humans leave open"
 
 let parseSimulatePlayers (simulate: ParseResults<SimulateArgs>) =
     simulate.GetResults <@ SimulateArgs.Player @>
@@ -88,11 +86,10 @@ let parseSimulatePlayers (simulate: ParseResults<SimulateArgs>) =
     )
 
 // Every mode shares the same console lifecycle - cleared and cursor hidden on
-// the way in, cleared and cursor restored on the way out, even on a crash - and
-// this is the one place the program blocks: every mode is async all the way
-// down to here. What a mode returns is handed back once the console is cleared,
-// so that anything it has to say outlives the screen
-let private withConsole (run: Async<'result>) : 'result =
+// the way in, cleared and cursor restored on the way out, even on a crash -
+// and this is the one place the program blocks: every mode is async all the
+// way down to here
+let private withConsole (run: Async<unit>) : int =
     Diagnostics.Debug.Assert(
         Console.WindowWidth = 80 && Console.WindowHeight = 24,
         "Console window should be 80x24, please resize it."
@@ -101,9 +98,9 @@ let private withConsole (run: Async<'result>) : 'result =
     try
         Console.Clear()
         Console.CursorVisible <- false
-        let result = Async.RunSynchronously run
+        Async.RunSynchronously run
         Console.Clear()
-        result
+        0
     finally
         Console.CursorVisible <- true
 
@@ -120,20 +117,17 @@ let main args =
         let pace = replay.TryGetResult <@ ReplayArgs.Pace @>
         let cacheCapacity = replay.TryGetResult <@ ReplayArgs.CacheCapacity @>
         withConsole (Replay.Run directory directory pace cacheCapacity)
-        0
     | Some(Simulate simulate) ->
         let players = parseSimulatePlayers simulate
         let seed = simulate.TryGetResult <@ SimulateArgs.Seed @>
         let pace = simulate.TryGetResult <@ SimulateArgs.Pace @>
         let cacheCapacity = simulate.TryGetResult <@ SimulateArgs.CacheCapacity @>
         withConsole (Simulate.Run players seed pace cacheCapacity)
-        0
     | Some(Play play) ->
         let names = play.GetResult <@ PlayArgs.Names @>
         let seed = play.TryGetResult <@ PlayArgs.Seed @>
         let pace = play.TryGetResult <@ PlayArgs.Pace @>
-        withConsole (Play.Run names seed pace) |> List.iter (printfn "%s")
-        0
+        withConsole (Play.Run names seed pace)
     | None ->
         eprintfn "%s" (parser.PrintUsage())
         1
