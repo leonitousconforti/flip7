@@ -451,10 +451,9 @@ let ``studying the field names every opponent's strategy and targeting`` () =
 
 // Games read lazily off one Random are the games that Random plays one after
 // another only if the study reads each once, in order. Every player is then
-// scored exactly as Inference scores each game over everyone at the table,
-// with as many choices out of character as the study was continued with,
-// carrying the games before into each next one, since both sum the same terms
-// in the same order
+// scored exactly as Inference scores each game over everyone at the table, at
+// the epsilon the study was continued at, carrying the games before into each
+// next one, since both sum the same terms in the same order
 [<Fact>]
 let ``a study reads its games once each, in order, and scores them as Inference does`` () =
     let table = standIn :: field
@@ -667,18 +666,22 @@ let ``a study refuses an empty grid, a strategy or policy decided externally, or
     refused "targetings" "ChoosesExternally Ann" strategies (policies @ [ Targeting.ChoosesExternally "Ann" ])
     refused "targetings" (string sided) strategies (policies @ [ sided ])
 
-// A study refuses to continue at an epsilon that is no probability above 0 as
-// it is asked, before it reads a game: at 0 a single choice out of character
+// A study continues at an epsilon above 0 and at most 1, and refuses any other
+// as it is asked, before it reads a game: at 0 a single choice out of character
 // would rule out every candidate that would not have made it, and above 1 the
-// likelihoods would not be probabilities
+// likelihoods would not be probabilities. At 1 every choice is out of
+// character, which is still a probability. The refusal shows the epsilon as
+// an interpolated string writes it, in the machine's culture
 [<Fact>]
-let ``a study refuses to continue at an epsilon that is not above 0 and at most 1`` () =
+let ``a study continues only at an epsilon above 0 and at most 1`` () =
+    Study.ContinueWith 1.0 [] Study.Nothing |> Async.RunSynchronously |> ignore
+
     for epsilon in [ 0.0; -0.1; 1.5; nan ] do
         let error =
             Assert.Throws<ArgumentException>(fun () -> Study.ContinueWith epsilon [] Study.Nothing |> ignore)
 
         Assert.Equal("epsilon", error.ParamName)
-        Assert.Contains(string epsilon, error.Message)
+        Assert.Contains($"{epsilon}", error.Message)
 
 // A grid that held a policy twice would give it twice the prior of any other,
 // so a study counts each strategy and policy its grids hold once, in the order

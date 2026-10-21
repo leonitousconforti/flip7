@@ -91,7 +91,8 @@ let dave =
 let erin = "Erin", Strategy.StandsAfterTurn 3u, Targeting.ChoosesRandomly
 let field: Lineup = [ bob; carol; dave; erin ]
 
-// Who sits in Sage's seat in the games Sage studies, which have no Sage
+// Who sits in the seat named Sage in the games of the field that are studied,
+// which have no Sage
 let standIn =
     "Sage", Strategy.MaximizesExpectedValue, Targeting.PlaysSpitefully
 
@@ -107,9 +108,9 @@ let fieldStudy =
 
 // Bob and Carol play as the field's players of the same names do, but under
 // ChoosesExternally and taking sides, as the engine plays it: for Dave and
-// against Sage, and otherwise spitefully. Sage, which used to replay anyone who
-// declared ChoosesExternally as spiteful, fits how they aim from twenty games
-// of the table
+// against Sage, and otherwise spitefully. A study of twenty games of the table
+// fits how they aim, and Sage replays them as it fitted them, where it used to
+// replay anyone who declared ChoosesExternally as spiteful
 let partisan =
     Targeting.TakesSides(Some "Dave", Some "Sage", Targeting.PlaysSpitefully)
 

@@ -661,7 +661,7 @@ let ``a Sage scores the game it plays over its study's grids`` () =
         "nobody in the field aims at one of several players in seed 5's game; pick a new seed"
     )
 
-    for name, _, _ in field do
+    for name in names do
         let scored =
             Inference.Combine
                 (Inference.Carry Study.Stickiness names (Study.EvidenceOf own name).Value)
@@ -669,6 +669,59 @@ let ``a Sage scores the game it plays over its study's grids`` () =
             |> Inference.ModelFrom
 
         Assert.Equal(scored, (sage.ModelOf name).Value)
+
+// A Sage plays its game as the next of its study's sitting: as the game
+// starts, it carries what it studied of everyone into it, so Bob most likely
+// takes the sides he took throughout the study, though no longer as surely as
+// at its end, since he keeps them from one game to the next only with
+// probability 0.8
+[<Fact>]
+let ``Sage carries the sides everyone took in its study into its game`` () =
+    let sage = Sage("Sage", study = partisanStudy.Value, budget = budget)
+    Assert.Equal(Study.ModelOf partisanStudy.Value "Bob", sage.ModelOf "Bob")
+
+    // The first instant of a game of the field, with Sage seated as Sage
+    // requires of its seats
+    let seated =
+        let first =
+            Timeline.SimulateWithDecider (Random 1) partisans (standIn :: partisanField)
+            |> AsyncSeq.take 1
+            |> played
+            |> List.exactlyOne
+
+        {
+            first with
+                Players =
+                    first.Players
+                    |> List.map (fun player ->
+                        if player.Name = "Sage" then
+                            {
+                                player with
+                                    Strategy = Strategy.Custom "Sage"
+                                    Targeting = Targeting.ChoosesExternally "Sage"
+                            }
+                        else
+                            player
+                    )
+        }
+
+    sage.Follow [ seated ]
+
+    let table = seated.Players |> List.map (fun player -> player.Name)
+
+    let carried =
+        Inference.ModelFrom(Inference.Carry Study.Stickiness table (Study.EvidenceOf partisanStudy.Value "Bob").Value)
+
+    Assert.Equal(carried, (sage.ModelOf "Bob").Value)
+
+    let likeliest, probability = List.head carried.TargetingPosterior
+    Assert.Equal(partisan, likeliest)
+    // Carried, a way of taking sides keeps its weight with probability 0.8 and
+    // is otherwise chosen afresh at its prior, half its policy's weight shared
+    // among the n^2 + n ways over the table's names
+    let ways = float (table.Length * table.Length + table.Length)
+    Assert.InRange(probability, 0.5, Study.Stickiness + (1.0 - Study.Stickiness) / (2.0 * ways))
+    Assert.True(probability < aimsAs partisan partisanStudy.Value "Bob")
 
 // ---- playing a plan ----
 
@@ -920,59 +973,6 @@ let ``Sage replays players who take sides as it fitted them, and its plan forese
             )
 
         Assert.True(not unlikeSpite.IsEmpty, $"{game}: Bob and Carol aimed as spite would; pick a new seed")
-
-// A Sage plays its game as the next of its study's sitting: as the game
-// starts, it carries what it studied of everyone into it, so Bob most likely
-// takes the sides he took throughout the study, though no longer as surely as
-// at its end, since he keeps them from one game to the next only with
-// probability 0.8
-[<Fact>]
-let ``Sage carries the sides everyone took in its study into its game`` () =
-    let sage = Sage("Sage", study = partisanStudy.Value, budget = budget)
-    Assert.Equal(Study.ModelOf partisanStudy.Value "Bob", sage.ModelOf "Bob")
-
-    // The first instant of a game of the field, with Sage seated as Sage
-    // requires of its seats
-    let seated =
-        let first =
-            Timeline.SimulateWithDecider (Random 1) partisans (standIn :: partisanField)
-            |> AsyncSeq.take 1
-            |> played
-            |> List.exactlyOne
-
-        {
-            first with
-                Players =
-                    first.Players
-                    |> List.map (fun player ->
-                        if player.Name = "Sage" then
-                            {
-                                player with
-                                    Strategy = Strategy.Custom "Sage"
-                                    Targeting = Targeting.ChoosesExternally "Sage"
-                            }
-                        else
-                            player
-                    )
-        }
-
-    sage.Follow [ seated ]
-
-    let table = seated.Players |> List.map (fun player -> player.Name)
-
-    let carried =
-        Inference.ModelFrom(Inference.Carry Study.Stickiness table (Study.EvidenceOf partisanStudy.Value "Bob").Value)
-
-    Assert.Equal(carried, (sage.ModelOf "Bob").Value)
-
-    let likeliest, probability = List.head carried.TargetingPosterior
-    Assert.Equal(partisan, likeliest)
-    // Carried, a way of taking sides keeps its weight with probability 0.8 and
-    // is otherwise chosen afresh at its prior, half its policy's weight shared
-    // among the n^2 + n ways over the table's names
-    let ways = float (table.Length * table.Length + table.Length)
-    Assert.InRange(probability, 0.5, Study.Stickiness + (1.0 - Study.Stickiness) / (2.0 * ways))
-    Assert.True(probability < aimsAs partisan partisanStudy.Value "Bob")
 
 [<Fact>]
 let ``a replay aims as declared, or as Sage made of one who aims as they please, never at random if they take sides``

@@ -575,7 +575,8 @@ module public Inference =
 /// tables, kept by name rather than by declared strategy or targeting, since at
 /// a real table people play under Custom and ChoosesExternally labels and only
 /// their names say who they are. A Sage scores the decisions and aims of the
-/// game it plays over its study's grids too.
+/// game it plays over its study's grids too, with 10% of each choice out of
+/// character, whatever epsilon the study was continued at.
 ///
 /// Games are studied in sittings, such as a day's games played one after
 /// another: how a player hits or stands and how they otherwise aim are learnt
@@ -618,8 +619,8 @@ module public Study =
     /// the study holds of everyone seated at it from the games before is
     /// carried into it with Inference.Carry, whether or not it asks them
     /// anything. A study concluded with Conclude starts a new sitting. It
-    /// raises ArgumentException at the call, before it reads any game, for an
-    /// epsilon that is not above 0 and at most 1.
+    /// raises ArgumentException at the call, before it reads any game, unless
+    /// epsilon is above 0 and at most 1.
     /// </summary>
     let public ContinueWith (epsilon: float) (timelines: Timeline seq) (study: Study) : Async<Study> =
         if not (epsilon > 0.0 && epsilon <= 1.0) then
@@ -672,8 +673,8 @@ module public Study =
                 )
 
             // Everyone seated at a game is carried into it, even if it never
-            // asks them anything, as a Sage carries everyone at its table, but a
-            // player is studied only once a game shows something of them
+            // asks them anything, as a Sage carries everyone at its table, but
+            // a player is studied only once a game shows something of them
             let evidence =
                 shown
                 |> Array.fold
