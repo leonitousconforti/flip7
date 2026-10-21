@@ -628,7 +628,9 @@ let ``a Sage scores the game it plays over its study's grids`` () =
         Inference.DefaultTargetingCandidates @ [ Targeting.PlaysGreedily(0.0, 0.2) ]
 
     let own =
-        [ for seed in 1..10 -> Timeline.SimulateWith (Random(100 + seed)) (standIn :: field) ]
+        [
+            for seed in 1..10 -> Timeline.SimulateWith (Random(100 + seed)) (standIn :: field)
+        ]
         |> Study.OfTimelinesWith strategies policies
         |> Async.RunSynchronously
         |> Study.Conclude
@@ -643,7 +645,8 @@ let ``a Sage scores the game it plays over its study's grids`` () =
 
     let names = lineup |> List.map (fun (name, _, _) -> name)
     let observations = observationsOf game
-    let theirs (name: string) = observations |> List.where (fun observation -> observation.Name = name)
+    let theirs (name: string) =
+        observations |> List.where (fun observation -> observation.Name = name)
 
     Assert.True(
         field

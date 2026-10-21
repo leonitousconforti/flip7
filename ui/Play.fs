@@ -560,7 +560,8 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
 
                 let sittings = timelines |> Array.choose id |> Array.groupBy (fst >> dayOf)
                 let over, current = sittings |> Array.partition (fun (day, _) -> day <> today)
-                let! nobody = Study.OfTimelinesWith strategies Inference.DefaultTargetingCandidates []
+                let! nobody =
+                    Study.OfTimelinesWith strategies Inference.DefaultTargetingCandidates []
 
                 let! studied =
                     over
