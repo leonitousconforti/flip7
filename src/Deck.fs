@@ -194,7 +194,7 @@ module public Deck =
         // Two empty piles are refused rather than shuffled into each other
         // forever. A draw of more cards than the piles hold ends up here too
         if IsEmpty deck && IsEmpty discards then
-            raise (System.InvalidOperationException "Cannot draw a card: the deck and the discards are both empty")
+            invalidOp "Cannot draw a card: the deck and the discards are both empty"
 
         if IsEmpty deck then
             DrawWith random (discards, Empty) count

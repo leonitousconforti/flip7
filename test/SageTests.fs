@@ -39,6 +39,19 @@ let private seated
         )
         decider
 
+// Shows a Sage the game so far the only way it follows a game, through a
+// question one of its seats is asked with it: the named seat is asked to aim a
+// freeze with no choice but itself, which Sage answers without searching
+let private show (sage: Sage) (seat: string) (history: Instant seq) : unit =
+    let _, target = sage.Strategies[seat]
+
+    let chooser =
+        Player.Make(seat, Strategy.Custom seat, targeting = Targeting.ChoosesExternally seat)
+
+    target (Random 0) history Strategy.Ask.WhoToFreeze chooser [ chooser ] [] (Deck.Full, Deck.Empty)
+    |> Async.RunSynchronously
+    |> ignore
+
 // ---- seating Sage ----
 
 // Passes every question on to the decider, noting for each one asked of a seat
@@ -98,7 +111,7 @@ let ``the table's decider answers everyone else, and Sage only its seat's questi
     let noting (aim: bool) (name: string) (random: Random) (history: Instant seq) =
         handed.Add(name, random, history)
         let shown = Sage("Sage", study = fieldStudy.Value)
-        shown.Follow history
+        show shown "Sage" history
         models.Add(aim, read shown, read sage)
 
     let noted =
@@ -398,34 +411,13 @@ let ``in a game no fresh seed dealt, Sage answers unaided throughout`` () =
 
 // ---- what Sage learns of the players ----
 
-// Sage follows a game only through its seat's questions, so whatever the game
-// shows after the last of them counts only once Sage is shown the finished
-// game, and then Sage reads everyone exactly as one shown the whole game at
-// once does, since both take in the same instants in the same order
-[<Fact>]
-let ``shown the finished game, Sage reads everyone by all of it`` () =
-    let sage = studiedSage ()
-
-    let timeline =
-        Timeline.SimulateWithDecider (Random 5) (seated sage.Strategies Strategy.Decider.Default) lineup
-        |> played
-
-    let read (sage: Sage) = [ for name, _, _ in lineup -> sage.ModelOf name ]
-
-    let asked = read sage
-    sage.Follow timeline
-    let shown = Sage("Sage", study = fieldStudy.Value)
-    shown.Follow timeline
-
-    Assert.NotEqual<PlayerModel option list>(asked, read sage)
-    Assert.Equal<PlayerModel option list>(read shown, read sage)
-
 // Before a game Sage knows everyone as it studied them. Sage follows a game
 // only through its seat's questions, so by the end of one it has added to
 // that at most all of the decisions each opponent made in it, and of their
 // aims at one of two or more players, and at least one of each where the game
 // showed any, since its seat was asked something after each opponent's first.
-// Shown the finished game, it has added every one of them
+// Its seat asked something with the finished game, it has added every one of
+// them
 [<Fact>]
 let ``Sage adds every decision and aim a game shows to what it studied`` () =
     let sage = studiedSage ()
@@ -465,8 +457,9 @@ let ``Sage adds every decision and aim a game shows to what it studied`` () =
         Assert.InRange(model.Observations, studied.Observations + min 1 decided, studied.Observations + decided)
         Assert.InRange(model.Aims, studied.Aims + min 1 aimed, studied.Aims + aimed)
 
-    // Shown the finished game, Sage has added every one of them
-    sage.Follow timeline
+    // Its seat asked something with the finished game, Sage has added every
+    // one of them
+    show sage "Sage" timeline
 
     for name, _, _ in field do
         let decided, aimed = shown name
@@ -541,7 +534,7 @@ let ``an aim with no choice of players shows nothing of how a player aims`` () =
     // What a Sage for Ann shown a game makes of Bob
     let following (timeline: Instant list) : PlayerModel option =
         let sage = Sage("Ann")
-        sage.Follow timeline
+        show sage "Ann" timeline
         sage.ModelOf "Bob"
 
     let quitStudy = Study.OfTimelines [ AsyncSeq.ofSeq quit ] |> Async.RunSynchronously
@@ -584,7 +577,7 @@ let ``a player seen only aiming is modelled once seen aiming at one of two or mo
 
         let study = Study.OfTimelines [ AsyncSeq.ofSeq instants ] |> Async.RunSynchronously
         let sage = Sage("Ann")
-        sage.Follow instants
+        show sage "Ann" instants
 
         let bobs =
             observationsOf instants
@@ -646,7 +639,7 @@ let ``a Sage scores the game it plays over its study's grids`` () =
         Timeline.SimulateWithDecider (Random 5) (seated sage.Strategies Strategy.Decider.Default) lineup
         |> played
 
-    sage.Follow game
+    show sage "Sage" game
 
     let names = lineup |> List.map (fun (name, _, _) -> name)
     let observations = observationsOf game
@@ -705,7 +698,7 @@ let ``Sage carries the sides everyone took in its study into its game`` () =
                     )
         }
 
-    sage.Follow [ seated ]
+    show sage "Sage" [ seated ]
 
     let table = seated.Players |> List.map (fun player -> player.Name)
 
@@ -830,12 +823,13 @@ let private follows (game: string) (plan: Plan) (asked: Asked seq) : unit =
 // dropped, as it is once the game is edited, and once Sage has made a plan,
 // so that the seed is pinned, it searches at the next hit-or-stand question,
 // which the new plan starts with. An aim is never searched. Problems are
-// every way the solved seats' answers broke those rules, and Strays counts the
-// hit-or-stand questions the plan still expected next once the game had gone
-// otherwise than it foresaw, where only the events show that the plan is no
-// longer the game's. The rules mirror how Sage follows a game and answers
-// (follow and the strategies it registers, in src/Sage.fs), so a change to
-// those must be made here too
+// every way the solved seats' answers broke those rules, and every plan whose
+// count of answers played differs from how many the rules played of it, and
+// Strays counts the hit-or-stand questions the plan still expected next once
+// the game had gone otherwise than it foresaw, where only the events show that
+// the plan is no longer the game's. The rules mirror how Sage follows a game
+// and answers (follow and the strategies it registers, in src/Sage.fs), so a
+// change to those must be made here too
 type private Audit = { Problems: string list; Strays: int }
 
 let private audit (plans: Plan list) (asked: Asked seq) : Audit =
@@ -845,6 +839,8 @@ let private audit (plans: Plan list) (asked: Asked seq) : Audit =
     let mutable line: Answer list = []
     let mutable foreseen: Event array = [||]
     let mutable forkedAt = 0
+    let played = Array.zeroCreate<int> plans.Length
+    let mutable playing = -1
 
     for question in asked do
         if question.Edited then
@@ -877,6 +873,7 @@ let private audit (plans: Plan list) (asked: Asked seq) : Audit =
                 problems.Add $"{question.Answer}, where the plan has {List.head line}"
 
             line <- List.tail line
+            played[playing] <- played[playing] + 1
         | Answer.Aim _ ->
             if made <> 0 then
                 problems.Add $"{question.Answer}, searched at an aim"
@@ -889,12 +886,18 @@ let private audit (plans: Plan list) (asked: Asked seq) : Audit =
                 line <- rest
                 foreseen <- Array.ofList plans[question.After - 1].Foresees
                 forkedAt <- question.Shown.Length
+                playing <- question.After - 1
+                played[playing] <- 1
             | 1, _ ->
                 problems.Add $"{question.Answer}, though the plan made there starts otherwise"
                 line <- []
             | _ ->
                 problems.Add $"{question.Answer}, after making {made} plans where the plan was left"
                 line <- []
+
+    for index, plan in Array.indexed plans do
+        if plan.Played <> played[index] then
+            problems.Add $"plan {index + 1} counts {plan.Played} answers played, where the game played {played[index]}"
 
     { Problems = List.ofSeq problems; Strays = strays }
 
@@ -1315,7 +1318,7 @@ let ``a new game starts afresh, keeping only what Sage studied`` () =
         |> played
 
     Assert.NotEmpty used.Plans
-    used.Follow(List.take 2 opening)
+    show used "Sage" (List.take 2 opening)
 
     let firstShown = ref None
 
@@ -1685,14 +1688,14 @@ let ``Sage refuses to support itself, to search no games, or to play a seat the 
     // would silently never answer for them
     let sage = Sage("Sage", supporters = [ "Ally" ])
     let unseated =
-        Assert.Throws<InvalidOperationException>(fun () -> sage.Follow [ sittingDown lineup ])
+        Assert.Throws<InvalidOperationException>(fun () -> show sage "Sage" [ sittingDown lineup ])
     Assert.Contains("Ally", unseated.Message)
 
 // A seat of Sage's declared any other way than as Custom and ChoosesExternally
 // under its own name, in either part, would have the engine, or whoever the
 // label names, answer questions Sage's plans count on answering. So Sage
-// refuses it at the start of every game, whether shown the game or asked a
-// question in it, and says how to seat it
+// refuses it at the start of every game, at whichever question one of its
+// seats is asked first, and says how to seat it
 [<Fact>]
 let ``Sage refuses a game that seats one of its players other than as Custom and ChoosesExternally under their name``
     ()
@@ -1725,14 +1728,14 @@ let ``Sage refuses a game that seats one of its players other than as Custom and
     for name, lineup in refused do
         let sage = Sage("Sage", supporters = [ "Ally" ])
         let refusal =
-            Assert.Throws<InvalidOperationException>(fun () -> sage.Follow [ sittingDown lineup ])
+            Assert.Throws<InvalidOperationException>(fun () -> show sage "Sage" [ sittingDown lineup ])
         Assert.Contains($"Strategy.Custom \"{name}\"", refusal.Message)
         Assert.Contains($"Targeting.ChoosesExternally \"{name}\"", refusal.Message)
 
     // Seated as it requires, Sage follows the game, and asked its first
     // question in a later game that seats Ally on spite, it refuses that game
     let sage = Sage("Sage", supporters = [ "Ally" ])
-    sage.Follow [ sittingDown declared ]
+    show sage "Sage" [ sittingDown declared ]
 
     let refusal =
         Assert.Throws<InvalidOperationException>(fun () ->

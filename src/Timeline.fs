@@ -81,11 +81,7 @@ module public Timeline =
             let legal =
                 candidates |> List.map (fun candidate -> candidate.Name) |> String.concat ", "
 
-            return
-                raise (
-                    System.InvalidOperationException
-                        $"{chooser.Name} aimed {ask} at {chosen.Name}, which is not among: {legal}"
-                )
+            return invalidOp $"{chooser.Name} aimed {ask} at {chosen.Name}, which is not among: {legal}"
     }
 
     let private FreezePlayer
@@ -298,7 +294,7 @@ module public Timeline =
                         ResolveDeal3 random decide history targetName index active finished decks
 
                     return instants @ nested, active', finished', decks'
-                | _ -> return raise (System.InvalidOperationException $"Unexpected set-aside card: {setAside}")
+                | _ -> return invalidOp $"Unexpected set-aside card: {setAside}"
             }
 
             return!
@@ -492,10 +488,9 @@ module public Timeline =
         if not (List.isEmpty duplicated) then
             let duplicated = String.concat ", " duplicated
 
-            raise (
-                System.ArgumentException
-                    $"Player names must be unique, but these are seated more than once: {duplicated}"
-            )
+            invalidArg
+                (nameof players)
+                $"Player names must be unique, but these are seated more than once: {duplicated}"
 
     // A targeting that takes sides more than Targeting.SidesLimit deep would
     // raise at the first aim the engine's decider came to, so it is refused
@@ -510,10 +505,9 @@ module public Timeline =
         if not (List.isEmpty tooDeep) then
             let tooDeep = String.concat ", " tooDeep
 
-            raise (
-                System.ArgumentException
-                    $"A targeting may take sides at most {Targeting.SidesLimit} deep, but these players take them deeper: {tooDeep}"
-            )
+            invalidArg
+                (nameof players)
+                $"A targeting may take sides at most {Targeting.SidesLimit} deep, but these players take them deeper: {tooDeep}"
 
     // Every player must be named in the seating exactly once: a player it left
     // out would never be dealt into a later round, and a name it repeated would
@@ -547,7 +541,7 @@ module public Timeline =
                 |> List.map (fun (problem, names) -> $"""{problem}: {String.concat ", " names}""")
                 |> String.concat "; "
 
-            raise (System.ArgumentException $"The seating must name every player once, but {problems}")
+            invalidArg (nameof seating) $"The seating must name every player once, but {problems}"
 
     /// <summary>
     /// Continues a game from a mid-round state: the history, every instant that

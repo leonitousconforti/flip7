@@ -100,4 +100,4 @@ type public ScoreBuckets = {
                 let selfTotal = ScoreBuckets.Total self
                 let otherTotal = ScoreBuckets.Total other
                 selfTotal.CompareTo otherTotal
-            | _ -> invalidArg "obj" "Cannot compare with non-ScoreBuckets type"
+            | _ -> invalidArg (nameof obj) "Cannot compare with non-ScoreBuckets type"

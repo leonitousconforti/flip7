@@ -84,7 +84,7 @@ let LookAheadDecider (random: System.Random) : Strategy.HitOrStandDecider =
     fun _history _round _turn player _otherPlayers _finishedPlayers _decks -> async {
         match! searcher.GainFromHitting player.Hand with
         | Error(UnpricedHand _hand) -> return onUnpricedHand ()
-        | Error lookAheadError -> return raise (System.InvalidOperationException $"Lookahead failed: {lookAheadError}")
+        | Error lookAheadError -> return invalidOp $"Lookahead failed: {lookAheadError}"
         | Ok netScore -> return if netScore > 0.0 then Strategy.Hit else Strategy.Stand
     }
 

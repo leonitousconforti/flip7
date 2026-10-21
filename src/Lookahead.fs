@@ -58,7 +58,7 @@ module private Word =
 
     do
         if passedOffset + widths[secondChanceIndex] > 64 then
-            failwith "the missing counts no longer fit in one word"
+            invalidOp "the missing counts no longer fit in one word"
 
     // The deck a search draws from: a count per card in word order, and the
     // total. Any deck within the full one packs the same way; one that outgrows
