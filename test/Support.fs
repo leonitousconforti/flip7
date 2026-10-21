@@ -93,8 +93,7 @@ let field: Lineup = [ bob; carol; dave; erin ]
 
 // Who sits in the seat named Sage in the games of the field that are studied,
 // which have no Sage
-let standIn =
-    "Sage", Strategy.MaximizesExpectedValue, Targeting.PlaysSpitefully
+let standIn = "Sage", Strategy.MaximizesExpectedValue, Targeting.PlaysSpitefully
 
 // Ten games of the field with the stand-in in Sage's seat, studied once for
 // every test that needs them

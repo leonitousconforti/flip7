@@ -105,8 +105,7 @@ let ``the chance to hit is 1 exactly where the default decider hits, for every d
         |> List.where (fun strategy -> not (answersOneWay strategy))
         |> List.where (fun strategy ->
             let hits =
-                decisions
-                |> List.where (fun decision -> chanceToHit strategy decision = 1.0)
+                decisions |> List.where (fun decision -> chanceToHit strategy decision = 1.0)
 
             hits.IsEmpty || hits.Length = decisions.Length
         )
@@ -526,7 +525,10 @@ let ``a study over grids of one's own names a strategy and a policy the default 
     let fieldWithDaveOff =
         field
         |> List.map (fun (name, strategy, targeting) ->
-            if name = "Dave" then name, between, freezesHimself else name, strategy, targeting
+            if name = "Dave" then
+                name, between, freezesHimself
+            else
+                name, strategy, targeting
         )
 
     // The policies a posterior over targetings is over, each played plainly
@@ -627,7 +629,10 @@ let ``studying more games continues the study's sitting, unless it was concluded
     ]
 
     let studied (timelines: Instant list list) : Study =
-        timelines |> List.map AsyncSeq.ofSeq |> Study.OfTimelines |> Async.RunSynchronously
+        timelines
+        |> List.map AsyncSeq.ofSeq
+        |> Study.OfTimelines
+        |> Async.RunSynchronously
 
     let continuing (study: Study) : Study =
         Study.ContinueWith 0.1 (games |> List.skip 4 |> List.map AsyncSeq.ofSeq) study
