@@ -35,6 +35,9 @@ jobs:
 
   fable:
     runs-on: ubuntu-latest
+    # The version the library is packed as and the tests compile against
+    env:
+      Flip7Package: 0.0.0-fable
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
@@ -42,12 +45,11 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet tool restore
       - run: dotnet fable src/Flip7.fsproj --outDir ${{ runner.temp }}/fable
-      - run: dotnet pack src/Flip7.fsproj -c Release -o ${{ runner.temp }}/feed -p:Version=0.0.0-fable
+      - run: dotnet pack src/Flip7.fsproj -c Release -o ${{ runner.temp }}/feed -p:Version=${{ env.Flip7Package }}
       # The tests compile against the packed library, as a Fable project that
       # depends on it would, and run on the runner's own Node
       - name: Compile the tests to JavaScript
         env:
-          Flip7Package: 0.0.0-fable
           RestoreAdditionalProjectSources: ${{ runner.temp }}/feed
         run: |
           dotnet fsi test/FableEntry.fsx
