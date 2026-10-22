@@ -149,9 +149,9 @@ module public Persistence =
     /// agent owns all of the mutable state - the frontier, the seating, the
     /// round ends, and the LRU cache - and every operation arrives as a
     /// message, so nothing is locked because nothing is shared. Ingestion is
-    /// folded into the same message loop: the agent looks for the frontier once
-    /// per ingest delay, and the frontier read runs on its own and posts what
-    /// it read back as a message, so a slow instant at the frontier never camps
+    /// folded into the same message loop: the agent waits the ingest delay
+    /// before each look for the frontier, and the frontier read runs on its own
+    /// and posts what it read back as a message, so a slow instant never camps
     /// on the mailbox and viewer reads take precedence over background tailing.
     /// Once the game is complete the agent stops looking, and only the viewer
     /// wakes it. Only lightweight metadata is held in memory plus a small cache
