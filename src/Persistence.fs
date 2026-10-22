@@ -238,7 +238,7 @@ module public Persistence =
                         if ingestDelayMilliseconds > 0L then
                             Async.Start(
                                 async {
-                                    do! Async.Sleep(int ingestDelayMilliseconds)
+                                    do! Async.Sleep(int (min ingestDelayMilliseconds (int64 Int32.MaxValue)))
                                     inbox.Post Probe
                                 },
                                 token
