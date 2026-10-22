@@ -287,6 +287,7 @@ exception Forked of
     Finished: Player list *
     Decks: (Deck * Deck)
 
+#if !FABLE_COMPILER
 // Answers as own does, naming each question's call on the game's Random as it
 // is asked, and forks the game at the given hit-or-stand question, counted
 // from zero
@@ -372,3 +373,4 @@ let playForked
         |> Async.RunSynchronously
 
         given @ List.ofSeq continued, List.ofSeq second.Made, true
+#endif

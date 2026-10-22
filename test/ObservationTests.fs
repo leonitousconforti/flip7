@@ -169,6 +169,7 @@ let ``players who busted stay finished after an edit takes their busting cards b
 // Games.playForked continues it. Forked at Bob's second turn, Alice, who sat
 // before him and had taken two, is counted as having taken one, so the engine
 // asks her about her second turn once more
+#if !FABLE_COMPILER
 [<Fact>]
 let ``after an edit, everyone still in the round has taken as many turns as the asker had`` () =
     let lineup = [
@@ -224,6 +225,7 @@ let ``after an edit, everyone still in the round has taken as many turns as the 
         |> List.where (fun observation -> observation.Round = 1u)
         |> List.map (fun observation -> observation.Name, observation.Turn)
     )
+#endif
 
 // ---- aims ----
 

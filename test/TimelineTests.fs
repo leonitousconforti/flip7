@@ -353,6 +353,7 @@ let private throughNextRound (instants: Instant list) : Instant list =
 // question is asked the game has already drawn its seed, so the fork winds a
 // fresh Random to one call short and makes that draw again as it asks the
 // question afresh.
+#if !FABLE_COMPILER
 [<Theory>]
 [<InlineData 1>]
 [<InlineData 2>]
@@ -439,6 +440,7 @@ let ``a game forked at any question with its seating plays out as it did through
             |> played
 
         Assert.Equal<Instant list>(expected, continued)
+#endif
 
 // ---- deciders ----
 

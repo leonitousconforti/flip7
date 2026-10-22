@@ -518,6 +518,7 @@ type private Cost = { CallsBefore: int; SeededByTheLast: bool }
 // the question is asked and seeding the Random it is asked with, and nothing
 // else draws that way: not a forced first hit, which asks nothing, and not a
 // second chance nobody can take, which is discarded without asking anyone
+#if !FABLE_COMPILER
 [<Fact>]
 let ``every question costs the game one draw, made just before it is asked`` () =
     let mutable discarded = 0
@@ -575,3 +576,4 @@ let ``every question costs the game one draw, made just before it is asked`` () 
     Check.One(Config.QuickThrowOnFailure.WithMaxTest 100, property)
 
     Assert.True(discarded > 0, "no game discarded a second chance, so none checked that discarding one draws nothing")
+#endif
