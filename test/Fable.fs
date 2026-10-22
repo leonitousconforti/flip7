@@ -346,14 +346,16 @@ module FableAsync =
     open Fable.Core
 
     // Runs a computation that only ever waits on the trampoline, draining what
-    // it would hand to setTimeout in a loop instead
+    // it would hand to setTimeout in a loop instead. It hands work to the queue
+    // after 200 calls rather than Fable's 2000, a run of which can take most
+    // of Node's stack in these games
     [<Literal>]
     let private Drain =
         """(() => {
   const queue = [];
   let done = false, ok = false, value, error;
   const trampoline = { callCount: 0, completed: false,
-    incrementAndCheck() { return this.callCount++ > 2000; },
+    incrementAndCheck() { return this.callCount++ > 200; },
     hijack(f) { this.callCount = 0; queue.push(f); } };
   const finish = (k) => (x) => { trampoline.completed = true; done = true; k(x); };
   $0({ onSuccess: finish(x => { ok = true; value = x; }), onError: finish(e => { error = e; }),
