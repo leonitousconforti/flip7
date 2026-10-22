@@ -411,7 +411,8 @@ module private Word =
 /// starts cancels the members awaiting it, as Fable cancels an async, rather
 /// than raising in them. The progress callback is all that runs meanwhile, and
 /// a cancellation from there fails them with the plain Exception Fable raises
-/// for a cancelled token.
+/// for a cancelled token, or, from its last report, cancels them where .NET
+/// would still answer.
 /// </summary>
 type public Lookahead
     (
