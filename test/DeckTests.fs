@@ -120,12 +120,12 @@ let ``a draw conserves every card and touches the discards only to reshuffle the
         )
     |> Check.QuickThrowOnFailure
 
-// A seed deals what it always has, on .NET and in JavaScript alike, since the
-// digests of whole games, the seeds other tests were found at and the --seed
-// of the terminal app all rest on it. A draw takes the card FSharp.Core's
-// Array.randomShuffleWith puts first among the deck's cards laid out in Map
-// order, and makes the calls that shuffle makes: Next(0, n), which picks the
-// card, then Next(i, n) for each i from 1 to n - 2
+// A seed deals what it always has on .NET, since the digests of whole games,
+// the seeds other tests were found at and the --seed of the terminal app all
+// rest on it, and deals the same in JavaScript. A draw takes the card
+// FSharp.Core's Array.randomShuffleWith puts first among the deck's cards laid
+// out in Map order, and makes the calls that shuffle makes: Next(0, n), which
+// picks the card, then Next(i, n) for each i from 1 to n - 2
 [<Fact>]
 let ``a draw takes the card FSharp.Core's shuffle puts first, and costs the Random what the shuffle does`` () =
     // A lone card costs no call and two cards only the one that picks, so both

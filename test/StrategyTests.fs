@@ -609,13 +609,15 @@ let private sameDouble (read: float) (value: float) =
         BitConverter.DoubleToInt64Bits read = BitConverter.DoubleToInt64Bits value
 
 // Every form either platform writes or has written is read, and to the same
-// double on both: .NET writes 1E-05 where JavaScript used to write 1e-5 and
-// 1e+21, and a point may have digits on only one side. An exponent past the
-// largest double reads as Infinity, and a count reaches the top of uint's range
+// double on both: JavaScript used to write 0.00001 and 1e+21 where .NET writes
+// 1E-05 and 1E+21, and a point may have digits on only one side. An exponent
+// past the largest double reads as Infinity, and a count reaches the top of
+// uint's range
 [<Fact>]
 let ``a number in any form either platform writes parses to its value`` () =
     let accepted = [
         "1E-05", 1e-5
+        "0.00001", 1e-5
         "1e-5", 1e-5
         "5.", 5.0
         ".5", 0.5
