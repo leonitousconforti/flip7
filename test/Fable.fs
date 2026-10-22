@@ -17,6 +17,7 @@
 namespace Xunit
 
 open System
+open Fable.Core.JsInterop
 
 type FactAttribute() =
     inherit Attribute()
@@ -76,12 +77,15 @@ type Assert =
         if actual < low || actual > high then
             failwithf "Assert.InRange failed: %A not in [%A, %A]" actual low high
 
-    // The exception asked for passes, as in xunit, and so does one derived
-    // from it, since Fable cannot name an exception's own type
+    // Only the exception asked for passes, as in xunit, not one derived from
+    // it. A plain Exception is told apart from any other wrong one, since it
+    // is what Fable compiles invalidArg and invalidOp to
     static member inline Throws<'T when 'T :> exn>(testCode: Action) : 'T =
         match Record.Exception testCode with
-        | :? 'T as error -> error
+        | :? 'T as error when emitJsExpr (error, jsConstructor<'T>) "$0.constructor === $1" -> error
         | null -> failwith "Assert.Throws failed: nothing was thrown"
+        | error when emitJsExpr (error, jsConstructor<exn>) "$0.constructor === $1" ->
+            failwithf "Assert.Throws failed: a plain Exception was thrown: %s" error.Message
         | error -> failwithf "Assert.Throws failed: the wrong exception was thrown: %s" error.Message
 
 and Record =
@@ -372,7 +376,8 @@ module Runner =
     // Assert.Throws: Fable compiles invalidArg and invalidOp to a plain
     // Exception, so where the library refuses a call with them, an
     // Assert.Throws<ArgumentException> or
-    // Assert.Throws<InvalidOperationException> is shown the wrong exception
+    // Assert.Throws<InvalidOperationException> is shown a plain Exception.
+    // Any other failure of theirs, a JavaScript error among them, is wrong
     let private failsInJavaScript =
         set [
             "TimelineTests: seating the same name twice is refused"
@@ -409,7 +414,7 @@ module Runner =
             | None, false ->
                 passed <- passed + 1
                 printfn $"pass {name}"
-            | Some message, true when message.StartsWith "Assert.Throws failed: the wrong exception was thrown" ->
+            | Some message, true when message.StartsWith "Assert.Throws failed: a plain Exception was thrown" ->
                 listed <- listed + 1
                 printfn $"fail {name}, as listed"
             | None, true ->
