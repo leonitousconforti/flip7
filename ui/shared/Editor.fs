@@ -123,51 +123,60 @@ let public Key (key: ConsoleKeyInfo) (editor: Model) : Outcome =
         Editing { editor with Help = false }
     else
 
-    match key.Modifiers, key.Key, editor.Cursor with
-    | ConsoleModifiers.None, (ConsoleKey.Enter | ConsoleKey.Escape), _ ->
+    match key.Modifiers, key.Key, key.KeyChar, editor.Cursor with
+    | ConsoleModifiers.None, (ConsoleKey.Enter | ConsoleKey.Escape), _, _ ->
         if editor.Active |> List.exists (fun player -> Hand.IsBust player.Hand) then
             Editing editor
         elif (editor.Active, editor.Finished, editor.Deck, editor.Discards) = editor.Initial then
             Cancelled
         else
             Committed(spliceOf editor)
-    | _, _, _ when key.KeyChar = '?' || key.Key = ConsoleKey.H -> Editing { editor with Help = true }
+    | _, _, '?', _
+    | _, ConsoleKey.H, _, _ -> Editing { editor with Help = true }
 
-    // Dealing cards from the deck into the highlighted hand
-    | ConsoleModifiers.None, ConsoleKey.D0, Choice2Of2 name -> Editing(deal (ValueCard Card.Zero) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D1, Choice2Of2 name -> Editing(deal (ModifierCard Card.Double) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D1, Choice2Of2 name -> Editing(deal (ValueCard Card.One) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D2, Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus2) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D2, Choice2Of2 name -> Editing(deal (ValueCard Card.Two) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D3, Choice2Of2 name -> Editing(deal (ValueCard Card.Three) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D4, Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus4) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D4, Choice2Of2 name -> Editing(deal (ValueCard Card.Four) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D5, Choice2Of2 name -> Editing(deal (ValueCard Card.Five) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D6, Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus6) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D6, Choice2Of2 name -> Editing(deal (ValueCard Card.Six) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D7, Choice2Of2 name -> Editing(deal (ValueCard Card.Seven) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D8, Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus8) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D8, Choice2Of2 name -> Editing(deal (ValueCard Card.Eight) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D9, Choice2Of2 name -> Editing(deal (ValueCard Card.Nine) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.X, Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus10) name editor)
-    | ConsoleModifiers.None, ConsoleKey.X, Choice2Of2 name -> Editing(deal (ValueCard Card.Ten) name editor)
-    | ConsoleModifiers.None, ConsoleKey.E, Choice2Of2 name -> Editing(deal (ValueCard Card.Eleven) name editor)
-    | ConsoleModifiers.None, ConsoleKey.T, Choice2Of2 name -> Editing(deal (ValueCard Card.Twelve) name editor)
-    | ConsoleModifiers.None, ConsoleKey.S, Choice2Of2 name -> Editing(deal (ActionCard Card.SecondChance) name editor)
-    | ConsoleModifiers.None, ConsoleKey.D, Choice2Of2 name -> Editing(deal (ActionCard Card.Deal3) name editor)
-    | ConsoleModifiers.None, ConsoleKey.F, Choice2Of2 name -> Editing(deal (ActionCard Card.Freeze) name editor)
+    // Dealing cards from the deck into the highlighted hand. A shifted digit
+    // also matches by the character it types, since Unix terminals report
+    // '!' or '@' without the digit or the shift
+    | ConsoleModifiers.None, ConsoleKey.D0, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Zero) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D1, _, Choice2Of2 name
+    | _, _, '!', Choice2Of2 name -> Editing(deal (ModifierCard Card.Double) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D1, _, Choice2Of2 name -> Editing(deal (ValueCard Card.One) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D2, _, Choice2Of2 name
+    | _, _, '@', Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus2) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D2, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Two) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D3, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Three) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D4, _, Choice2Of2 name
+    | _, _, '$', Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus4) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D4, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Four) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D5, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Five) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D6, _, Choice2Of2 name
+    | _, _, '^', Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus6) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D6, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Six) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D7, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Seven) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D8, _, Choice2Of2 name
+    | _, _, '*', Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus8) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D8, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Eight) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D9, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Nine) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.X, _, Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus10) name editor)
+    | ConsoleModifiers.None, ConsoleKey.X, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Ten) name editor)
+    | ConsoleModifiers.None, ConsoleKey.E, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Eleven) name editor)
+    | ConsoleModifiers.None, ConsoleKey.T, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Twelve) name editor)
+    | ConsoleModifiers.None, ConsoleKey.S, _, Choice2Of2 name ->
+        Editing(deal (ActionCard Card.SecondChance) name editor)
+    | ConsoleModifiers.None, ConsoleKey.D, _, Choice2Of2 name -> Editing(deal (ActionCard Card.Deal3) name editor)
+    | ConsoleModifiers.None, ConsoleKey.F, _, Choice2Of2 name -> Editing(deal (ActionCard Card.Freeze) name editor)
 
     // Returning the most recent card of the highlighted hand
-    | ConsoleModifiers.None, ConsoleKey.Backspace, Choice2Of2 name -> Editing(unDeal name editor)
+    | ConsoleModifiers.None, ConsoleKey.Backspace, _, Choice2Of2 name -> Editing(unDeal name editor)
 
     // Moving copies of the highlighted card between discards and deck
-    | ConsoleModifiers.None, ConsoleKey.Add, Choice1Of2 card when Map.find card editor.Discards > 0u ->
+    | _, _, '+', Choice1Of2 card when Map.find card editor.Discards > 0u ->
         Editing {
             editor with
                 Deck = Deck.Increment editor.Deck card
                 Discards = Deck.Decrement editor.Discards card
         }
-    | ConsoleModifiers.None, ConsoleKey.Subtract, Choice1Of2 card when Map.find card editor.Deck > 0u ->
+    | _, _, '-', Choice1Of2 card when Map.find card editor.Deck > 0u ->
         Editing {
             editor with
                 Deck = Deck.Decrement editor.Deck card
@@ -175,25 +184,25 @@ let public Key (key: ConsoleKeyInfo) (editor: Model) : Outcome =
         }
 
     // Rotating the cursor through the distributions and the players
-    | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice1Of2 _ ->
+    | ConsoleModifiers.None, ConsoleKey.UpArrow, _, Choice1Of2 _ ->
         Editing { editor with Cursor = Choice2Of2(List.last names) }
-    | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice1Of2 _ ->
+    | ConsoleModifiers.None, ConsoleKey.DownArrow, _, Choice1Of2 _ ->
         Editing { editor with Cursor = Choice2Of2(List.head names) }
-    | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice2Of2 name when name = List.head names ->
+    | ConsoleModifiers.None, ConsoleKey.UpArrow, _, Choice2Of2 name when name = List.head names ->
         Editing { editor with Cursor = Choice1Of2(ValueCard Card.Zero) }
-    | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice2Of2 name when name = List.last names ->
+    | ConsoleModifiers.None, ConsoleKey.DownArrow, _, Choice2Of2 name when name = List.last names ->
         Editing { editor with Cursor = Choice1Of2(ValueCard Card.Zero) }
-    | ConsoleModifiers.None, ConsoleKey.UpArrow, Choice2Of2 name ->
+    | ConsoleModifiers.None, ConsoleKey.UpArrow, _, Choice2Of2 name ->
         let index = names |> List.findIndex ((=) name)
         Editing { editor with Cursor = Choice2Of2 names[index - 1] }
-    | ConsoleModifiers.None, ConsoleKey.DownArrow, Choice2Of2 name ->
+    | ConsoleModifiers.None, ConsoleKey.DownArrow, _, Choice2Of2 name ->
         let index = names |> List.findIndex ((=) name)
         Editing { editor with Cursor = Choice2Of2 names[index + 1] }
-    | ConsoleModifiers.None, ConsoleKey.LeftArrow, Choice1Of2 card ->
+    | ConsoleModifiers.None, ConsoleKey.LeftArrow, _, Choice1Of2 card ->
         let index = EveryCard |> List.findIndex ((=) card)
         let index' = (index - 1 + EveryCard.Length) % EveryCard.Length
         Editing { editor with Cursor = Choice1Of2 EveryCard[index'] }
-    | ConsoleModifiers.None, ConsoleKey.RightArrow, Choice1Of2 card ->
+    | ConsoleModifiers.None, ConsoleKey.RightArrow, _, Choice1Of2 card ->
         let index = EveryCard |> List.findIndex ((=) card)
         let index' = (index + 1) % EveryCard.Length
         Editing { editor with Cursor = Choice1Of2 EveryCard[index'] }
@@ -254,8 +263,8 @@ let public RenderHelp () : unit =
         section "hands" "with the cursor on a player"
         entry "0-9" "value card 0-9, dealt from the deck"
         entry "x  e  t" "value card 10, 11, 12"
-        entry "shift+2/4/6/8" "modifier card +2, +4, +6, +8"
-        entry "shift+1  shift+x" "modifier card x2, +10"
+        entry "@  $  ^  *" "modifier card +2, +4, +6, +8"
+        entry "!  shift+x" "modifier card x2, +10"
         entry "s  d  f" "action card SecondChance, Deal3, Freeze"
         entry "backspace" "return the player's most recent card to the deck"
         ""
