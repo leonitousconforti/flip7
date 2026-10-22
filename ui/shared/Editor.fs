@@ -136,27 +136,28 @@ let public Key (key: ConsoleKeyInfo) (editor: Model) : Outcome =
 
     // Dealing cards from the deck into the highlighted hand. A shifted digit
     // also matches by the character it types, since Unix terminals report
-    // '!' or '@' without the digit or the shift
+    // '!' or '@' without the digit or the shift. The plain digits come first,
+    // for layouts where one of them types '!' unshifted
     | ConsoleModifiers.None, ConsoleKey.D0, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Zero) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D1, _, Choice2Of2 name
-    | _, _, '!', Choice2Of2 name -> Editing(deal (ModifierCard Card.Double) name editor)
     | ConsoleModifiers.None, ConsoleKey.D1, _, Choice2Of2 name -> Editing(deal (ValueCard Card.One) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D2, _, Choice2Of2 name
-    | _, _, '@', Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus2) name editor)
     | ConsoleModifiers.None, ConsoleKey.D2, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Two) name editor)
     | ConsoleModifiers.None, ConsoleKey.D3, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Three) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D4, _, Choice2Of2 name
-    | _, _, '$', Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus4) name editor)
     | ConsoleModifiers.None, ConsoleKey.D4, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Four) name editor)
     | ConsoleModifiers.None, ConsoleKey.D5, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Five) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D6, _, Choice2Of2 name
-    | _, _, '^', Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus6) name editor)
     | ConsoleModifiers.None, ConsoleKey.D6, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Six) name editor)
     | ConsoleModifiers.None, ConsoleKey.D7, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Seven) name editor)
-    | ConsoleModifiers.Shift, ConsoleKey.D8, _, Choice2Of2 name
-    | _, _, '*', Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus8) name editor)
     | ConsoleModifiers.None, ConsoleKey.D8, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Eight) name editor)
     | ConsoleModifiers.None, ConsoleKey.D9, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Nine) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D1, _, Choice2Of2 name
+    | _, _, '!', Choice2Of2 name -> Editing(deal (ModifierCard Card.Double) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D2, _, Choice2Of2 name
+    | _, _, '@', Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus2) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D4, _, Choice2Of2 name
+    | _, _, '$', Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus4) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D6, _, Choice2Of2 name
+    | _, _, '^', Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus6) name editor)
+    | ConsoleModifiers.Shift, ConsoleKey.D8, _, Choice2Of2 name
+    | _, _, '*', Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus8) name editor)
     | ConsoleModifiers.Shift, ConsoleKey.X, _, Choice2Of2 name -> Editing(deal (ModifierCard Card.Plus10) name editor)
     | ConsoleModifiers.None, ConsoleKey.X, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Ten) name editor)
     | ConsoleModifiers.None, ConsoleKey.E, _, Choice2Of2 name -> Editing(deal (ValueCard Card.Eleven) name editor)
