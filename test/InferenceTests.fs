@@ -658,7 +658,9 @@ let ``a study refuses an empty grid, a strategy or policy decided externally, or
         let error =
             Assert.Throws<ArgumentException>(fun () -> Study.OfTimelinesWith strategies targetings [] |> ignore)
 
+#if !FABLE_COMPILER
         Assert.Equal(argument, error.ParamName)
+#endif
         Assert.Contains(culprit, error.Message)
 
     let strategies = Inference.DefaultStrategyCandidates
@@ -685,7 +687,9 @@ let ``a study continues only at an epsilon above 0 and at most 1`` () =
         let error =
             Assert.Throws<ArgumentException>(fun () -> Study.ContinueWith epsilon [] Study.Nothing |> ignore)
 
+#if !FABLE_COMPILER
         Assert.Equal("epsilon", error.ParamName)
+#endif
         Assert.Contains($"{epsilon}", error.Message)
 
 // A grid that held a policy twice would give it twice the prior of any other,
