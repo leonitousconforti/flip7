@@ -202,7 +202,7 @@ module public Persistence =
                           }
 
                     let read (index: int) : Async<Result<Instant, exn>> =
-                        ReadInstantAsync(Path.Join(directory, string index))
+                        ReadInstantAsync(Path.Combine(directory, string index))
 
                     // An index read before it was ingested is remembered again
                     // when it is, which only marks it used again: it is never
@@ -265,7 +265,7 @@ module public Persistence =
                             // viewer can never request the frontier itself (a
                             // cursor stays below Count), so nothing waits on
                             // this read but the loop.
-                            if Directory.Exists(Path.Join(directory, string count)) then
+                            if Directory.Exists(Path.Combine(directory, string count)) then
                                 let frontier = read count
 
                                 Async.Start(
