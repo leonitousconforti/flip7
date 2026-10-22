@@ -370,11 +370,7 @@ let private pickedBy (targeting: Targeting) (aim: Observation) : string =
 let private genAims: Gen<Observation list> =
     genGameWithFork
     |> Gen.map (fun (seed, lineup, _) ->
-#if FABLE_COMPILER
         let timeline = Timeline.SimulateWithDecider (Random seed) own lineup |> played
-#else
-        let timeline, _, _ = playForked id seed lineup None
-#endif
 
         observationsOf timeline
         |> List.where (fun observation -> observation.Choice.IsChoice2Of2)
