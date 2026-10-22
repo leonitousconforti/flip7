@@ -28,13 +28,14 @@
     <Compile Include="FableEntry.g.fs" Condition="'$(FABLE_COMPILER)' == 'true'" />
   </ItemGroup>
 
-  <!-- Flip7Package names a packed version of the library to test in place of its sources -->
+  <!-- Flip7Package names a packed version of the library to test in place of its sources,
+       exactly, so a restore that cannot find it fails rather than takes a published one -->
   <ItemGroup Condition="'$(Flip7Package)' == ''">
     <ProjectReference Include="..\src\Flip7.fsproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(Flip7Package)' != ''">
-    <PackageReference Include="Flip7" Version="$(Flip7Package)" />
+    <PackageReference Include="Flip7" Version="[$(Flip7Package)]" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(FABLE_COMPILER)' != 'true'">
