@@ -68,12 +68,41 @@ module private Decoding =
 module private Encoding =
     /// <summary>
     /// A float as a strategy or targeting string writes it, in the shortest
-    /// form that reads back as the same double on the platform writing it,
-    /// except that JavaScript writes -0 as 0.
+    /// form that reads back as the same double, and the same text on .NET and
+    /// in JavaScript: what ToString("R") writes with the invariant culture.
     /// </summary>
     let internal WriteFloat (value: float) : string =
 #if FABLE_COMPILER
-        string value
+        // JavaScript writes the same shortest digits, but -0 as 0, and with an
+        // exponent below 1e-6 and from 1e21, as in 1e-7, where .NET writes one
+        // below 1e-4 and from 1e17, as in 1E-07
+        let text = string value
+
+        match text with
+        | "0" when 1.0 / value < 0.0 -> "-0"
+        | "0"
+        | "NaN"
+        | "Infinity"
+        | "-Infinity" -> text
+        | _ ->
+            let mantissa, exponent =
+                match text.TrimStart('-').Split 'e' with
+                | [| mantissa; exponent |] -> mantissa, int exponent
+                | parts -> parts[0], 0
+
+            // The value is 0.digits * 10^scale, so 0.0001 has a scale of -3
+            let figures = mantissa.Replace(".", "")
+            let digits = figures.Trim '0'
+            let scale = (mantissa + ".").IndexOf '.' - figures.IndexOf digits + exponent
+
+            if scale >= -3 && scale <= 17 then
+                text
+            else
+                let sign = if value < 0.0 then "-" else ""
+                let fraction = if digits.Length > 1 then "." + digits.Substring 1 else ""
+                let power = (string (abs (scale - 1))).PadLeft(2, '0')
+                let powerSign = if scale > 0 then "+" else "-"
+                $"{sign}{digits.Substring(0, 1)}{fraction}E{powerSign}{power}"
 #else
         value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
 #endif
