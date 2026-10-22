@@ -287,6 +287,16 @@ let ``spiteful and greedy players alike pass a second chance to whoever is furth
     Assert.Equal("Dave", aimedAt Targeting.PlaysSpitefully Strategy.Ask.WhoReceivesSecondChance player opponents)
     Assert.Equal("Dave", aimedAt greedy Strategy.Ask.WhoReceivesSecondChance player opponents)
 
+// Of players tied furthest behind, the first among the candidates takes the
+// second chance, in JavaScript too, where List.minBy picks the last
+[<Fact>]
+let ``a second chance goes to the first of the players tied furthest behind`` () =
+    let tied = Player.Make("Erin", Strategy.Random, 5u)
+
+    for targeting in [ Targeting.PlaysSpitefully; greedy ] do
+        Assert.Equal("Dave", aimedAt targeting Strategy.Ask.WhoReceivesSecondChance player [ leader; laggard; tied ])
+        Assert.Equal("Erin", aimedAt targeting Strategy.Ask.WhoReceivesSecondChance player [ tied; leader; laggard ])
+
 [<Fact>]
 let ``spite never turns a freeze or a deal3 on the chooser while an opponent is left`` () =
     // Alice shows 150, her 100 banked plus the risky hand's 50, far ahead of

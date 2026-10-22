@@ -214,8 +214,16 @@ module public rec Strategy =
             | Ask.WhoReceivesDeal3, opponents -> opponents |> List.maxBy bust
             | _, opponents -> opponents |> List.maxBy Player.Showing
 
-        // Helps the least: whoever is furthest behind
-        let helpsLeast () = candidates |> List.minBy Player.Showing
+        // Helps the least: whoever is furthest behind, the first of them on a
+        // tie, which List.minBy keeps on .NET but not under Fable
+        let helpsLeast () =
+            candidates
+            |> List.reduce (fun least candidate ->
+                if Player.Showing candidate < Player.Showing least then
+                    candidate
+                else
+                    least
+            )
 
         match targeting with
         | Targeting.ChoosesRandomly -> Choice2Of2 candidates
