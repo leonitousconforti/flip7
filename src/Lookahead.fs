@@ -37,8 +37,7 @@ module private Word =
         )
 
     let offsets = Array.scan (+) 0 widths |> Array.take cards.Length
-    let masks = widths |> Array.map (fun width -> (1UL <<< width) - 1UL)
-    let deltas = offsets |> Array.map (fun offset -> 1UL <<< offset)
+    let masks = widths |> Array.map (fun width -> (1 <<< width) - 1)
 
     let indexOf = cards |> Array.mapi (fun index (card, _) -> card, index) |> dict
     let isValue = cards |> Array.map (fun (card, _) -> card.IsValueCard)
@@ -54,10 +53,31 @@ module private Word =
     // the others, and drawing one is a move of its own beside each card's
     let passedOffset = Array.sum widths
     let passedMove = cards.Length
-    let moves = Array.append deltas [| 1UL <<< passedOffset |]
+    let slots = Array.append offsets [| passedOffset |]
+
+    // The word is a uint64 on .NET. Fable makes a uint64 a BigInt, which JS
+    // computes with slowly, but every word fits in 52 bits, so JS keeps it in
+    // a double instead: adding a count placed at an offset is exact there, and
+    // the bits from a move's slot up are read by scaling them down to the bottom
+#if FABLE_COMPILER
+    type State = float
+    let room = 53
+    let top: State = infinity
+    let place (count: int) (offset: int) : State = float count * 2.0 ** float offset
+    let scales = slots |> Array.map (fun offset -> 0.5 ** float offset)
+    let read (state: State) (move: int) : int = int (uint32 (state * scales[move]))
+#else
+    type State = uint64
+    let room = 64
+    let top: State = System.UInt64.MaxValue
+    let place (count: int) (offset: int) : State = uint64 count <<< offset
+    let read (state: State) (move: int) : int = int (state >>> slots[move])
+#endif
+
+    let moves = slots |> Array.map (place 1)
 
     do
-        if passedOffset + widths[secondChanceIndex] > 64 then
+        if passedOffset + widths[secondChanceIndex] > room then
             invalidOp "the missing counts no longer fit in one word"
 
     // The deck a search draws from: a count per card in word order, and the
@@ -75,15 +95,14 @@ module private Word =
         else
             None
 
-    let missingOf (state: uint64) (index: int) : int =
-        int ((state >>> offsets[index]) &&& masks[index])
+    let missingOf (state: State) (index: int) : int = read state index &&& masks[index]
 
-    let drawn (state: uint64) (move: int) : uint64 = state + moves[move]
+    let drawn (state: State) (move: int) : State = state + moves[move]
 
-    let passedOf (state: uint64) : int =
-        int ((state >>> passedOffset) &&& masks[secondChanceIndex])
+    let passedOf (state: State) : int =
+        read state passedMove &&& masks[secondChanceIndex]
 
-    let copiesLeft (universe: Universe) (state: uint64) (index: int) : int =
+    let copiesLeft (universe: Universe) (state: State) (index: int) : int =
         let passed = if index = secondChanceIndex then passedOf state else 0
         universe.Counts[index] - missingOf state index - passed
 
@@ -98,14 +117,14 @@ module private Word =
     // A hand fits a word only when its universe holds every copy it claims. Of
     // the second chances its dups leave uncancelled it keeps one, and the rest
     // it passed on
-    let tryEncode (universe: Universe) (hand: Hand) : uint64 option =
+    let tryEncode (universe: Universe) (hand: Hand) : State option =
         let values = hand |> List.filter (fun card -> card.IsValueCard)
         let dups = values.Length - (List.distinct values).Length
         let chances =
             hand |> List.filter ((=) (ActionCard Card.SecondChance)) |> List.length
-        let passed = uint64 (max 0 (chances - dups - 1))
+        let passed = max 0 (chances - dups - 1)
 
-        (Some 0UL, hand)
+        (Some(place 0 0), hand)
         ||> List.fold (fun state card ->
             let index = indexOf[card]
 
@@ -113,7 +132,7 @@ module private Word =
             |> Option.filter (fun state -> missingOf state index < universe.Counts[index])
             |> Option.map (fun state -> drawn state index)
         )
-        |> Option.map (fun state -> state - passed * deltas[secondChanceIndex] + passed * moves[passedMove])
+        |> Option.map (fun state -> state - place passed offsets[secondChanceIndex] + place passed passedOffset)
 
     let shown (hand: Hand) : string =
         hand |> List.map string |> String.concat " "
@@ -122,7 +141,7 @@ module private Word =
     // modifiers and the flip7 bonus on top, exactly as Hand.Score counts), the
     // distinct values held, the second chances left after cancelling dups, and
     // how many cards the deck still holds
-    let facts (universe: Universe) (state: uint64) : struct (float * int * int * int) =
+    let facts (universe: Universe) (state: State) : struct (float * int * int * int) =
         let mutable points = 0
         let mutable modifiers = 0
         let mutable distinct = 0
@@ -148,7 +167,7 @@ module private Word =
     // Which moves a state lives through, one bit per move: a card with copies
     // left that is new to the hand or covered by a spare second chance. A hand
     // that has flipped seven has stopped drawing and lives through nothing
-    let liveMask (universe: Universe) (state: uint64) : uint32 =
+    let liveMask (universe: Universe) (state: State) : uint32 =
         let struct (_, distinct, spare, _) = facts universe state
         let mutable mask = 0u
 
@@ -162,26 +181,53 @@ module private Word =
 
         mask
 
+    // Where a state sits in a sorted generation, or the complement of where it
+    // would go, as Array.BinarySearch answers. Fable has no BinarySearch, and
+    // written out and inlined the search is quicker on .NET too
+    let inline search (states: State[]) (state: State) : int =
+        let mutable low = 0
+        let mutable high = states.Length - 1
+        let mutable found = -1
+
+        while found < 0 && low <= high do
+            let middle = (low + high) >>> 1
+
+            if states[middle] < state then low <- middle + 1
+            elif states[middle] > state then high <- middle - 1
+            else found <- middle
+
+        if found >= 0 then found else ~~~low
+
+    // Every index below a count, in parallel under the token. JS has the one
+    // thread, so Fable runs them in order
+    let inline inParallel
+        (token: System.Threading.CancellationToken)
+        (count: int)
+        ([<InlineIfLambda>] body: int -> unit)
+        : unit =
+#if FABLE_COMPILER
+        token.ThrowIfCancellationRequested()
+
+        for at in 0 .. count - 1 do
+            body at
+#else
+        let options = System.Threading.Tasks.ParallelOptions(CancellationToken = token)
+        System.Threading.Tasks.Parallel.For(0, count, options, (fun at -> body at))
+        |> ignore
+#endif
+
     // The forward sweep: the states one draw deeper than a generation. Adding a
     // move's delta to every state of a sorted generation keeps it sorted, so
     // the children arrive as one sorted stream per move and one merge with
     // dedup produces the next generation already sorted: no hashing, and no
     // memory beyond the output itself. The output key space is split at sampled
     // quantiles so the partitions can merge in parallel
-    let expand (token: System.Threading.CancellationToken) (universe: Universe) (frontier: uint64[]) : uint64[] =
-        let options = System.Threading.Tasks.ParallelOptions(CancellationToken = token)
+    let expand (token: System.Threading.CancellationToken) (universe: Universe) (frontier: State[]) : State[] =
         let live = Array.zeroCreate frontier.Length
-
-        System.Threading.Tasks.Parallel.For(
-            0,
-            frontier.Length,
-            options,
-            (fun at -> live[at] <- liveMask universe frontier[at])
-        )
-        |> ignore
+        inParallel token frontier.Length (fun at -> live[at] <- liveMask universe frontier[at])
 
         // Sampled children, for boundaries that balance the partitions
-        let sample = ResizeArray<uint64>()
+        let sample = ResizeArray<State>()
         let stride = max 1 (frontier.Length / 1024)
 
         for at in 0..stride .. frontier.Length - 1 do
@@ -195,28 +241,31 @@ module private Word =
             if sample.Count < 64 then
                 1
             else
+#if FABLE_COMPILER
+                1 // JS merges one partition after another anyway
+#else
                 min (System.Environment.ProcessorCount * 4) (sample.Count / 16)
+#endif
 
         let bounds =
             Array.init
                 (partitions + 1)
                 (fun partition ->
-                    if partition = 0 then 0UL
-                    elif partition = partitions then System.UInt64.MaxValue
+                    if partition = 0 then place 0 0
+                    elif partition = partitions then top
                     else sample[partition * sample.Count / partitions]
                 )
 
-        let lowerBound (value: uint64) : int =
-            let found = System.Array.BinarySearch(frontier, value)
+        let lowerBound (value: State) : int =
+            let found = search frontier value
             if found >= 0 then found else ~~~found
 
-        let buffers = Array.init partitions (fun _ -> ResizeArray<uint64>())
+        let buffers = Array.init partitions (fun _ -> ResizeArray<State>())
 
-        System.Threading.Tasks.Parallel.For(
-            0,
-            partitions,
-            options,
-            fun partition ->
+        inParallel
+            token
+            partitions
+            (fun partition ->
                 let low = bounds[partition]
                 let high = bounds[partition + 1]
 
@@ -224,7 +273,7 @@ module private Word =
                 // move lands inside this partition's slice of key space
                 let position = Array.zeroCreate moves.Length
                 let finish = Array.zeroCreate moves.Length
-                let current = Array.create moves.Length System.UInt64.MaxValue
+                let current = Array.create moves.Length top
 
                 for index in 0 .. moves.Length - 1 do
                     let delta = moves[index]
@@ -243,16 +292,12 @@ module private Word =
                     position[index] <- at
                     finish[index] <- finishAt
 
-                    current[index] <-
-                        if at < finishAt then
-                            frontier[at] + delta
-                        else
-                            System.UInt64.MaxValue
+                    current[index] <- if at < finishAt then frontier[at] + delta else top
 
                 // The merge: emit the smallest child not yet emitted, advance
                 // its cursor to the next parent that lives through the move
                 let output = buffers[partition]
-                let mutable emitted = System.UInt64.MaxValue
+                let mutable emitted = top
                 let mutable draining = true
 
                 while draining do
@@ -262,7 +307,7 @@ module private Word =
                         if current[index] < current[best] then
                             best <- index
 
-                    if current[best] = System.UInt64.MaxValue then
+                    if current[best] = top then
                         draining <- false
                     else
                         if current[best] <> emitted then
@@ -283,13 +328,8 @@ module private Word =
 
                         position[best] <- at
 
-                        current[best] <-
-                            if at < finishAt then
-                                frontier[at] + moves[best]
-                            else
-                                System.UInt64.MaxValue
-        )
-        |> ignore
+                        current[best] <- if at < finishAt then frontier[at] + moves[best] else top
+            )
 
         let states = Array.zeroCreate (buffers |> Array.sumBy (fun buffer -> buffer.Count))
         let mutable at = 0
@@ -304,9 +344,9 @@ module private Word =
     // average over every card that could come, a bust worth nothing
     let afterHitting
         (universe: Universe)
-        (nextStates: uint64[])
+        (nextStates: State[])
         (nextWorths: float[])
-        (state: uint64)
+        (state: State)
         (spare: int)
         (remaining: int)
         : float =
@@ -317,7 +357,7 @@ module private Word =
             let count = copiesLeft universe state index
 
             if count > 0 && (spare > 0 || not (isValue[index] && m > 0)) then
-                let child = System.Array.BinarySearch(nextStates, drawn state (moveOf spare index))
+                let child = search nextStates (drawn state (moveOf spare index))
                 sum <- sum + float count / float remaining * nextWorths[child]
 
         sum
@@ -325,7 +365,7 @@ module private Word =
     // What a state is worth held: the better of banking now and playing on. A
     // hand that has flipped seven banks whatever the sight, because the round
     // ends there
-    let worthOf (universe: Universe) (nextStates: uint64[]) (nextWorths: float[]) (state: uint64) : float =
+    let worthOf (universe: Universe) (nextStates: State[]) (nextWorths: float[]) (state: State) : float =
         let struct (banked, distinct, spare, remaining) = facts universe state
 
         if distinct >= 7 then
@@ -333,7 +373,7 @@ module private Word =
         else
             max banked (afterHitting universe nextStates nextWorths state spare remaining)
 
-    let bankedOf (universe: Universe) (state: uint64) : float =
+    let bankedOf (universe: Universe) (state: State) : float =
         let struct (banked, _, _, _) = facts universe state
         banked
 
@@ -364,6 +404,15 @@ module private Word =
 /// Disposing the searcher cancels whatever work remains, as does the
 /// cancellation token it may be given; members awaiting a cancelled table raise
 /// the usual OperationCanceledException.
+///
+/// Under Fable, JS having the one thread, the work waits for the event loop's
+/// next turn instead and then runs to the end without yielding, and its answers
+/// are the same to the bit. A searcher disposed or cancelled before the work
+/// starts cancels the members awaiting it, as Fable cancels an async, rather
+/// than raising in them. The progress callback is all that runs meanwhile, and
+/// a cancellation from there fails them with the plain Exception Fable raises
+/// for a cancelled token, or, from its last report, cancels them where .NET
+/// would still answer.
 /// </summary>
 type public Lookahead
     (
@@ -384,13 +433,19 @@ type public Lookahead
         | None -> invalidArg (nameof deck) "the deck holds more copies of a card than the full deck ever had"
 
     let report = defaultArg progress ignore
-    let canceller =
-        match cancellation with
-        | Some token -> System.Threading.CancellationTokenSource.CreateLinkedTokenSource token
-        | None -> new System.Threading.CancellationTokenSource()
+    let canceller = new System.Threading.CancellationTokenSource()
+
+    // The caller's token cancels the searcher's own, as a linked source would.
+    // Fable has no linked sources, so the link is a registration, undone on
+    // disposal. Like a linked source it holds the searcher's own source, never
+    // the searcher, so a long-lived token keeps no table alive
+    let link =
+        let canceller = canceller
+
+        cancellation
+        |> Option.map (fun token -> token.Register(fun () -> canceller.Cancel()) :> System.IDisposable)
 
     let token = canceller.Token
-    let options = System.Threading.Tasks.ParallelOptions(CancellationToken = token)
     let mutable disposed = false
 
     let roots =
@@ -413,7 +468,9 @@ type public Lookahead
     // finished it, so awaiters never queue up behind one another
     let table =
         fun () ->
-            let watch = System.Diagnostics.Stopwatch.StartNew()
+            let started = System.DateTime.UtcNow // Fable has no Stopwatch
+            let elapsed () =
+                (System.DateTime.UtcNow - started).TotalSeconds
 
             // The sweep needs its generations sorted, and the hands arrive in
             // whatever order the caller grew them
@@ -423,29 +480,21 @@ type public Lookahead
             // just before it. Nothing else survives the sweep: the backward
             // pass re-sweeps as it descends, trading a little repeated sweeping
             // for never holding more than a rolling pair
-            let sweepTo (level: int) : uint64[] * uint64[] =
+            let sweepTo (level: int) : Word.State[] * Word.State[] =
                 let mutable previous = [||]
                 let mutable current = start
 
                 for step in 1..level do
                     previous <- current
                     current <- Word.expand token universe current
-                    report $"sweep {step}/{level}: {current.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
+                    report $"sweep {step}/{level}: {current.Length} states, %.0f{elapsed ()}s"
 
                 previous, current
 
             // Price a generation in parallel, under the cancellation token
-            let priceBy (price: uint64 -> float) (states: uint64[]) : float[] =
+            let priceBy (price: Word.State -> float) (states: Word.State[]) : float[] =
                 let worths = Array.zeroCreate states.Length
-
-                System.Threading.Tasks.Parallel.For(
-                    0,
-                    states.Length,
-                    options,
-                    (fun at -> worths[at] <- price states[at])
-                )
-                |> ignore
-
+                Word.inParallel token states.Length (fun at -> worths[at] <- price states[at])
                 worths
 
             // The backward pass: the deepest generation banks - its sight is
@@ -455,7 +504,7 @@ type public Lookahead
             let mutable aboveStates = deepest
             let mutable aboveWorths = deepest |> priceBy (Word.bankedOf universe)
 
-            report $"price {depth}/{depth}: {deepest.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
+            report $"price {depth}/{depth}: {deepest.Length} states, %.0f{elapsed ()}s"
 
             for level in depth - 1 .. -1 .. 1 do
                 let states =
@@ -473,12 +522,12 @@ type public Lookahead
                 let worths = states |> priceBy (Word.worthOf universe nextStates nextWorths)
                 aboveStates <- states
                 aboveWorths <- worths
-                report $"price {level}/{depth}: {states.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
+                report $"price {level}/{depth}: {states.Length} states, %.0f{elapsed ()}s"
 
             // The generation one draw in stays alive: the hands are priced
             // against it, and the draw-by-draw questions read from it too
             let childStates, childWorths = aboveStates, aboveWorths
-            let gains = Dictionary<uint64, float>()
+            let gains = Dictionary<Word.State, float>()
 
             for state in roots do
                 let struct (banked, distinct, spare, remaining) = Word.facts universe state
@@ -492,12 +541,39 @@ type public Lookahead
 
             gains, childStates, childWorths
         |> fun work ->
+#if FABLE_COMPILER
+            // JS has no thread pool: the work waits for the event loop's next
+            // turn, so the constructor still returns first. Fable's
+            // Async.StartAsTask imports a function its library lacks, so a
+            // completion source stands in, and its runtime spells SetCanceled
+            // SetCancelled, so a cancellation is passed on as the exception it
+            // is, which awaiters treat as cancelled. JS reports a promise
+            // rejected with nothing to handle it, so the table handles its
+            // own, as fable-library's startChild does, and a searcher cancelled
+            // before anything awaits it is harmless
+            let source = System.Threading.Tasks.TaskCompletionSource<_>()
+            Async.StartWithContinuations(Async.AwaitTask source.Task, ignore, ignore, ignore)
+
+            Async.StartWithContinuations(
+                async {
+                    do! Async.Sleep 0
+                    return work ()
+                },
+                source.SetResult,
+                source.SetException,
+                source.SetException,
+                token
+            )
+
+            source.Task
+#else
             System.Threading.Tasks.Task.Factory.StartNew(
                 work,
                 token,
                 System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously,
                 System.Threading.Tasks.TaskScheduler.Default
             )
+#endif
 
     /// <summary>
     /// What hitting is worth over standing, in points of expected round score,
@@ -539,8 +615,7 @@ type public Lookahead
                 if Word.isValue[index] && m > 0 && spare <= 0 then
                     return Ok 0.0 // the draw busts, and a bust banks nothing
                 else
-                    let child =
-                        System.Array.BinarySearch(childStates, Word.drawn state (Word.moveOf spare index))
+                    let child = Word.search childStates (Word.drawn state (Word.moveOf spare index))
                     return Ok childWorths[child]
     }
 
@@ -548,5 +623,6 @@ type public Lookahead
         member _.Dispose() =
             if not disposed then
                 disposed <- true
+                link |> Option.iter (fun link -> link.Dispose())
                 canceller.Cancel()
                 canceller.Dispose()
