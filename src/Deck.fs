@@ -203,12 +203,30 @@ module public Deck =
         assert (count > 0u)
         assert (IsEmpty deck |> not)
 
-        let drawnCard =
+        // The card FSharp.Core's Array.randomShuffleWith puts first among the
+        // deck's cards laid out in Map order, drawing what it draws, so that a
+        // seed deals what it always has: Next(0, n) picks the first card, and
+        // the Next(i, n) for i from 1 to n - 2 only reorder the cards behind
+        // it. Fable's shuffle draws other numbers, so it is spelled out here
+        let cards = deck |> Map.fold (fun cards _ count -> cards + int count) 0
+        let index = if cards > 1 then random.Next(0, cards) else 0
+
+        for i in 1 .. cards - 2 do
+            random.Next(i, cards) |> ignore
+
+        // Counts the index down by each card's copies in Map order: the card
+        // that takes it below zero is the one at the index, and is kept from
+        // then on. The first card always replaces the Zero it starts from
+        let struct (drawnCard, _) =
             deck
-            |> Map.toArray
-            |> Array.collect (fun (card, count) -> Array.replicate (int count) card)
-            |> Array.randomShuffleWith random
-            |> Array.head
+            |> Map.fold
+                (fun struct (drawn, left) card count ->
+                    if left < 0 then
+                        struct (drawn, left)
+                    else
+                        struct (card, left - int count)
+                )
+                struct (ValueCard Card.Zero, index)
 
         let deck' =
             Map.change
