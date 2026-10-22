@@ -4,9 +4,9 @@ default: patch
 
 # Deal and write the same in JavaScript as on .NET
 
-A seeded game compiled with Fable now deals the cards it deals on .NET, and the
-library writes the same text on both. Nothing changes on .NET: every seed deals
-what it always has, and drawing a card is faster.
+A seeded game compiled with Fable now deals the cards it deals on .NET, and
+strategy and targeting strings are written the same on both. On .NET every seed
+deals what it always has, and drawing a card is faster.
 
 Fixes:
 
@@ -21,5 +21,7 @@ Fixes:
   writes it, `-0`, `1.5E-05` and `1E+21` included, where it was written `0`,
   `0.000015` and `1e+21`. Both platforms still read either form.
 - `Deck.Random`, `Deck.Draw1`, `Deck.Draw3` and `Timeline.Simulate` compile
-  with Fable too. They draw from a new unseeded `System.Random` rather than
-  `System.Random.Shared`, and are still obsolete.
+  with Fable too. On both platforms they draw from a new unseeded
+  `System.Random` rather than `System.Random.Shared`, and are still obsolete. A
+  `Timeline.Simulate` timeline keeps its one `System.Random`, so enumerate it
+  from one consumer at a time.
