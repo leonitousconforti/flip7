@@ -608,10 +608,10 @@ let private sameDouble (read: float) (value: float) =
     else
         BitConverter.DoubleToInt64Bits read = BitConverter.DoubleToInt64Bits value
 
-// Every form either platform writes is read, and to the same double on both:
-// .NET writes 1E-05 where JavaScript writes 1e-5 and 1e+21, and a point may
-// have digits on only one side. An exponent past the largest double reads as
-// Infinity, and a count reaches the top of uint's range
+// Every form either platform writes or has written is read, and to the same
+// double on both: .NET writes 1E-05 where JavaScript used to write 1e-5 and
+// 1e+21, and a point may have digits on only one side. An exponent past the
+// largest double reads as Infinity, and a count reaches the top of uint's range
 [<Fact>]
 let ``a number in any form either platform writes parses to its value`` () =
     let accepted = [
@@ -645,6 +645,31 @@ let ``a number in any form either platform writes parses to its value`` () =
         | strategy, targeting -> Assert.Fail $"{text} parsed as {strategy} and {targeting}"
 
     Assert.Equal(Some(Strategy.ChasesFlip7(0u, UInt32.MaxValue)), Strategy.TryParse "ChasesFlip7 0 4294967295")
+
+// A float is written as .NET's ToString("R") writes it, which JavaScript
+// copies to write the same text: the shortest digits that read back, with an
+// exponent of at least two digits below 0.0001 and from 1e17, and -0 kept
+[<Fact>]
+let ``a number is written in the shortest form, with an exponent below 0.0001 and from 1e17`` () =
+    let written = [
+        0.0001, "0.0001"
+        0.00015, "0.00015"
+        1.5e-5, "1.5E-05"
+        1e-7, "1E-07"
+        0.1 + 0.2, "0.30000000000000004"
+        1e16, "10000000000000000"
+        12345678901234567.0, "12345678901234568"
+        1e17, "1E+17"
+        123456789012345678901.0, "1.2345678901234568E+20"
+        1e21, "1E+21"
+        -2.5e-300, "-2.5E-300"
+        Double.Epsilon, "5E-324"
+        Double.MaxValue, "1.7976931348623157E+308"
+        -0.0, "-0"
+    ]
+
+    for value, text in written do
+        Assert.Equal($"RandomWithProbability {text}", string (Strategy.RandomWithProbability value))
 
 // Any double at all, from a random 64-bit pattern. The exponent is left as
 // drawn, or cleared for the zeros and subnormals, or filled for the
