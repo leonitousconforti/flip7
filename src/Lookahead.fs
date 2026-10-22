@@ -436,8 +436,11 @@ type public Lookahead
 
     // The caller's token cancels the searcher's own, as a linked source would.
     // Fable has no linked sources, so the link is a registration, undone on
-    // disposal
+    // disposal. Like a linked source it holds the searcher's own source, never
+    // the searcher, so a long-lived token keeps no table alive
     let link =
+        let canceller = canceller
+
         cancellation
         |> Option.map (fun token -> token.Register(fun () -> canceller.Cancel()) :> System.IDisposable)
 
