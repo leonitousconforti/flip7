@@ -6,6 +6,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Under Fable, what the tests use of xunit, FsCheck and .NET that Fable
+         lacks, and last the entry FableEntry.fsx writes, which runs them -->
+    <Compile Include="Fable.fs" Condition="'$(FABLE_COMPILER)' == 'true'" />
     <Compile Include="Support.fs" />
     <Compile Include="Games.fs" />
     <Compile Include="ScoreBucketsTests.fs" />
@@ -16,23 +19,34 @@
     <Compile Include="SimulationTests.fs" />
     <Compile Include="EventTests.fs" />
     <Compile Include="TimelineTests.fs" />
-    <Compile Include="PersistenceTests.fs" />
+    <Compile Include="PersistenceTests.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
     <Compile Include="ObservationTests.fs" />
     <Compile Include="InferenceTests.fs" />
-    <Compile Include="LookaheadTests.fs" />
+    <Compile Include="LookaheadTests.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
     <Compile Include="AimTests.fs" />
     <Compile Include="PropertyTests.fs" />
+    <Compile Include="FableEntry.g.fs" Condition="'$(FABLE_COMPILER)' == 'true'" />
   </ItemGroup>
 
-  <ItemGroup>
+  <!-- Flip7Package names a packed version of the library to test in place of its sources,
+       exactly, so a restore that cannot find it fails rather than takes a published one -->
+  <ItemGroup Condition="'$(Flip7Package)' == ''">
     <ProjectReference Include="..\src\Flip7.fsproj" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(Flip7Package)' != ''">
+    <PackageReference Include="Flip7" Version="[$(Flip7Package)]" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(FABLE_COMPILER)' != 'true'">
     <PackageReference Include="FsCheck" Version="3.6.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageReference Include="xunit.v3" Version="4.0.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(FABLE_COMPILER)' == 'true'">
+    <PackageReference Include="Fable.Core" Version="5.5.0" />
   </ItemGroup>
 
 </Project>

@@ -742,11 +742,11 @@ module public Timeline =
     let public SimulateWith (random: System.Random) (players: list<string * Strategy * Targeting>) : Timeline =
         SimulateWithDecider random Strategy.Decider.Default players
 
-#if !FABLE_COMPILER
     /// <summary>
-    /// Simulates a full game without threading a source of randomness.
+    /// Simulates a full game without threading a source of randomness. The
+    /// timeline holds one unseeded Random, which is not thread-safe, so
+    /// enumerate it from one consumer at a time.
     /// </summary>
-    [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Timeline.SimulateWith instead")>]
+    [<System.Obsolete("Hidden unseeded randomness is a footgun: thread a System.Random from the edge of the program into Timeline.SimulateWith instead")>]
     let public Simulate (players: list<string * Strategy * Targeting>) : Timeline =
-        SimulateWith System.Random.Shared players
-#endif
+        SimulateWith (System.Random()) players
