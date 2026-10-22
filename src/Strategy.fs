@@ -215,15 +215,24 @@ module public rec Strategy =
             | _, opponents -> opponents |> List.maxBy Player.Showing
 
         // Helps the least: whoever is furthest behind, the first of them on a
-        // tie, which List.minBy keeps on .NET but not under Fable
+        // tie, which List.minBy keeps on .NET but not under Fable. Like
+        // List.minBy it shows each player once, and it starts from the head,
+        // which stays even should the head show as much as a uint holds
         let helpsLeast () =
-            candidates
-            |> List.reduce (fun least candidate ->
-                if Player.Showing candidate < Player.Showing least then
-                    candidate
-                else
-                    least
-            )
+            let struct (least, _) =
+                candidates
+                |> List.fold
+                    (fun struct (least, fewest) candidate ->
+                        let showing = Player.Showing candidate
+
+                        if showing < fewest then
+                            struct (candidate, showing)
+                        else
+                            struct (least, fewest)
+                    )
+                    struct (List.head candidates, System.UInt32.MaxValue)
+
+            least
 
         match targeting with
         | Targeting.ChoosesRandomly -> Choice2Of2 candidates
