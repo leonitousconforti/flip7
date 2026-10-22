@@ -73,6 +73,7 @@ let ``an empty deck takes the discards in as the new deck`` () =
     Assert.True(Deck.IsEmpty discards')
     Assert.Equal(91I, Deck.Count deck')
 
+#if !FABLE_COMPILER
 [<Fact>]
 let ``drawing with every card in a hand fails rather than hangs`` () =
     // Two empty piles used to be shuffled into each other forever, so the draw
@@ -87,6 +88,7 @@ let ``drawing with every card in a hand fails rather than hangs`` () =
         )
 
     Assert.Contains("the deck and the discards are both empty", error.Message)
+#endif
 
 // The deck and the discards pooled into one count per card
 let private pooled (deck: Deck, discards: Deck) : Deck =
@@ -126,6 +128,7 @@ let ``a draw conserves every card and touches the discards only to reshuffle the
 // FSharp.Core's Array.randomShuffleWith puts first among the deck's cards laid
 // out in Map order, and makes the calls that shuffle makes: Next(0, n), which
 // picks the card, then Next(i, n) for each i from 1 to n - 2
+#if !FABLE_COMPILER
 [<Fact>]
 let ``a draw takes the card FSharp.Core's shuffle puts first, and costs the Random what the shuffle does`` () =
     // A lone card costs no call and two cards only the one that picks, so both
@@ -170,6 +173,7 @@ let ``a draw takes the card FSharp.Core's shuffle puts first, and costs the Rand
                     (drawn = first && leftAsShuffled)
         )
     |> Check.QuickThrowOnFailure
+#endif
 
 // ---- saved format ----
 
@@ -224,14 +228,22 @@ let ``a deck that is not exactly the lines Serialize writes is None rather than 
     ]
 
     // An exception is reported under its label like a deck that read, so one
-    // bad input that raises does not hide the rest
+    // bad input that raises does not hide the rest: by its type, or in
+    // JavaScript, where Fable cannot name it, by its message
+    let raised (error: exn) =
+#if FABLE_COMPILER
+        error.Message
+#else
+        error.GetType().Name
+#endif
+
     let wrong = [
         for label, lines in badInputs do
             try
                 if Option.isSome (Deck.TryDeserialize lines) then
                     yield $"{label}: read as a deck"
             with error ->
-                yield $"{label}: raised {error.GetType().Name}"
+                yield $"{label}: raised {raised error}"
     ]
 
     Assert.True(wrong.IsEmpty, String.concat "\n" wrong)

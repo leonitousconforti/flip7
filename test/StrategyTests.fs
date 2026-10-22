@@ -796,11 +796,15 @@ let ``a targeting takes sides three deep, but not four`` () =
 [<Fact>]
 let ``parsing a targeting costs no more than reading it`` () =
     let parsed (text: string) =
+#if FABLE_COMPILER
+        Targeting.TryParse text
+#else
         let before = GC.GetAllocatedBytesForCurrentThread()
         let targeting = Targeting.TryParse text
         let allocated = GC.GetAllocatedBytesForCurrentThread() - before
         Assert.True(allocated < 32_000_000L, $"parsing {text.Length} characters allocated {allocated} bytes")
         targeting
+#endif
 
     Assert.Equal(None, parsed (String.replicate 2_000 "TakesSides otherwise " + "PlaysSpitefully"))
 

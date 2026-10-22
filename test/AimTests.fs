@@ -246,6 +246,7 @@ let private roadsOf (timeline: Instant list) (asked: Asked list) : Roads =
                 )
     }
 
+#if !FABLE_COMPILER
 [<Fact>]
 let ``the questions a timeline reveals are the questions the engine asked, one for one`` () =
     let roads = ResizeArray<Roads>()
@@ -341,6 +342,7 @@ let ``the aims follow a deal3 down its rarest roads`` () =
         (roads 1266).AimsPassedTwice > 0,
         "seed 1266 no longer passes two second chances on during one deal3's flips; pick a new seed"
     )
+#endif
 
 // ---- Inference: how a player aims ----
 
@@ -368,7 +370,11 @@ let private pickedBy (targeting: Targeting) (aim: Observation) : string =
 let private genAims: Gen<Observation list> =
     genGameWithFork
     |> Gen.map (fun (seed, lineup, _) ->
+#if FABLE_COMPILER
+        let timeline = Timeline.SimulateWithDecider (Random seed) own lineup |> played
+#else
         let timeline, _, _ = playForked id seed lineup None
+#endif
 
         observationsOf timeline
         |> List.where (fun observation -> observation.Choice.IsChoice2Of2)
