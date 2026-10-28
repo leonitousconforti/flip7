@@ -181,23 +181,6 @@ module private Word =
 
         mask
 
-    // Where a state sits in a sorted generation, or the complement of where it
-    // would go, as Array.BinarySearch answers. Fable has no BinarySearch, and
-    // written out and inlined the search is quicker on .NET too
-    let inline search (states: State[]) (state: State) : int =
-        let mutable low = 0
-        let mutable high = states.Length - 1
-        let mutable found = -1
-
-        while found < 0 && low <= high do
-            let middle = (low + high) >>> 1
-
-            if states[middle] < state then low <- middle + 1
-            elif states[middle] > state then high <- middle - 1
-            else found <- middle
-
-        if found >= 0 then found else ~~~low
-
     // Every index below a count, in parallel under the token. JS has the one
     // thread, so Fable runs them in order
     let inline inParallel
@@ -257,7 +240,7 @@ module private Word =
                 )
 
         let lowerBound (value: State) : int =
-            let found = search frontier value
+            let found = System.Array.BinarySearch(frontier, value)
             if found >= 0 then found else ~~~found
 
         let buffers = Array.init partitions (fun _ -> ResizeArray<State>())
@@ -357,7 +340,7 @@ module private Word =
             let count = copiesLeft universe state index
 
             if count > 0 && (spare > 0 || not (isValue[index] && m > 0)) then
-                let child = search nextStates (drawn state (moveOf spare index))
+                let child = System.Array.BinarySearch(nextStates, drawn state (moveOf spare index))
                 sum <- sum + float count / float remaining * nextWorths[child]
 
         sum
@@ -615,7 +598,8 @@ type public Lookahead
                 if Word.isValue[index] && m > 0 && spare <= 0 then
                     return Ok 0.0 // the draw busts, and a bust banks nothing
                 else
-                    let child = Word.search childStates (Word.drawn state (Word.moveOf spare index))
+                    let child =
+                        System.Array.BinarySearch(childStates, Word.drawn state (Word.moveOf spare index))
                     return Ok childWorths[child]
     }
 
