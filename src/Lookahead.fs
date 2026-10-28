@@ -444,9 +444,7 @@ type public Lookahead
     // finished it, so awaiters never queue up behind one another
     let table =
         fun () ->
-            let started = System.DateTime.UtcNow // Fable has no Stopwatch
-            let elapsed () =
-                (System.DateTime.UtcNow - started).TotalSeconds
+            let watch = System.Diagnostics.Stopwatch.StartNew()
 
             // The sweep needs its generations sorted, and the hands arrive in
             // whatever order the caller grew them
@@ -463,7 +461,7 @@ type public Lookahead
                 for step in 1..level do
                     previous <- current
                     current <- Word.expand token universe current
-                    report $"sweep {step}/{level}: {current.Length} states, %.0f{elapsed ()}s"
+                    report $"sweep {step}/{level}: {current.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
 
                 previous, current
 
@@ -480,7 +478,7 @@ type public Lookahead
             let mutable aboveStates = deepest
             let mutable aboveWorths = deepest |> priceBy (Word.bankedOf universe)
 
-            report $"price {depth}/{depth}: {deepest.Length} states, %.0f{elapsed ()}s"
+            report $"price {depth}/{depth}: {deepest.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
 
             for level in depth - 1 .. -1 .. 1 do
                 let states =
@@ -498,7 +496,7 @@ type public Lookahead
                 let worths = states |> priceBy (Word.worthOf universe nextStates nextWorths)
                 aboveStates <- states
                 aboveWorths <- worths
-                report $"price {level}/{depth}: {states.Length} states, %.0f{elapsed ()}s"
+                report $"price {level}/{depth}: {states.Length} states, %.0f{watch.Elapsed.TotalSeconds}s"
 
             // The generation one draw in stays alive: the hands are priced
             // against it, and the draw-by-draw questions read from it too
