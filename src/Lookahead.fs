@@ -388,14 +388,10 @@ module private Word =
 /// cancellation token it may be given; members awaiting a cancelled table raise
 /// the usual OperationCanceledException.
 ///
-/// Under Fable, JS having the one thread, the work waits for the event loop's
-/// next turn instead and then runs to the end without yielding, and its answers
-/// are the same to the bit. A searcher disposed or cancelled before the work
-/// starts cancels the members awaiting it, as Fable cancels an async, rather
-/// than raising in them. The progress callback is all that runs meanwhile, and
-/// a cancellation from there fails them with the plain Exception Fable raises
-/// for a cancelled token, or, from its last report, cancels them where .NET
-/// would still answer.
+/// Under Fable, JS having the one thread, the work starts only once the code
+/// that made the searcher yields, and then runs to the end without yielding.
+/// The progress callback is all that runs meanwhile, so once the work has
+/// started only a cancellation from there can stop it.
 /// </summary>
 type public Lookahead
     (
