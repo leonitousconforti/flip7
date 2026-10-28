@@ -120,6 +120,58 @@ let ``a draw conserves every card and touches the discards only to reshuffle the
         )
     |> Check.QuickThrowOnFailure
 
+// A seed deals what it always has, since the digests of whole games, the seeds
+// other tests were found at and the --seed of the terminal app all rest on it.
+// A draw takes the card FSharp.Core's Array.randomShuffleWith puts first among
+// the deck's cards laid out in Map order, and makes the calls that shuffle
+// makes: Next(0, n), which picks the card, then Next(i, n) for each i from 1
+// to n - 2. JavaScript deals the same once Fable's shuffle makes those calls
+// too: https://github.com/fable-compiler/Fable/pull/5197
+[<Fact>]
+let ``a draw takes the card FSharp.Core's shuffle puts first, and costs the Random what the shuffle does`` () =
+    // A lone card costs no call and two cards only the one that picks, so both
+    // are drawn beside FsCheck's decks
+    let decks =
+        Gen.frequency [
+            1, Gen.map (List.singleton >> deckOf) genCard
+            1, Gen.map deckOf (Gen.listOfLength 2 genCard)
+            4, Gen.filter (Deck.IsEmpty >> not) genDeck
+        ]
+
+    Prop.forAll
+        (Arb.fromGen (Gen.zip genSeed decks))
+        (fun (seed, deck) ->
+            let cards =
+                deck
+                |> Map.toArray
+                |> Array.collect (fun (card, count) -> Array.replicate (int count) card)
+
+            let shuffled = Random seed
+            let first = Array.randomShuffleWith shuffled cards |> Array.head
+
+            let recording = Recording seed
+            let _, drawn = Deck.Draw1With recording (deck, Deck.Empty)
+            let made = List.ofSeq recording.Made
+            let leftAsShuffled = recording.Next() = shuffled.Next()
+
+            // The calls a Random of the same seed answers the same way
+            let replay = Random seed
+            let n = cards.Length
+            let expected = [ for i in 0 .. n - 2 -> Shuffled(0, i, n, replay.Next(i, n)) ]
+
+            let picked =
+                match expected with
+                | Shuffled(_, _, _, index) :: _ -> cards[index]
+                | _ -> cards[0]
+
+            Prop.label "the draw calls Next(i, n) for each i from 0 to n - 2 and nothing else" (made = expected)
+            .&. Prop.label "the card is the one the first call picks, counting copies in Map order" (drawn = picked)
+            .&. Prop.label
+                    "the card is the one the shuffle puts first, and the Random is left where the shuffle leaves it"
+                    (drawn = first && leftAsShuffled)
+        )
+    |> Check.QuickThrowOnFailure
+
 // ---- saved format ----
 
 [<Fact>]
