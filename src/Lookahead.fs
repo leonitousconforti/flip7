@@ -516,30 +516,9 @@ type public Lookahead
             gains, childStates, childWorths
         |> fun work ->
 #if FABLE_COMPILER
-            // JS has no thread pool: the work waits for the event loop's next
-            // turn, so the constructor still returns first. Fable's
-            // Async.StartAsTask imports a function its library lacks, so a
-            // completion source stands in, and its runtime spells SetCanceled
-            // SetCancelled, so a cancellation is passed on as the exception it
-            // is, which awaiters treat as cancelled. JS reports a promise
-            // rejected with nothing to handle it, so the table handles its
-            // own, as fable-library's startChild does, and a searcher cancelled
-            // before anything awaits it is harmless
-            let source = System.Threading.Tasks.TaskCompletionSource<_>()
-            Async.StartWithContinuations(Async.AwaitTask source.Task, ignore, ignore, ignore)
-
-            Async.StartWithContinuations(
-                async {
-                    do! Async.Sleep 0
-                    return work ()
-                },
-                source.SetResult,
-                source.SetException,
-                source.SetException,
-                token
-            )
-
-            source.Task
+            // JS has no thread pool: the work starts once the code that made
+            // the searcher yields, so the constructor still returns first
+            System.Threading.Tasks.Task.Run(work, token)
 #else
             System.Threading.Tasks.Task.Factory.StartNew(
                 work,
