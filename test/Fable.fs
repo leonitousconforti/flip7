@@ -6,7 +6,7 @@
 // and Async.RunSynchronously drains the async trampoline in a loop, which
 // holds for the engine because it never waits on a timer or a promise. Last
 // comes the runner the entry hands every test to, which knows the tests that
-// fail in JavaScript and why. Compiled only under Fable.
+// fail in JavaScript until a Fable fix ships. Compiled only under Fable.
 //
 // What JavaScript cannot run stays in #if !FABLE_COMPILER, or has an
 // #if FABLE_COMPILER of its own: a Recording, since Fable cannot inherit
@@ -80,7 +80,7 @@ type Assert =
 
     // Only the exception asked for passes, as in xunit, not one derived from
     // it. A plain Exception is told apart from any other wrong one, since it
-    // is what Fable compiles invalidArg and invalidOp to
+    // is what invalidArg and invalidOp throw until a fix the runner lists ships
     static member inline Throws<'T when 'T :> exn>(testCode: Action) : 'T =
         match Record.Exception testCode with
         | :? 'T as error when emitJsExpr (error, jsConstructor<'T>) "$0.constructor === $1" -> error
@@ -136,7 +136,9 @@ module Testable =
         | other -> failwithf "not a testable: %A" other
 
 type Check =
-    // Tries the property at sizes growing from 1 to 100, as FsCheck does
+    // Tries the property at sizes growing from 1 to 100, as FsCheck does. A
+    // body that threw is told apart from one found false, so a test listed as
+    // falsifiable in JavaScript is wrong there if it throws instead
     static member One(config: Config, testable: 'Testable) : unit =
         let random = Random config.Seed
 
@@ -146,14 +148,13 @@ type Check =
             match Testable.outcome (box testable) size random with
             | Holds -> ()
             | Fails(labels, reason) ->
+                let verdict =
+                    if reason.StartsWith "threw " then
+                        "Threw"
+                    else
+                        "Falsifiable"
                 let labels = labels |> List.map (sprintf "\nLabel: %s") |> String.concat ""
-                failwithf
-                    "Falsifiable after %d tests (seed %d, size %d)%s\n%s"
-                    (test + 1)
-                    config.Seed
-                    size
-                    labels
-                    reason
+                failwithf "%s after %d tests (seed %d, size %d)%s\n%s" verdict (test + 1) config.Seed size labels reason
 
     static member QuickThrowOnFailure(testable: 'Testable) : unit =
         Check.One(Config.QuickThrowOnFailure, testable)
@@ -376,29 +377,85 @@ module FableAsync =
             drain computation (new System.Threading.CancellationTokenSource()).Token
 
 module Runner =
-    // The tests that fail in JavaScript, in every case they have, at an
-    // Assert.Throws: Fable compiles invalidArg and invalidOp to a plain
-    // Exception, so where the library refuses a call with them, an
-    // Assert.Throws<ArgumentException> or
-    // Assert.Throws<InvalidOperationException> is shown a plain Exception.
-    // Any other failure of theirs, a JavaScript error among them, is wrong
-    let private failsInJavaScript =
-        set [
-            "TimelineTests: seating the same name twice is refused"
-            "TimelineTests: seating a player who takes sides four deep is refused, and three deep plays"
-            "TimelineTests: continuing from a state with a repeated name is refused"
-            "TimelineTests: continuing with a seating that is not the table is refused"
-            "TimelineTests: an aim at a player who is not a candidate is refused"
-            "InferenceTests: a study refuses an empty grid, a strategy or policy decided externally, or a policy that takes sides"
-            "InferenceTests: a study continues only at an epsilon above 0 and at most 1"
-            "AimTests: aim evidence folded one aim at a time is the evidence scored at once"
-            "AimTests: carrying evidence into the next game moves only the sides, keeping each with the given probability"
-        ]
+    // Tests that fail in JavaScript until a Fable fix ships, and the start of
+    // the message they fail with until then
+    type private Listed = { Fix: string; FailsWith: string; Tests: string list }
+
+    let private failsInJavaScript = [
+        // Fable compiles invalidArg and invalidOp to a plain Exception, so
+        // where the library refuses a call with them, an
+        // Assert.Throws<ArgumentException> or
+        // Assert.Throws<InvalidOperationException> is shown one
+        {
+            Fix = "https://github.com/fable-compiler/Fable/pull/5152"
+            FailsWith = "Assert.Throws failed: a plain Exception was thrown"
+            Tests = [
+                "TimelineTests: seating the same name twice is refused"
+                "TimelineTests: seating a player who takes sides four deep is refused, and three deep plays"
+                "TimelineTests: continuing from a state with a repeated name is refused"
+                "TimelineTests: continuing with a seating that is not the table is refused"
+                "TimelineTests: an aim at a player who is not a candidate is refused"
+                "InferenceTests: a study refuses an empty grid, a strategy or policy decided externally, or a policy that takes sides"
+                "InferenceTests: a study continues only at an epsilon above 0 and at most 1"
+                "AimTests: aim evidence folded one aim at a time is the evidence scored at once"
+                "AimTests: carrying evidence into the next game moves only the sides, keeping each with the given probability"
+            ]
+        }
+        // Fable's Array.randomShuffleWith draws other numbers than
+        // FSharp.Core's, so a seed deals another game: its events differ, or
+        // it no longer plays out as its test was found to
+        {
+            Fix = "https://github.com/fable-compiler/Fable/pull/5197"
+            FailsWith = "Assert.Equal failed"
+            Tests = [ "TimelineTests: a seeded game produces exactly the events it always has" ]
+        }
+        {
+            Fix = "https://github.com/fable-compiler/Fable/pull/5197"
+            FailsWith = "Assert.True failed"
+            Tests = [
+                "TimelineTests: once a deal3 ends its target's round, the cards it set aside are discarded, never given out"
+                "AimTests: fitting a handful of games names each targeting, and a player who takes sides"
+                "PropertyTests: a question deep inside a deal3 is shown everything the deal3 has produced"
+            ]
+        }
+        // Fable's List.minBy keeps the last of a tie
+        {
+            Fix = "https://github.com/fable-compiler/Fable/pull/5198"
+            FailsWith = "Assert.Equal failed"
+            Tests = [
+                "StrategyTests: a second chance goes to the first of the players tied furthest behind"
+            ]
+        }
+        // Under Fable the library writes a float as string does, in
+        // JavaScript's form and -0 as 0, since Fable has no ToString("R").
+        // These pass once a release has it and the library writes with it there
+        // too
+        {
+            Fix = "https://github.com/fable-compiler/Fable/pull/5212"
+            FailsWith = "Assert.Equal failed"
+            Tests = [
+                "StrategyTests: a number is written in the shortest form, with an exponent below 0.0001 and from 1e17"
+            ]
+        }
+        {
+            Fix = "https://github.com/fable-compiler/Fable/pull/5212"
+            FailsWith = "Falsifiable"
+            Tests = [
+                "StrategyTests: any double round-trips through a strategy and a targeting string"
+            ]
+        }
+    ]
 
     // Runs every case of every test, a Theory's once per InlineData, and
     // raises at the end if any failed other than as listed, or any listed test
     // passed or was not run
     let run (cases: (string * string * (unit -> unit)) list) : unit =
+        let listedFor =
+            Map [
+                for entry in failsInJavaScript do
+                    for test in entry.Tests -> test, entry
+            ]
+
         let mutable passed = 0
         let mutable listed = 0
         let mutable wrong = 0
@@ -414,23 +471,23 @@ module Runner =
                 with error ->
                     Some error.Message
 
-            match error, failsInJavaScript.Contains test with
-            | None, false ->
+            match error, listedFor.TryFind test with
+            | None, None ->
                 passed <- passed + 1
                 printfn $"pass {name}"
-            | Some message, true when message.StartsWith "Assert.Throws failed: a plain Exception was thrown" ->
+            | Some message, Some expected when message.StartsWith expected.FailsWith ->
                 listed <- listed + 1
-                printfn $"fail {name}, as listed"
-            | None, true ->
+                printfn $"fail {name}, as listed until {expected.Fix}"
+            | None, Some expected ->
                 wrong <- wrong + 1
-                printfn $"FAIL {name}\n    passed, but is listed as failing in JavaScript"
+                printfn $"FAIL {name}\n    passed, but is listed as failing in JavaScript until {expected.Fix}"
             | Some message, _ ->
                 wrong <- wrong + 1
                 printfn $"FAIL {name}\n    {indented message}"
 
         let tests = cases |> List.map (fun (test, _, _) -> test) |> set
 
-        for test in failsInJavaScript - tests do
+        for test in set (Map.keys listedFor) - tests do
             wrong <- wrong + 1
             printfn $"FAIL {test}\n    is listed as failing in JavaScript, but was not run"
 
