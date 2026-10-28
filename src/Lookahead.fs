@@ -416,17 +416,10 @@ type public Lookahead
         | None -> invalidArg (nameof deck) "the deck holds more copies of a card than the full deck ever had"
 
     let report = defaultArg progress ignore
-    let canceller = new System.Threading.CancellationTokenSource()
-
-    // The caller's token cancels the searcher's own, as a linked source would.
-    // Fable has no linked sources, so the link is a registration, undone on
-    // disposal. Like a linked source it holds the searcher's own source, never
-    // the searcher, so a long-lived token keeps no table alive
-    let link =
-        let canceller = canceller
-
-        cancellation
-        |> Option.map (fun token -> token.Register(fun () -> canceller.Cancel()) :> System.IDisposable)
+    let canceller =
+        match cancellation with
+        | Some token -> System.Threading.CancellationTokenSource.CreateLinkedTokenSource token
+        | None -> new System.Threading.CancellationTokenSource()
 
     let token = canceller.Token
     let mutable disposed = false
@@ -607,6 +600,5 @@ type public Lookahead
         member _.Dispose() =
             if not disposed then
                 disposed <- true
-                link |> Option.iter (fun link -> link.Dispose())
                 canceller.Cancel()
                 canceller.Dispose()
