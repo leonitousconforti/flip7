@@ -125,7 +125,7 @@ type internal Followed = {
     Seating: string list option
     Table: string list
     Studied: Map<string, PlayerEvidence>
-    Oracle: Oracle
+    Oracle: Oracle.Oracle
     Scan: Observation.Scan
     Evidence: Map<string, PlayerEvidence>
 }
@@ -136,7 +136,7 @@ type internal Followed = {
 // where the game's stood for every game replayed from there
 [<NoComparison; NoEquality>]
 type internal Fork = {
-    Oracle: Oracle
+    Oracle: Oracle.Oracle
     History: Instant seq
     Seating: string list
     Round: uint

@@ -8,6 +8,7 @@ open FsCheck.FSharp
 open Xunit
 
 open Flip7
+open Flip7.Oracle
 open Support
 open Games
 
@@ -38,7 +39,7 @@ let private canonical (seed: int) : int =
     if seed = Int32.MinValue then Int32.MaxValue else abs seed
 
 let private classOf (seed: int) : int =
-    Seeded.ClassOf (Array.zeroCreate 56) (canonical seed)
+    KnuthSubtractiveGenerator.ClassOf (Array.zeroCreate 56) (canonical seed)
 
 // A deck as its cards, in Map order with copies side by side, as the engine
 // lays a deck out to shuffle it
@@ -57,13 +58,16 @@ let private cardsOf (deck: Deck) : Card list = [
 // from a Random of their own, seeded by the seed mixed with MurmurHash's
 // multiplier, so they vary from seed to seed without being drawn from the
 // stream under test
-let private dealt (seed: int) (expected: float) : Seeded.Constraint list * Seeded.Constraint =
+let private dealt
+    (seed: int)
+    (expected: float)
+    : KnuthSubtractiveGenerator.Constraint list * KnuthSubtractiveGenerator.Constraint =
     let random = Recording seed
     let questions = Random(seed ^^^ 0x5bd1e995)
-    let constraints = ResizeArray<Seeded.Constraint>()
+    let constraints = ResizeArray<KnuthSubtractiveGenerator.Constraint>()
     let mutable decks = Deck.Full, Deck.Empty
 
-    let draw () : Seeded.Constraint =
+    let draw () : KnuthSubtractiveGenerator.Constraint =
         if constraints.Count > 0 then
             for _ in 1 .. questions.Next 4 do
                 random.Next() |> ignore
@@ -80,17 +84,18 @@ let private dealt (seed: int) (expected: float) : Seeded.Constraint list * Seede
             High = Array.LastIndexOf(layout, card)
         }
 
-    while constraints.Count = 0 || Seeded.Expected constraints > expected do
+    while constraints.Count = 0
+          || KnuthSubtractiveGenerator.Expected constraints > expected do
         constraints.Add(draw ())
 
     List.ofSeq constraints, draw ()
 
 // Whether the real System.Random of a seed makes every call the constraints
 // describe
-let private makes (constraints: Seeded.Constraint list) (seed: int) : bool =
+let private makes (constraints: KnuthSubtractiveGenerator.Constraint list) (seed: int) : bool =
     let real = Random seed
 
-    let rec check (position: int) (constraints: Seeded.Constraint list) =
+    let rec check (position: int) (constraints: KnuthSubtractiveGenerator.Constraint list) =
         match constraints with
         | [] -> true
         | constrained :: _ when position < constrained.Position ->
@@ -110,7 +115,7 @@ let private strictlyAscending (seeds: int array) : bool =
 
 [<Fact>]
 let ``every value a seeded Random draws is the affine form of its seed's class`` () =
-    let forms = Seeded.AffineForms 1000
+    let forms = KnuthSubtractiveGenerator.AffineForms 1000
     let random = Random 20261016
 
     // Seeds either side of a change of class, which comes every few seeds. The
@@ -159,8 +164,8 @@ let ``every value a seeded Random draws is the affine form of its seed's class``
             let c = classOf seed
             let real = Random seed
 
-            Seq.init forms.Alpha.Length id
-            |> Seq.exists (fun k -> int64 (real.Next()) <> (forms.Alpha[k] * residue + forms.Gamma[4 * k + c]) % P)
+            forms
+            |> Seq.exists (fun form -> int64 (real.Next()) <> (form.Alpha * residue + form.Gamma c) % P)
         )
 
     Assert.Empty disagreeing
@@ -189,13 +194,13 @@ let ``a seed and its negation draw alike, as do Int32.MinValue and Int32.MaxValu
 
 [<Fact>]
 let ``Next(0, n) changes index exactly where Interval says, for every n up to the full deck`` () =
-    let forms = Seeded.AffineForms 64
+    let forms = KnuthSubtractiveGenerator.AffineForms 64
 
     // Int32.MaxValue is prime, so alpha to the power Int32.MaxValue - 2 is
     // alpha's inverse
     let inverses =
-        forms.Alpha
-        |> Array.map (fun alpha -> int64 (BigInteger.ModPow(bigint alpha, bigint (P - 2L), bigint P)))
+        forms
+        |> Array.map (fun form -> int64 (BigInteger.ModPow(bigint form.Alpha, bigint (P - 2L), bigint P)))
 
     // A seed whose real System.Random draws the value at some position, solved
     // from the affine forms and confirmed by the real System.Random
@@ -204,7 +209,7 @@ let ``Next(0, n) changes index exactly where Interval says, for every n up to th
         |> Seq.pick (fun k ->
             [ 0..3 ]
             |> List.collect (fun c ->
-                let residue = inverses[k] * ((int64 value - forms.Gamma[4 * k + c] + P) % P) % P
+                let residue = inverses[k] * ((int64 value - forms[k].Gamma c + P) % P) % P
                 if residue = 0L then
                     [ 0; Int32.MaxValue ]
                 else
@@ -232,7 +237,7 @@ let ``Next(0, n) changes index exactly where Interval says, for every n up to th
     // Every n's indices together take every value Next() returns
     Assert.Empty [
         for n in 1..fullDeck do
-            if Seeded.Interval n 0 (n - 1) <> struct (0, Int32.MaxValue - 1) then
+            if KnuthSubtractiveGenerator.Interval n 0 (n - 1) <> struct (0, Int32.MaxValue - 1) then
                 n
     ]
 
@@ -242,8 +247,8 @@ let ``Next(0, n) changes index exactly where Interval says, for every n up to th
     let disagreeing = [
         for n in 1..fullDeck do
             for index in 1 .. n - 1 do
-                let struct (low, _) = Seeded.Interval n index index
-                let struct (_, high) = Seeded.Interval n (index - 1) (index - 1)
+                let struct (low, _) = KnuthSubtractiveGenerator.Interval n index index
+                let struct (_, high) = KnuthSubtractiveGenerator.Interval n (index - 1) (index - 1)
 
                 if
                     low - 1 <> high
@@ -261,8 +266,10 @@ let ``Enumerate lists exactly the seeds whose Random makes the calls`` () =
     // is enough for every window below to hold some
     let seed = 1040319434
     let constraints, _ = dealt seed 5e5
-    let forms = Seeded.AffineForms 1000
-    let found = Seeded.Enumerate forms constraints |> Array.map Seeded.SeedOf
+    let forms = KnuthSubtractiveGenerator.AffineForms 1000
+    let found =
+        KnuthSubtractiveGenerator.Enumerate forms constraints
+        |> Array.map KnuthSubtractiveGenerator.SeedOf
 
     // Windows of seeds checked by brute force: at the bottom of the range,
     // where every seed is of class 0, at the top, and around the seed, where
@@ -295,12 +302,12 @@ let ``Enumerate keeps the true seed, which Filter keeps through the next draw`` 
     // One true seed of every class, and the two that share residue 0
     Assert.Equal<int list>([ 0; 3; 3; 1; 2 ], seeds |> List.map classOf)
 
-    let forms = Seeded.AffineForms 1000
+    let forms = KnuthSubtractiveGenerator.AffineForms 1000
 
     for seed in seeds do
         let constraints, next = dealt seed 1e4
-        let listed = Seeded.Enumerate forms constraints
-        let found = listed |> Array.map Seeded.SeedOf
+        let listed = KnuthSubtractiveGenerator.Enumerate forms constraints
+        let found = listed |> Array.map KnuthSubtractiveGenerator.SeedOf
 
         Assert.Contains(canonical seed, found)
         Assert.True(
@@ -309,7 +316,9 @@ let ``Enumerate keeps the true seed, which Filter keeps through the next draw`` 
         )
         Assert.True(strictlyAscending found, $"seed {seed} listed a seed twice or out of order")
 
-        let filtered = Seeded.Filter forms [ next ] listed |> Array.map Seeded.SeedOf
+        let filtered =
+            KnuthSubtractiveGenerator.Filter forms [ next ] listed
+            |> Array.map KnuthSubtractiveGenerator.SeedOf
         Assert.Equal<int array>(found |> Array.where (makes (next :: constraints)), filtered)
 
 // At some positions the corrections cancel out and the classes' constants
@@ -319,10 +328,10 @@ let ``Enumerate keeps the true seed, which Filter keeps through the next draw`` 
 // by which later draws, where the constants differ, judge it
 [<Fact>]
 let ``Enumerate keeps every class of a group whose forms agree, each with its own class`` () =
-    let forms = Seeded.AffineForms 3000
+    let forms = KnuthSubtractiveGenerator.AffineForms 3000
 
     let distinctConstants (k: int) =
-        forms.Gamma[4 * k .. 4 * k + 3] |> Array.distinct |> Array.length
+        [ for c in 0..3 -> forms[k].Gamma c ] |> List.distinct |> List.length
 
     // Positions where classes agree come early in the stream, so the first
     // forty hold every kind needed: four at which all four classes agree, one
@@ -341,7 +350,7 @@ let ``Enumerate keeps every class of a group whose forms agree, each with its ow
     // Exact draws of one card from a full deck by a seed's Random at the
     // positions. Four of them leave about 2^31 / 94^4 seeds, some 27, so the
     // true seed is listed among a few others
-    let drawn (seed: int) (positions: int list) : Seeded.Constraint list = [
+    let drawn (seed: int) (positions: int list) : KnuthSubtractiveGenerator.Constraint list = [
         let real = Random seed
 
         for k in 0 .. List.max positions do
@@ -371,25 +380,29 @@ let ``Enumerate keeps every class of a group whose forms agree, each with its ow
             // The walk really merges classes
             let groups =
                 [ 0..3 ]
-                |> List.distinctBy (fun c -> positions |> List.map (fun k -> forms.Gamma[4 * k + c]))
+                |> List.distinctBy (fun c -> positions |> List.map (fun k -> forms[k].Gamma c))
 
             Assert.True(groups.Length < 4, $"no classes agree at every one of positions %A{positions}")
 
-            let listed = Seeded.Enumerate forms constraints
-            let found = listed |> Array.map Seeded.SeedOf
+            let listed = KnuthSubtractiveGenerator.Enumerate forms constraints
+            let found = listed |> Array.map KnuthSubtractiveGenerator.SeedOf
 
             Assert.Contains(seed, found)
 
             Assert.True(
                 listed
-                |> Array.forall (fun survivor -> int (survivor &&& 3L) = classOf (Seeded.SeedOf survivor)),
+                |> Array.forall (fun survivor ->
+                    int (survivor &&& 3L) = classOf (KnuthSubtractiveGenerator.SeedOf survivor)
+                ),
                 "a seed was listed with the class of the group it was walked under rather than its own"
             )
 
             Assert.True(found |> Array.forall (makes constraints), "a seed was listed that does not make the calls")
 
             let laterDrawn = drawn seed later
-            let kept = Seeded.Filter forms laterDrawn listed |> Array.map Seeded.SeedOf
+            let kept =
+                KnuthSubtractiveGenerator.Filter forms laterDrawn listed
+                |> Array.map KnuthSubtractiveGenerator.SeedOf
             Assert.Contains(seed, kept)
             Assert.Equal<int array>(found |> Array.where (makes (laterDrawn @ constraints)), kept)
 
@@ -400,11 +413,14 @@ let ``Enumerate keeps every class of a group whose forms agree, each with its ow
 // so they are walked as one group and each value once
 [<Fact>]
 let ``Enumerate walks every value of a window wider than a chunk exactly once`` () =
-    let forms = Seeded.AffineForms 1
-    let first: Seeded.Constraint = { Position = 0; Count = 1500; Low = 0; High = 0 }
-    let struct (low, high) = Seeded.Interval first.Count first.Low first.High
+    let forms = KnuthSubtractiveGenerator.AffineForms 1
+    let first: KnuthSubtractiveGenerator.Constraint = { Position = 0; Count = 1500; Low = 0; High = 0 }
+    let struct (low, high) =
+        KnuthSubtractiveGenerator.Interval first.Count first.Low first.High
 
-    let found = Seeded.Enumerate forms [ first ] |> Array.map Seeded.SeedOf
+    let found =
+        KnuthSubtractiveGenerator.Enumerate forms [ first ]
+        |> Array.map KnuthSubtractiveGenerator.SeedOf
 
     // Each value pins one residue, and so one seed, since the residue 0, which
     // stands for both 0 and Int32.MaxValue, takes none of them
@@ -415,16 +431,16 @@ let ``Enumerate walks every value of a window wider than a chunk exactly once`` 
 
 [<Fact>]
 let ``contradictory constraints leave no seed, and ones every seed meets cannot be listed`` () =
-    let forms = Seeded.AffineForms 10
-    let drawn: Seeded.Constraint = { Position = 0; Count = 10; Low = 0; High = 0 }
+    let forms = KnuthSubtractiveGenerator.AffineForms 10
+    let drawn: KnuthSubtractiveGenerator.Constraint = { Position = 0; Count = 10; Low = 0; High = 0 }
     let contradicted = [ drawn; { drawn with Low = 1; High = 1 } ]
 
-    Assert.Empty(Seeded.Enumerate forms contradicted)
-    Assert.Equal(0.0, Seeded.Expected contradicted)
+    Assert.Empty(KnuthSubtractiveGenerator.Enumerate forms contradicted)
+    Assert.Equal(0.0, KnuthSubtractiveGenerator.Expected contradicted)
 
     let everything = [ { drawn with Low = 0; High = 9 } ]
-    Assert.Equal(everySeed, Seeded.Expected everything)
-    Assert.Throws<ArgumentException>(fun () -> Seeded.Enumerate forms everything |> ignore)
+    Assert.Equal(everySeed, KnuthSubtractiveGenerator.Expected everything)
+    Assert.Throws<ArgumentException>(fun () -> KnuthSubtractiveGenerator.Enumerate forms everything |> ignore)
     |> ignore
 
 // ---- the interpreter against the engine ----

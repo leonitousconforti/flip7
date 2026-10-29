@@ -1,4 +1,12 @@
-namespace Flip7
+/// <summary>
+/// Recovers the seed of the System.Random a game was dealt with from its
+/// timeline alone, instant by instant: neither the lineup's strategies nor
+/// their answers are needed, since every question costs the game's Random one
+/// call whatever is answered. Once it has pinned the seed, a Random wound to
+/// where the game's stands plays the rest of the game again. Like Lookahead, it
+/// is .NET only, since it relies on how .NET's seeded System.Random draws.
+/// </summary>
+module public Flip7.Oracle
 
 /// <summary>
 /// Recovers the seed of a seeded System.Random from what its calls returned.
@@ -9,7 +17,7 @@ namespace Flip7
 /// a known index confines the seed to a few arithmetic progressions, and a
 /// handful of calls leave few enough seeds to list instead of 2^31 to try.
 /// </summary>
-module internal Seeded =
+module internal KnuthSubtractiveGenerator =
     // The modulus every value of the generator is reduced by
     [<Literal>]
     let private P = 2147483647L
@@ -19,11 +27,11 @@ module internal Seeded =
     let private MSeed = 161803398
 
     /// <summary>
-    /// The affine forms of a stretch of the stream: for a seed s from 0 to
-    /// Int32.MaxValue of class c, the value at position k, counted from zero,
-    /// is (Alpha[k] * s + Gamma[4 * k + c]) % Int32.MaxValue. A position counts
-    /// every call on the Random, since Next(), Next(min, max) and NextDouble
-    /// each take exactly one value.
+    /// The affine form of the value at a position of the stream, counted from
+    /// zero: for a seed s from 0 to Int32.MaxValue of class c, the value is
+    /// (Alpha * s + Gamma c) % Int32.MaxValue. A position counts every call on
+    /// the Random, since Next(), Next(min, max) and NextDouble each take
+    /// exactly one value.
     ///
     /// The class records which of two subtractions in the constructor's first
     /// mixing pass overflowed int32. Both read word 55 while it still holds
@@ -36,18 +44,42 @@ module internal Seeded =
     /// constants agree. That these forms give every value of every seed, with
     /// no exceptions, was proved seed by seed against the real System.Random.
     /// </summary>
-    type internal Affine = { Alpha: int64 array; Gamma: int64 array }
+    [<Struct>]
+    type internal Form = {
+        Alpha: int64
+        Gammas: struct (int64 * int64 * int64 * int64)
+    } with
+
+        /// <summary>
+        /// The constant of class c.
+        /// </summary>
+        member self.Gamma(class': int) : int64 =
+            let struct (gamma0, gamma1, gamma2, gamma3) = self.Gammas
+
+            match class' with
+            | 0 -> gamma0
+            | 1 -> gamma1
+            | 2 -> gamma2
+            | 3 -> gamma3
+            | _ -> invalidArg (nameof class') "A class is from 0 to 3"
+
+    /// <summary>
+    /// The affine forms of a stretch of the stream, one for each position from
+    /// zero, as AffineForms computes them.
+    /// </summary>
+    type internal AffineForms = Form array
 
     /// <summary>
     /// The affine forms of the stream's first count values, from a run of the
     /// generator on the forms themselves.
     /// </summary>
-    let internal AffineForms (count: int) : Affine =
+    let internal AffineForms (count: int) : AffineForms =
+        let lanes = 5
+
         // Every word is held as five lanes modulo Int32.MaxValue: its
         // coefficient of the seed, then its constant in each class. The
         // generator only ever subtracts one word from another, which keeps them
         // affine, and its reductions only add multiples of the modulus
-        let lanes = 5
         let words = Array.zeroCreate<int64>(56 * lanes)
         let mj = Array.zeroCreate<int64> lanes
         let mk = Array.zeroCreate<int64> lanes
@@ -93,25 +125,26 @@ module internal Seeded =
                 if pass = 1 && i = 55 then
                     shift 55 2L [ 2; 3 ]
 
-        let alpha = Array.zeroCreate<int64> count
-        let gamma = Array.zeroCreate<int64>(4 * count)
         let mutable next = 0
         let mutable nextp = 21
+        let forms = Array.zeroCreate<Form> count
 
         for k in 0 .. count - 1 do
             next <- if next = 55 then 1 else next + 1
             nextp <- if nextp = 55 then 1 else nextp + 1
             subtract next nextp
-            alpha[k] <- words[next * lanes]
+            let word = next * lanes
 
-            for c in 0..3 do
-                gamma[4 * k + c] <- words[next * lanes + 1 + c]
+            forms[k] <- {
+                Alpha = words[word]
+                Gammas = struct (words[word + 1], words[word + 2], words[word + 3], words[word + 4])
+            }
 
-        { Alpha = alpha; Gamma = gamma }
+        forms
 
     /// <summary>
-    /// The class of a seed from 0 to Int32.MaxValue, as Affine describes it:
-    /// the constructor's first loop, which never overflows, then the two
+    /// The class of a seed from 0 to Int32.MaxValue, as Form describes it: the
+    /// constructor's first loop, which never overflows, then the two
     /// subtractions of its first mixing pass that can, computed wide enough to
     /// see whether they do. The words are scratch space for the loop, 56 of
     /// them, so that classifying seed after seed allocates nothing. This is the
@@ -264,7 +297,7 @@ module internal Seeded =
     /// and are refused with an ArgumentException: Expected is 2^31 for them, so
     /// a caller that enumerates only once Expected is small never meets one.
     /// </summary>
-    let internal Enumerate (forms: Affine) (constraints: Constraint seq) : int64 array =
+    let internal Enumerate (forms: AffineForms) (constraints: Constraint seq) : int64 array =
         match windows constraints with
         | None -> [||]
         | Some windows ->
@@ -282,7 +315,7 @@ module internal Seeded =
             // can only filter. None is below position 200000
             let walked =
                 windows
-                |> Array.filter (fun struct (position, _, _) -> forms.Alpha[position] <> 0L)
+                |> Array.filter (fun struct (position, _, _) -> forms[position].Alpha <> 0L)
                 |> Array.sortBy width
                 |> Array.tryHead
                 |> Option.defaultWith (fun () ->
@@ -291,7 +324,7 @@ module internal Seeded =
 
             let filters = windows |> Array.filter ((<>) walked) |> Array.sortBy width
             let struct (walkedAt, walkedLow, walkedHigh) = walked
-            let alpha = forms.Alpha[walkedAt]
+            let alpha = forms[walkedAt].Alpha
 
             // Int32.MaxValue is prime, so alpha to the power Int32.MaxValue - 2
             // is alpha's inverse
@@ -309,15 +342,11 @@ module internal Seeded =
 
                 inverse
 
-            let filterAlpha =
-                filters |> Array.map (fun struct (position, _, _) -> forms.Alpha[position])
+            let filterForms =
+                filters |> Array.map (fun struct (position, _, _) -> forms[position])
 
             let filterLow = filters |> Array.map (fun struct (_, low, _) -> int64 low)
             let filterHigh = filters |> Array.map (fun struct (_, _, high) -> int64 high)
-
-            let filterGamma =
-                filters
-                |> Array.collect (fun struct (position, _, _) -> forms.Gamma[4 * position .. 4 * position + 3])
 
             // As the walked value rises by one the seed rises by the inverse,
             // and the first filter's value by a fixed step, so the walk keeps
@@ -327,7 +356,7 @@ module internal Seeded =
                 if Array.isEmpty filters then
                     0L
                 else
-                    filterAlpha[0] * inverse % P
+                    filterForms[0].Alpha * inverse % P
 
             // Classes whose forms agree at every constrained position walk the
             // same seeds, so each group is walked once, under its first class,
@@ -336,8 +365,7 @@ module internal Seeded =
             let groups =
                 [| 0..3 |]
                 |> Array.groupBy (fun c ->
-                    windows
-                    |> Array.map (fun struct (position, _, _) -> forms.Gamma[4 * position + c])
+                    windows |> Array.map (fun struct (position, _, _) -> forms[position].Gamma c)
                 )
                 |> Array.map (fun (_, members) -> members[0], members |> Array.sumBy (fun c -> 1 <<< c))
 
@@ -348,7 +376,7 @@ module internal Seeded =
                 let c, members = groups[job % groups.Length]
                 let first = int64 walkedLow + int64 (job / groups.Length) * chunk
                 let last = min (first + chunk - 1L) (int64 walkedHigh)
-                let gamma = forms.Gamma[4 * walkedAt + c]
+                let gamma = forms[walkedAt].Gamma c
                 let words = Array.zeroCreate<int> 56
                 let found = ResizeArray()
 
@@ -364,7 +392,7 @@ module internal Seeded =
                     if Array.isEmpty filters then
                         0L
                     else
-                        (filterAlpha[0] * seed + filterGamma[c]) % P
+                        (filterForms[0].Alpha * seed + filterForms[0].Gamma c) % P
 
                 let mutable value = first
 
@@ -377,7 +405,7 @@ module internal Seeded =
                         let mutable filter = 1
 
                         while consistent && filter < filters.Length do
-                            let filtered = (filterAlpha[filter] * seed + filterGamma[4 * filter + c]) % P
+                            let filtered = (filterForms[filter].Alpha * seed + filterForms[filter].Gamma c) % P
                             consistent <- filtered >= filterLow[filter] && filtered <= filterHigh[filter]
                             filter <- filter + 1
 
@@ -412,7 +440,7 @@ module internal Seeded =
     /// class is known, so each constraint costs it one multiplication. The
     /// forms must reach every constrained position.
     /// </summary>
-    let internal Filter (forms: Affine) (constraints: Constraint seq) (survivors: int64 array) : int64 array =
+    let internal Filter (forms: AffineForms) (constraints: Constraint seq) (survivors: int64 array) : int64 array =
         match windows constraints with
         | None -> [||]
         | Some windows ->
@@ -423,7 +451,7 @@ module internal Seeded =
 
                 windows
                 |> Array.forall (fun struct (position, low, high) ->
-                    let value = (forms.Alpha[position] * residue + forms.Gamma[4 * position + c]) % P
+                    let value = (forms[position].Alpha * residue + forms[position].Gamma c) % P
                     value >= int64 low && value <= int64 high
                 )
             )
@@ -448,7 +476,7 @@ type internal Call =
     /// </summary>
     member self.Values: int =
         match self with
-        | Asked
+        | Asked -> 1
         | Aimed -> 1
         | Drawn(count, _, _) -> count - 1
 
@@ -658,7 +686,7 @@ module internal Interpreter =
     /// <summary>
     /// What the draws among calls made from a position on say about the seed.
     /// </summary>
-    let internal Constraints (position: int) (calls: Call list) : Seeded.Constraint list =
+    let internal Constraints (position: int) (calls: Call list) : KnuthSubtractiveGenerator.Constraint list =
         calls
         |> List.mapFold
             (fun position (call: Call) ->
@@ -672,7 +700,7 @@ module internal Interpreter =
                                 Low = low
                                 High = high
                             }
-                            : Seeded.Constraint
+                            : KnuthSubtractiveGenerator.Constraint
                         )
                     | Call.Asked
                     | Call.Aimed -> None
@@ -707,14 +735,15 @@ type public Seeds =
     | NoneAgree
 
 // What the oracle knows of the seed: before the seeds are listed, the
-// constraints so far; after, every seed left, as Seeded.Enumerate packs them,
-// and the affine forms as far as the constraints reach. Either way, how many
-// seeds the constraints so far are expected to leave, which once they are
-// listed is how many would agree by chance with a game no seed dealt
+// constraints so far; after, every seed left, as
+// KnuthSubtractiveGenerator.Enumerate packs them, and the affine forms as far
+// as the constraints reach. Either way, how many seeds the constraints so far
+// are expected to leave, which once they are listed is how many would agree by
+// chance with a game no seed dealt
 [<NoComparison; NoEquality>]
 type internal Knowledge =
-    | Gathering of Constraints: Seeded.Constraint list * Expected: float
-    | Listed of Survivors: int64 array * Expected: float * Forms: Seeded.Affine
+    | Gathering of Constraints: KnuthSubtractiveGenerator.Constraint list * Expected: float
+    | Listed of Survivors: int64 array * Expected: float * Forms: KnuthSubtractiveGenerator.AffineForms
 
 /// <summary>
 /// Seed recovery partway through a timeline: everything an oracle has learnt
@@ -729,160 +758,149 @@ type public Oracle =
     | Following of Interpreter.Reading * Knowledge
     | Lost
 
+// The expected count of agreeing seeds at which they are listed. Listing walks
+// the values the tightest draw allows, which one draw from a nearly full deck
+// already narrows to tens of millions, so it takes much the same time whatever
+// the count: over sixty games, a median of 0.03 to 0.06 s and at most 0.17 s on
+// ten cores for any count from 1e3 to 1e6. What grows with the count is memory,
+// some 40 bytes a seed listed, and the cost of checking the seeds against every
+// later draw. At 1e4 a listing takes 0.2 MB at the median and 0.5 MB at most,
+// and the next draw checks its seeds in 0.02 ms, while waiting for 1e3 saves
+// only some 15 ms and lists a draw later. A median game gets there in five
+// draws
+[<Literal>]
+let private Threshold = 1e4
+
+// How few seeds must be expected to agree by chance for the one seed left to be
+// taken as the game's. A game no seed dealt, on an unseeded Random or on one
+// used before the game, leaves only seeds that agree by chance, and over 600
+// such games nearly a third showed the last of them alone for a few instants
+// before a draw ruled it out. The chance that any is left once the expected
+// count falls to the margin is at most the margin, and seeds only drop out from
+// there, so at most one such game in a thousand ever shows a seed as pinned,
+// and none of the 600 did. Over 300 seeded games it costs two cards: the true
+// seed is pinned with 11 cards seen at the median and 15 at most, rather than 9
+// and 13. A margin of 1e-2 would pin a card sooner, and 1e-4 a card later
+[<Literal>]
+let private Margin = 1e-3
+
 /// <summary>
-/// Recovers the seed of the System.Random a game was dealt with from its
-/// timeline alone, instant by instant: neither the lineup's strategies nor
-/// their answers are needed, since every question costs the game's Random one
-/// call whatever is answered. Once it has pinned the seed, a Random wound to
-/// where the game's stands plays the rest of the game again. Like Lookahead, it
-/// is .NET only, since it relies on how .NET's seeded System.Random draws.
+/// The oracle before any instant: every seed still agrees.
 /// </summary>
-module public Oracle =
-    // The expected count of agreeing seeds at which they are listed. Listing
-    // walks the values the tightest draw allows, which one draw from a nearly
-    // full deck already narrows to tens of millions, so it takes much the same
-    // time whatever the count: over sixty games, a median of 0.03 to 0.06 s and
-    // at most 0.17 s on ten cores for any count from 1e3 to 1e6. What grows
-    // with the count is memory, some 40 bytes a seed listed, and the cost of
-    // checking the seeds against every later draw. At 1e4 a listing takes 0.2
-    // MB at the median and 0.5 MB at most, and the next draw checks its seeds
-    // in 0.02 ms, while waiting for 1e3 saves only some 15 ms and lists a draw
-    // later. A median game gets there in five draws
-    [<Literal>]
-    let private Threshold = 1e4
+let public Start: Oracle = Unseen
 
-    // How few seeds must be expected to agree by chance for the one seed left
-    // to be taken as the game's. A game no seed dealt, on an unseeded Random or
-    // on one used before the game, leaves only seeds that agree by chance, and
-    // over 600 such games nearly a third showed the last of them alone for a
-    // few instants before a draw ruled it out. The chance that any is left once
-    // the expected count falls to the margin is at most the margin, and seeds
-    // only drop out from there, so at most one such game in a thousand ever
-    // shows a seed as pinned, and none of the 600 did. Over 300 seeded games it
-    // costs two cards: the true seed is pinned with 11 cards seen at the median
-    // and 15 at most, rather than 9 and 13. A margin of 1e-2 would pin a card
-    // sooner, and 1e-4 a card later
-    [<Literal>]
-    let private Margin = 1e-3
+// Takes what the draws of an instant say about the seed into account
+let private Learn (knowledge: Knowledge) (constraints: KnuthSubtractiveGenerator.Constraint list) : Knowledge =
+    let reach (constraints: KnuthSubtractiveGenerator.Constraint list) =
+        constraints
+        |> List.fold
+            (fun reach (constrained: KnuthSubtractiveGenerator.Constraint) -> max reach (constrained.Position + 1))
+            0
 
-    /// <summary>
-    /// The oracle before any instant: every seed still agrees.
-    /// </summary>
-    let public Start: Oracle = Unseen
+    match knowledge, constraints with
+    | _, []
+    | Listed([||], _, _), _ -> knowledge
+    | Gathering(gathered, _), constraints ->
+        let gathered = constraints @ gathered
+        let expected = KnuthSubtractiveGenerator.Expected gathered
 
-    // Takes what the draws of an instant say about the seed into account
-    let private Learn (knowledge: Knowledge) (constraints: Seeded.Constraint list) : Knowledge =
-        let reach (constraints: Seeded.Constraint list) =
-            constraints
-            |> List.fold (fun reach (constrained: Seeded.Constraint) -> max reach (constrained.Position + 1)) 0
+        if expected <= Threshold then
+            let forms = KnuthSubtractiveGenerator.AffineForms(2 * reach gathered)
+            Listed(KnuthSubtractiveGenerator.Enumerate forms gathered, expected, forms)
+        else
+            Gathering(gathered, expected)
+    // The affine forms are recomputed at twice the length whenever they fall
+    // short, so a whole game's cost no more than twice the last. A later
+    // instant's draws are at positions no earlier draw took, so they scale the
+    // expected count on their own
+    | Listed(survivors, expected, forms), constraints ->
+        let reach = reach constraints
 
-        match knowledge, constraints with
-        | _, []
-        | Listed([||], _, _), _ -> knowledge
-        | Gathering(gathered, _), constraints ->
-            let gathered = constraints @ gathered
-            let expected = Seeded.Expected gathered
-
-            if expected <= Threshold then
-                let forms = Seeded.AffineForms(2 * reach gathered)
-                Listed(Seeded.Enumerate forms gathered, expected, forms)
-            else
-                Gathering(gathered, expected)
-        // The affine forms are recomputed at twice the length whenever they
-        // fall short, so a whole game's cost no more than twice the last. A
-        // later instant's draws are at positions no earlier draw took, so they
-        // scale the expected count on their own
-        | Listed(survivors, expected, forms), constraints ->
-            let reach = reach constraints
-
-            let forms =
-                if reach <= forms.Alpha.Length then
-                    forms
-                else
-                    Seeded.AffineForms(max reach (2 * forms.Alpha.Length))
-
-            Listed(
-                Seeded.Filter forms constraints survivors,
-                expected * Seeded.Expected constraints / 2147483648.0,
+        let forms =
+            if reach <= forms.Length then
                 forms
-            )
+            else
+                KnuthSubtractiveGenerator.AffineForms(max reach (2 * forms.Length))
 
-    /// <summary>
-    /// Advances the oracle by one instant. The instant and those before it tell
-    /// exactly which calls the engine made on the game's Random to produce it,
-    /// and every card drawn from two or more says which values the call that
-    /// picked it could have returned, which only some seeds give. Until few
-    /// enough seeds are expected to agree for them to be listed, the draws are
-    /// only gathered, and the step costs a few microseconds; the step that
-    /// lists them takes some tens of milliseconds across every core, and each
-    /// step after it checks every seed left against the new draws, at a few
-    /// nanoseconds a seed. Every draw is checked even once one seed is left,
-    /// and a seed that fails one is dropped, which leaves none. The first
-    /// instant must be a TableSeated, from which the game's Random is taken to
-    /// be fresh from its seed, and an instant the engine could not have
-    /// produced from the ones before it leaves no seed.
-    /// </summary>
-    let public Observe (oracle: Oracle) (instant: Instant) : Oracle =
-        match oracle with
-        | Unseen when instant.Event.IsTableSeated -> Following(Interpreter.Start instant, Gathering([], 2147483648.0))
-        | Unseen
-        | Lost -> Lost
-        | Following(reading, knowledge) ->
-            match Interpreter.Read reading instant with
-            | None -> Lost
-            | Some(reading', calls) ->
-                Following(reading', Learn knowledge (Interpreter.Constraints reading.Position calls))
+        Listed(
+            KnuthSubtractiveGenerator.Filter forms constraints survivors,
+            expected * KnuthSubtractiveGenerator.Expected constraints / 2147483648.0,
+            forms
+        )
 
-    /// <summary>
-    /// The oracle after observing every one of the instants, from Start.
-    /// </summary>
-    let public FromInstants (instants: Instant seq) : Oracle = Seq.fold Observe Start instants
+/// <summary>
+/// Advances the oracle by one instant. The instant and those before it tell
+/// exactly which calls the engine made on the game's Random to produce it, and
+/// every card drawn from two or more says which values the call that picked it
+/// could have returned, which only some seeds give. Until few enough seeds are
+/// expected to agree for them to be listed, the draws are only gathered, and
+/// the step costs a few microseconds; the step that lists them takes some tens
+/// of milliseconds across every core, and each step after it checks every seed
+/// left against the new draws, at a few nanoseconds a seed. Every draw is
+/// checked even once one seed is left, and a seed that fails one is dropped,
+/// which leaves none. The first instant must be a TableSeated, from which the
+/// game's Random is taken to be fresh from its seed, and an instant the engine
+/// could not have produced from the ones before it leaves no seed.
+/// </summary>
+let public Observe (oracle: Oracle) (instant: Instant) : Oracle =
+    match oracle with
+    | Unseen when instant.Event.IsTableSeated -> Following(Interpreter.Start instant, Gathering([], 2147483648.0))
+    | Unseen
+    | Lost -> Lost
+    | Following(reading, knowledge) ->
+        match Interpreter.Read reading instant with
+        | None -> Lost
+        | Some(reading', calls) -> Following(reading', Learn knowledge (Interpreter.Constraints reading.Position calls))
 
-    /// <summary>
-    /// What the oracle knows of the seed.
-    /// </summary>
-    let public SeedsOf (oracle: Oracle) : Seeds =
-        match oracle with
-        | Unseen -> Seeds.Unlisted 2147483648.0
-        | Lost -> Seeds.NoneAgree
-        | Following(_, Gathering(_, expected)) -> Seeds.Unlisted expected
-        | Following(_, Listed(survivors, expected, _)) ->
-            match survivors with
-            | [||] -> Seeds.NoneAgree
-            | [| survivor |] when expected <= Margin -> Seeds.Pinned(Seeded.SeedOf survivor)
-            | survivors -> Seeds.Agreeing(Array.map Seeded.SeedOf survivors)
+/// <summary>
+/// The oracle after observing every one of the instants, from Start.
+/// </summary>
+let public FromInstants (instants: Instant seq) : Oracle = Seq.fold Observe Start instants
 
-    /// <summary>
-    /// How many calls the game's Random has made by the last instant observed,
-    /// whatever its seed, or None when the oracle could not follow the timeline
-    /// from a TableSeated instant.
-    /// </summary>
-    let public CallsOf (oracle: Oracle) : int option =
-        match oracle with
-        | Following(reading, _) -> Some reading.Position
-        | Unseen
-        | Lost -> None
+/// <summary>
+/// What the oracle knows of the seed.
+/// </summary>
+let public SeedsOf (oracle: Oracle) : Seeds =
+    match oracle with
+    | Unseen -> Seeds.Unlisted 2147483648.0
+    | Lost -> Seeds.NoneAgree
+    | Following(_, Gathering(_, expected)) -> Seeds.Unlisted expected
+    | Following(_, Listed(survivors, expected, _)) ->
+        match survivors with
+        | [||] -> Seeds.NoneAgree
+        | [| survivor |] when expected <= Margin -> Seeds.Pinned(KnuthSubtractiveGenerator.SeedOf survivor)
+        | survivors -> Seeds.Agreeing(Array.map KnuthSubtractiveGenerator.SeedOf survivors)
 
-    /// <summary>
-    /// Once the seed is pinned, a System.Random fresh from it and wound on by
-    /// every call the game's Random had made by the last instant observed,
-    /// which therefore draws what the game's draws next; a new one each time it
-    /// is asked for. Given a hit-or-stand question's game so far, that is one
-    /// call short of the game's own Random when the question was asked, which
-    /// had already drawn the question's seed: Timeline.ContinueWith from the
-    /// question, given that history, this Random and the same decider, asks the
-    /// question again with the very same draw and replays the rest of the game
-    /// exactly. An aim made while a card is still being resolved is no place to
-    /// continue from, since the calls of the resolution so far have no instants
-    /// yet.
-    /// </summary>
-    let public RandomOf (oracle: Oracle) : System.Random option =
-        match oracle, SeedsOf oracle with
-        | Following(reading, _), Seeds.Pinned seed ->
-            let random = System.Random seed
+/// <summary>
+/// How many calls the game's Random has made by the last instant observed,
+/// whatever its seed, or None when the oracle could not follow the timeline
+/// from a TableSeated instant.
+/// </summary>
+let public CallsOf (oracle: Oracle) : int option =
+    match oracle with
+    | Following(reading, _) -> Some reading.Position
+    | Unseen
+    | Lost -> None
 
-            for _ in 1 .. reading.Position do
-                random.Next() |> ignore
+/// <summary>
+/// Once the seed is pinned, a System.Random fresh from it and wound on by every
+/// call the game's Random had made by the last instant observed, which
+/// therefore draws what the game's draws next; a new one each time it is asked
+/// for. Given a hit-or-stand question's game so far, that is one call short of
+/// the game's own Random when the question was asked, which had already drawn
+/// the question's seed: Timeline.ContinueWith from the question, given that
+/// history, this Random and the same decider, asks the question again with the
+/// very same draw and replays the rest of the game exactly. An aim made while a
+/// card is still being resolved is no place to continue from, since the calls
+/// of the resolution so far have no instants yet.
+/// </summary>
+let public RandomOf (oracle: Oracle) : System.Random option =
+    match oracle, SeedsOf oracle with
+    | Following(reading, _), Seeds.Pinned seed ->
+        let random = System.Random seed
 
-            Some random
-        | _ -> None
+        for _ in 1 .. reading.Position do
+            random.Next() |> ignore
+
+        Some random
+    | _ -> None

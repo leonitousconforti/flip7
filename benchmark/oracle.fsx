@@ -107,7 +107,7 @@ let solve (seed: int) (lineup: (string * Strategy * Targeting) list) : Game opti
             steps.Add seconds
 
         match seeds, pinned with
-        | Seeds.Pinned found, None -> pinned <- Some(index, found)
+        | Oracle.Seeds.Pinned found, None -> pinned <- Some(index, found)
         | _ -> ()
 
     match pinned, listing with
