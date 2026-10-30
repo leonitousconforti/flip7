@@ -3,10 +3,8 @@ namespace Flip7
 module public Persistence =
     open System
     open System.Collections.Generic
-    open System.Diagnostics
     open System.IO
     open System.Threading
-    open System.Threading.Tasks
 
     open FSharp.Control
 
@@ -138,6 +136,10 @@ module public Persistence =
     type private TimelineStoreMessage =
         | Read of index: int * reply: AsyncReplyChannel<Result<Instant, exn>>
         | Snapshot of reply: AsyncReplyChannel<int * bool * int list>
+        // The ingest delay is up: look for the frontier on disk
+        | Probe
+        // The frontier read landed
+        | Ingest of Result<Instant, exn>
 
     /// <summary>
     /// A view of a timeline directory as it fills: instants are published
@@ -147,11 +149,13 @@ module public Persistence =
     /// agent owns all of the mutable state - the frontier, the seating, the
     /// round ends, and the LRU cache - and every operation arrives as a
     /// message, so nothing is locked because nothing is shared. Ingestion is
-    /// folded into the same message loop, but the frontier read runs as its own
-    /// task that the loop polls: a slow instant at the frontier never camps on
-    /// the mailbox, so viewer reads take precedence over background tailing.
-    /// Only lightweight metadata is held in memory plus a small cache of
-    /// recently viewed instants: memory stays flat no matter how long the
+    /// folded into the same message loop: the agent waits the ingest delay
+    /// before each look for the frontier, and the frontier read runs on its own
+    /// and posts what it read back as a message, so a slow instant never camps
+    /// on the mailbox and viewer reads take precedence over background tailing.
+    /// Once the game is complete the agent stops looking, and only the viewer
+    /// wakes it. Only lightweight metadata is held in memory plus a small cache
+    /// of recently viewed instants: memory stays flat no matter how long the
     /// timeline grows, and there is no channel to the producer at all - the
     /// disk is the only source. With emitPlayersInSeatedOrder (off by default),
     /// every emitted instant lists its players in the seating order stored by
@@ -166,23 +170,19 @@ module public Persistence =
         let emitPlayersInSeatedOrder = defaultArg emitPlayersInSeatedOrder false
 
         let cts = new CancellationTokenSource()
+        // Taken once: the agent may still start work with it after Dispose has
+        // disposed of the source
+        let token = cts.Token
 
         let agent =
             MailboxProcessor.Start(
                 (fun (inbox: MailboxProcessor<TimelineStoreMessage>) -> async {
                     // Confined to the agent: only the loop below ever touches
-                    // any of this, so no lock guards it
-                    let recency = LinkedList<int * Instant>()
-                    let cache = Dictionary<int, LinkedListNode<int * Instant>>(cacheCapacity)
-                    let pacer = Stopwatch.StartNew()
-
-                    // The frontier read runs as its own task so a slow instant
-                    // never camps on the mailbox: scrubbing reads are served
-                    // the moment they arrive, and the loop folds the frontier
-                    // in when its read lands. The viewer can never request the
-                    // frontier itself (a cursor stays below Count), so nothing
-                    // ever waits on this task but the loop.
-                    let mutable frontier: Task<Result<Instant, exn>> option = None
+                    // any of this, so no lock guards it. Each cached instant
+                    // carries the use that last touched it, so the least
+                    // recently used is the one with the oldest
+                    let cache = Dictionary<int, Instant * int64>(cacheCapacity + 1)
+                    let mutable uses = 0L
 
                     let mutable count = 0
                     let mutable isComplete = false
@@ -202,28 +202,25 @@ module public Persistence =
                           }
 
                     let read (index: int) : Async<Result<Instant, exn>> =
-                        ReadInstantAsync(Path.Join(directory, string index))
+                        ReadInstantAsync(Path.Combine(directory, string index))
 
                     // An index read before it was ingested is remembered again
-                    // when it is, so its old node goes first: left in the list,
-                    // it would hold the cache past its capacity and, once
-                    // evicted, take the index's live entry with it
+                    // when it is, which only marks it used again: it is never
+                    // cached twice, so it never holds the cache past its
+                    // capacity
                     let remember (index: int) (instant: Instant) : unit =
-                        match cache.TryGetValue index with
-                        | true, node -> recency.Remove node
-                        | _ -> ()
+                        uses <- uses + 1L
+                        cache[index] <- (instant, uses)
 
-                        cache[index] <- recency.AddFirst((index, instant))
                         if cache.Count > cacheCapacity then
-                            cache.Remove(fst recency.Last.Value) |> ignore
-                            recency.RemoveLast()
+                            let oldest = cache |> Seq.minBy (fun entry -> snd entry.Value)
+                            cache.Remove oldest.Key |> ignore
 
                     let lookup (index: int) : Async<Result<Instant, exn>> = async {
                         match cache.TryGetValue index with
-                        | true, node ->
-                            recency.Remove node
-                            recency.AddFirst node
-                            return node.Value |> snd |> Ok
+                        | true, (instant, _) ->
+                            remember index instant
+                            return Ok instant
                         | _ ->
                             let! maybeInstant = read index
                             match maybeInstant with
@@ -233,23 +230,56 @@ module public Persistence =
                             return maybeInstant
                     }
 
-                    while true do
-                        let due = ingestDelayMilliseconds - pacer.ElapsedMilliseconds
-                        let timeout = due |> int |> max 0
+                    // The loop waits on the mailbox alone, so the pace arrives
+                    // as a message: after the ingest delay, or straight away
+                    // without one, which keeps the agent looking as fast as
+                    // the loop turns until the frontier appears
+                    let probeLater () : unit =
+                        if ingestDelayMilliseconds > 0L then
+                            Async.Start(
+                                async {
+                                    do! Async.Sleep(int (min ingestDelayMilliseconds (int64 Int32.MaxValue)))
+                                    inbox.Post Probe
+                                },
+                                token
+                            )
+                        else
+                            inbox.Post Probe
 
-                        match! inbox.TryReceive timeout with
-                        | Some(Snapshot channel) -> channel.Reply(count, isComplete, roundEnds)
-                        | Some(Read(index, channel)) ->
+                    // Until the game is complete either a Probe is on its way
+                    // or the frontier read is out, never both: each instant is
+                    // read once, and once the game is over only the viewer
+                    // wakes the agent
+                    probeLater ()
+
+                    while true do
+                        match! inbox.Receive() with
+                        | Snapshot channel -> channel.Reply(count, isComplete, roundEnds)
+                        | Read(index, channel) ->
                             let! instant = lookup index
                             instant |> Result.map seatPlayers |> channel.Reply
-                        | None -> ()
+                        | Probe ->
+                            // The frontier read runs on its own so a slow
+                            // instant never camps on the mailbox: scrubbing
+                            // reads are served the moment they arrive. The
+                            // viewer can never request the frontier itself (a
+                            // cursor stays below Count), so nothing waits on
+                            // this read but the loop.
+                            if Directory.Exists(Path.Combine(directory, string count)) then
+                                let frontier = read count
 
-                        match frontier with
-                        | Some frontierTask when frontierTask.IsCompletedSuccessfully ->
-                            frontier <- None
-
-                            match frontierTask.Result with
-                            | Error _ -> count <- count + 1
+                                Async.Start(
+                                    async {
+                                        let! instant = frontier
+                                        inbox.Post(Ingest instant)
+                                    },
+                                    token
+                                )
+                            else
+                                probeLater ()
+                        | Ingest frontier ->
+                            match frontier with
+                            | Error _ -> ()
                             | Ok instant ->
                                 remember count instant
 
@@ -261,20 +291,12 @@ module public Persistence =
                                     if instant.Players |> List.exists (fun player -> player.FirmScore >= 200u) then
                                         isComplete <- true
 
-                                count <- count + 1
-                        | _ -> ()
+                            count <- count + 1
 
-                        if pacer.ElapsedMilliseconds >= ingestDelayMilliseconds then
-                            if
-                                frontier.IsNone
-                                && not isComplete
-                                && Directory.Exists(Path.Join(directory, string count))
-                            then
-                                frontier <- Some(Async.StartAsTask(read count, cancellationToken = cts.Token))
-
-                            pacer.Restart()
+                            if not isComplete then
+                                probeLater ()
                 }),
-                cts.Token
+                token
             )
 
         member _.Count = async {
