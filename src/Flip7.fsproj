@@ -35,7 +35,7 @@
     <Compile Include="Hand.fs" />
     <Compile Include="Deck.fs" />
     <Compile Include="Simulation.fs" />
-    <Compile Include="Lookahead.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
+    <Compile Include="Lookahead.fs" />
     <Compile Include="Player.fs" />
     <Compile Include="Instant.fs" />
     <Compile Include="Strategy.fs" />
