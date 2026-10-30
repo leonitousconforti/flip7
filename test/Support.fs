@@ -195,6 +195,7 @@ type Made =
     | Below of Max: int * Value: int
     | Fraction of Value: float
 
+#if !FABLE_COMPILER
 // Passes every call to a Random of the same seed and logs each one. Each call
 // the engine makes draws a single sample, so a fresh Random of the seed wound
 // on by the count of calls stands exactly where this one does. Every overload
@@ -262,6 +263,7 @@ type Recording(seed: int) =
     override _.NextInt64(_: int64, _: int64) : int64 = never "NextInt64"
     override _.NextBytes(_: byte array) : unit = never "NextBytes"
     override _.NextBytes(_: Span<byte>) : unit = never "NextBytes"
+#endif
 
 // The generators stay inside the domain's own invariants: decks are sub-decks
 // of the full 94 cards, strategy numbers use the tame magnitudes real games
