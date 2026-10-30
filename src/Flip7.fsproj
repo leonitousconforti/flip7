@@ -43,6 +43,8 @@
     <Compile Include="Persistence.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
     <Compile Include="Observation.fs" />
     <Compile Include="Inference.fs" />
+    <Compile Include="Oracle.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
+    <Compile Include="Sage.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
   </ItemGroup>
 
   <ItemGroup>

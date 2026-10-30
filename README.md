@@ -28,9 +28,28 @@ the exact probability of drawing any card, use `+`/`-` to move a copy between
 the deck and the discards, and rotate onto a player to deal or take back their
 cards (`0`-`9`, `x`/`e`/`t` for 10/11/12, shift for the modifier cards, and
 `s`/`d`/`f` for Second Chance, Deal3, and Freeze); `?` opens the full key
-reference. Pass one to five names to seat that many humans, and `--seed` to make
-the game reproducible. Games are written under `timelines/`, so they can be
-replayed later.
+reference. Pass one to five names to seat that many humans, and `--seed` with
+the same names in the same order to be dealt the same lineup and first cards
+again; without it a seed is drawn, and printed when you quit or the game ends.
+Games are written under `timelines/`, so they can be replayed later.
+
+The first open seat goes to Sage, so a table of five humans has none, and the
+rest to bots drawn from ten that each always play the same strategy under the
+same name, so no human may take a bot's name or Sage's, regardless of case.
+Before the game Sage studies every game played under `timelines/`, and the
+current one as it goes, to model by name how everyone plays and whom they aim
+their action cards at, so it learns each bot as well as each of you. It skips
+simulated games, which seat no human, and any game that seats a bot's name on a
+strategy other than that bot's, as games played before each bot kept its name
+do. It works out the game's seed from the cards it sees, usually within the
+first round, and from then on plans its play knowing the cards to come: it
+replays the rest of the game with everyone else playing as it modelled them,
+plays the line that went best for it, and plans again whenever the game strays
+from that line or you edit the table. Until it has the seed it plays for
+expected value. When you quit or the game ends, it tells you what it made of
+how you play and whom you aim at. Dealt a game again, Sage may play it
+differently, having studied more games since, the first deal among them, and
+once anyone plays differently the cards that follow differ too.
 
 ## Simulate and replay
 

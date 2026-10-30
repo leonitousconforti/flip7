@@ -13,6 +13,24 @@ let private width = 80
 let private playerSlots = 5
 let private paceMilliseconds = 400
 let private terminalPrompt = "TerminalPrompt"
+let private sageName = "Sage"
+let private timelinesRoot = "timelines"
+
+// Each bot plays the same strategy under the same name in every game, so that
+// studying earlier games by name learns each bot, where a name dealt a new
+// strategy every game would pool them all into one player nobody plays like
+let private bots = [
+    "Alice", Strategy.HitUntilScore 22u
+    "Bob", Strategy.HitUntilScore 26u
+    "Chloe", Strategy.HitUntilNumCards 5u
+    "Dave", Strategy.HitUntilBustProbability 0.35
+    "Eve", Strategy.HitUntilNaiveBustProbability 0.4
+    "Frank", Strategy.SoftHitUntilScore(24u, 3.0)
+    "Grace", Strategy.ChasesFlip7(20u, 5u)
+    "Hank", Strategy.EmboldenedBySecondChance 22u
+    "Ivy", Strategy.HitWhileBehindLeader 12u
+    "Jack", Strategy.MaximizesExpectedValue
+]
 
 type private QuitException() =
     inherit Exception()
@@ -386,54 +404,182 @@ let private view (directory: string) (model: Model) : unit =
 
             RenderPlay round instant prompting aimedAt footer
 
-let public Run (humanNames: string list) (seed: int option) (pace: int option) : Async<unit> = async {
+// Plays a game at the terminal, returning what to print once the terminal is
+// restored, since anything printed while the game is on screen is cleared with it
+let public Run (humanNames: string list) (seed: int option) (pace: int option) : Async<string list> = async {
+    // A name is shown padded to its column, so spaces around it cannot be seen
+    // and only the name inside them is kept, and names that differ only in
+    // case look alike at the table, so they count as one name
+    let humanNames = humanNames |> List.map (fun name -> name.Trim())
+    let folded (name: string) = name.ToUpperInvariant()
+
     if humanNames.Length < 1 || humanNames.Length > 5 then
         raise (ArgumentException "Please provide one to five player names as command-line arguments.")
     if humanNames |> List.exists String.IsNullOrWhiteSpace then
         raise (ArgumentException "Player names must not be empty.")
-    if humanNames |> List.distinct |> List.length <> humanNames.Length then
-        raise (ArgumentException "Player names must be unique.")
+    if humanNames |> List.distinctBy folded |> List.length <> humanNames.Length then
+        raise (ArgumentException "Player names must be unique, regardless of case.")
 
-    let botNames =
-        [ "Alice"; "Bob"; "Chloe"; "Dave"; "Eve" ]
-        |> List.take (playerSlots - humanNames.Length)
+    // Every AI's name is reserved, whether or not it is seated this game, since
+    // Sage studies everyone by name: a person's decisions are never studied as
+    // a bot's, nor a bot's as theirs
+    let reserved = sageName :: List.map fst bots
 
-    match humanNames |> List.tryFind (fun name -> botNames |> List.contains name) with
-    | Some taken -> raise (ArgumentException $"{taken} is taken by one of the AIs, please pick another name.")
+    match
+        humanNames
+        |> List.tryFind (fun name -> reserved |> List.exists (fun ai -> folded ai = folded name))
+    with
+    | Some taken ->
+        raise (
+            ArgumentException
+                $"""{taken} is the name of one of the AIs, please pick another. The AIs keep their names from game to game: {String.Join(", ", reserved)}."""
+        )
     | None -> ()
 
-    let random =
-        match seed with
-        | Some value -> Random(value)
-        | None -> Random()
+    // The first free seat goes to Sage and the rest to the bots, so a table the
+    // humans fill has no Sage
+    let sageSeated = humanNames.Length < playerSlots
+
+    // A seed is drawn even when none is given, so that it can be printed for
+    // --seed to deal the game again. The lineup is shuffled on a Random of its
+    // own, because Sage can only work out the seed of a Random that has drawn
+    // nothing by the time the table is seated
+    let seed = seed |> Option.defaultWith (fun () -> Random.Shared.Next())
+    let random = Random(seed)
+    let shuffler = Random(seed)
 
     let paceMs = defaultArg pace paceMilliseconds
-    let pool = [
-        Strategy.HitUntilScore 22u
-        Strategy.HitUntilScore 26u
-        Strategy.HitUntilNumCards 5u
-        Strategy.HitUntilBustProbability 0.35
-        Strategy.HitUntilNaiveBustProbability 0.4
-        Strategy.SoftHitUntilScore(24u, 3.0)
-        Strategy.ChasesFlip7(20u, 5u)
-        Strategy.EmboldenedBySecondChance 22u
-        Strategy.HitWhileBehindLeader 12u
-        Strategy.MaximizesExpectedValue
-    ]
 
-    let naive =
-        pool |> List.sortBy (fun _ -> random.Next()) |> List.take botNames.Length
+    let drawn =
+        bots
+        |> List.sortBy (fun _ -> shuffler.Next())
+        |> List.take (playerSlots - humanNames.Length - (if sageSeated then 1 else 0))
 
-    // Bots aim their action cards at random; the humans are asked
+    // Bots aim their action cards at random and the humans are asked. Sage's
+    // labels name no decider but Sage, which answers for its seat itself
     let players =
         (humanNames
          |> List.map (fun name -> name, Strategy.Custom terminalPrompt, Targeting.ChoosesExternally terminalPrompt))
-        @ (List.zip botNames naive
+        @ (if sageSeated then
+               [ sageName, Strategy.Custom sageName, Targeting.ChoosesExternally sageName ]
+           else
+               [])
+        @ (drawn
            |> List.map (fun (name, strategy) -> name, strategy, Targeting.ChoosesRandomly))
-        |> List.sortBy (fun _ -> random.Next())
+        |> List.sortBy (fun _ -> shuffler.Next())
+
+    // Some of the bots play strategies between the points of the default
+    // candidate grid, which no study over it could ever name, so Sage studies
+    // everyone over the grid and every bot's own strategy. Every bot aims at
+    // random, which the default policy grid holds, so it studies their aims
+    // over that grid alone
+    let strategies =
+        Inference.DefaultStrategyCandidates
+        @ (bots |> List.map snd |> List.except Inference.DefaultStrategyCandidates)
+
+    // What Sage knows of everyone before the game: every game played here
+    // before, read before this game's directory exists. A timeline is read
+    // whole before it is studied, so that one that cannot be read, such as one
+    // written by an older version, is skipped rather than studied in part.
+    // Simulated games are written under the same root with whatever names and
+    // strategies were asked for, and games were played here before each bot
+    // kept its name, and either would blend into a bot's study under its name.
+    // So a game is studied only if its first instant, read before the rest,
+    // seats a Custom strategy and seats every bot it does as this game would:
+    // every game played here seats a person on a Custom strategy, and a
+    // simulated game that declares one stops at the first question it asks of
+    // that seat. Reading takes some 50 ms a game, so a long history keeps the
+    // screen blank for seconds, and a line says why until the first frame
+    // draws over it
+    let studies (seated: Instant) : bool =
+        seated.Players |> List.exists (fun player -> player.Strategy.IsCustom)
+        && seated.Players
+           |> List.forall (fun player ->
+               bots
+               |> List.forall (fun (name, strategy) ->
+                   player.Name <> name
+                   || (player.Strategy, player.Targeting) = (strategy, Targeting.ChoosesRandomly)
+               )
+           )
+
+    let! study =
+        if sageSeated then
+            async {
+                // Each game's directory is named for when it started, so in
+                // order of their names the games are in the order they were
+                // played, which the directory listing need not be
+                let games =
+                    if Directory.Exists timelinesRoot then
+                        Directory.GetDirectories timelinesRoot |> Array.sort
+                    else
+                        [||]
+
+                match games.Length with
+                | 0 -> ()
+                | 1 -> Console.Write $"Sage is reading the game under {timelinesRoot}/..."
+                | count -> Console.Write $"Sage is reading the {count} games under {timelinesRoot}/..."
+
+                let! timelines =
+                    Async.Parallel(
+                        games
+                        |> Array.map (fun game -> async {
+                            try
+                                match! Persistence.ReadInstantAsync(Path.Join(game, "0")) with
+                                | Ok seated when studies seated ->
+                                    let! instants = Persistence.ReadTimeline game |> AsyncSeq.toArrayAsync
+                                    return Some(game, AsyncSeq.ofSeq instants)
+                                | _ -> return None
+                            with _ ->
+                                return None
+                        }),
+                        maxDegreeOfParallelism = Environment.ProcessorCount
+                    )
+
+                // The games of a day are a sitting, whose sides carry from one
+                // game into the next, and every other day is over, so what it
+                // showed of anyone's sides is forgotten. A game whose directory
+                // is not named for when it started is a sitting of its own. A
+                // day is read off a name as written, as this game's will be.
+                // Every game is studied with 10% of each choice out of
+                // character, as Sage scores the game it plays
+                let today = DateTime.Now.ToString "yyyy-MM-dd"
+
+                let dayOf (game: string) : string =
+                    let name = Path.GetFileName game
+
+                    match
+                        DateTime.TryParseExact(
+                            name,
+                            "yyyy-MM-ddTHH-mm-ss",
+                            Globalization.CultureInfo.CurrentCulture,
+                            Globalization.DateTimeStyles.None
+                        )
+                    with
+                    | true, _ -> name.Substring(0, today.Length)
+                    | false, _ -> game
+
+                let sittings = timelines |> Array.choose id |> Array.groupBy (fst >> dayOf)
+                let over, current = sittings |> Array.partition (fun (day, _) -> day <> today)
+                let! nobody =
+                    Study.OfTimelinesWith strategies Inference.DefaultTargetingCandidates []
+
+                let! studied =
+                    over
+                    |> AsyncSeq.ofSeq
+                    |> AsyncSeq.foldAsync
+                        (fun study (_, sitting) -> async {
+                            let! studied = Study.ContinueWith 0.1 (Array.map snd sitting) study
+                            return Study.Conclude studied
+                        })
+                        nobody
+
+                return! Study.ContinueWith 0.1 (current |> Array.collect snd |> Array.map snd) studied
+            }
+        else
+            async.Return Study.Nothing
 
     let now = DateTime.Now.ToString "yyyy-MM-ddTHH-mm-ss"
-    let directory = Path.Join("timelines", now)
+    let directory = Path.Join(timelinesRoot, now)
     use store =
         new Persistence.TimelineStore(
             directory,
@@ -451,6 +597,12 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
     // answering a prompt from the runtime loop never re-enters the engine
     // inline
     let replies = Channel.CreateUnbounded<Decision>()
+
+    let sage =
+        if sageSeated then
+            Some(Sage(sageName, study = study))
+        else
+            None
 
     let decider (dispatch: Msg -> unit) : Strategy.Decider =
         Strategy.Decider.Default
@@ -505,9 +657,24 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
     // The driver: drains the engine to disk until the game ends on its own. A
     // quit or an edit unwinds the paused engine with an exception, which async
     // propagates here with its original type - an edit continues the timeline
-    // in the same directory, right behind the instants already written
+    // in the same directory, right behind the instants already written. Sage,
+    // when seated, answers for its own seat on the terminal's decider, which
+    // answers every other question, and the game so far its seat's questions
+    // come with is how it follows the game, so the continuation after an edit
+    // is played on that decider too
     let drive (dispatch: Msg -> unit) : Task<unit> =
-        let decide = decider dispatch
+        let decide =
+            match sage with
+            | Some sage ->
+                sage.Strategies
+                |> Map.fold
+                    (fun decider name (hitOrStand, target) ->
+                        decider
+                        |> Strategy.addHitOrStandStrategy name hitOrStand
+                        |> Strategy.addTargetingStrategy name target
+                    )
+                    (decider dispatch)
+            | None -> decider dispatch
 
         // Every instant drained so far, newest first, so that a game continued
         // after an edit shows its deciders the whole game rather than only
@@ -530,10 +697,9 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
                 return! drain fork
         }
 
-        (random, decide, players)
-        |||> Timeline.SimulateWithDecider
-        |> drain
-        |> Async.StartAsTask
+        let driver = (random, decide, players) |||> Timeline.SimulateWithDecider |> drain
+
+        Async.StartAsTask driver
 
     let execute (dispatch: Msg -> unit) : Effect -> unit =
         fun effect ->
@@ -567,4 +733,37 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
         }
 
     do! driver |> Async.AwaitTask
+
+    // Sage follows the game only through its seat's questions, so it reads
+    // everyone by what they did up to the last of them
+    return [
+        match sage with
+        | None -> ()
+        | Some sage ->
+            for name in humanNames do
+                let model = sage.ModelOf name
+
+                let aiming =
+                    model
+                    |> Option.filter (fun model -> model.Aims > 0)
+                    |> Option.map (fun model ->
+                        let aiming, probability = List.head model.TargetingPosterior
+                        $"aiming {aiming} (%.0f{probability * 100.0}%% sure, {model.Aims} aims)"
+                    )
+
+                match model |> Option.filter (fun model -> model.Observations > 0), aiming with
+                | Some model, aiming ->
+                    let strategy, probability = List.head model.StrategyPosterior
+
+                    let read =
+                        $"Sage read {name} as {strategy} (%.0f{probability * 100.0}%% sure, {model.Observations} decisions)"
+
+                    match aiming with
+                    | Some aiming -> $"{read}, {aiming}"
+                    | None -> read
+                | None, Some aiming -> $"Sage never saw {name} decide, but read them {aiming}"
+                | None, None -> $"Sage never saw {name} decide"
+
+        $"To deal this lineup and its first cards again, pass the same names in the same order and --seed {seed}"
+    ]
 }
