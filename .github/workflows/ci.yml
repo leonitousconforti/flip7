@@ -15,7 +15,7 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - run: dotnet tool restore
-      - run: dotnet fantomas --check src test ui
+      - run: dotnet fantomas --check src test ui parity
 
   build:
     runs-on: ubuntu-latest
@@ -33,6 +33,8 @@ jobs:
           grep -qE ' fable/+Flip7.fsproj$' <<< "$contents"
           if grep -qE ' fable/+(obj|bin)/' <<< "$contents"; then exit 1; fi
 
+  # The parity program prints what the library does, and compiled by Fable and
+  # run on the runner's own Node it must print exactly what it prints on .NET
   fable:
     runs-on: ubuntu-latest
     steps:
@@ -41,4 +43,15 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - run: dotnet tool restore
-      - run: dotnet fable src/Flip7.fsproj --outDir ${{ runner.temp }}/fable
+      - run: dotnet fable parity/Parity.fsproj --outDir ${{ runner.temp }}/parity
+      - name: Run it on Node
+        run: |
+          echo '{ "type": "module" }' > ${{ runner.temp }}/parity/package.json
+          node ${{ runner.temp }}/parity/Parity.js > ${{ runner.temp }}/javascript.txt
+      - run: dotnet run --project parity/Parity.fsproj -c Release > ${{ runner.temp }}/dotnet.txt
+      - name: Compare what JavaScript printed with what .NET printed
+        run: |
+          if ! diff -q ${{ runner.temp }}/dotnet.txt ${{ runner.temp }}/javascript.txt > /dev/null; then
+            diff ${{ runner.temp }}/dotnet.txt ${{ runner.temp }}/javascript.txt | cut -c1-400 | head -40
+            exit 1
+          fi
