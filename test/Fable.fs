@@ -2,18 +2,17 @@
 // so the same test files compile to JavaScript: Fact, Theory and InlineData
 // mark the tests FableEntry.fsx writes the entry for, Assert checks as xunit's
 // does, a seeded property runner draws from generators written as FsCheck's
-// are, with no shrinking, SHA-256 and hex take the digests of seeded games,
-// and Async.RunSynchronously drains the async trampoline in a loop, which
+// are, with no shrinking, SHA-256 takes the digests of seeded games, and
+// Async.RunSynchronously drains the async trampoline in a loop, which
 // holds for the engine because it never waits on a timer or a promise. Last
 // comes the runner the entry hands every test to, which knows the tests that
 // fail in JavaScript until a Fable fix ships. Compiled only under Fable.
 //
 // What JavaScript cannot run stays in #if !FABLE_COMPILER, or has an
 // #if FABLE_COMPILER of its own: a Recording, since Fable cannot inherit
-// System.Random, and whatever plays on one, a task's timeout, the GC, an
-// exception's type, and ParamName until
-// https://github.com/fable-compiler/Fable/pull/5203 ships. LookaheadTests and
-// PersistenceTests test what the library compiles only for .NET.
+// System.Random, and whatever plays on one, a task's timeout, the GC and an
+// exception's type. LookaheadTests and PersistenceTests test what the library
+// compiles only for .NET.
 
 namespace Xunit
 
@@ -78,15 +77,11 @@ type Assert =
         if actual < low || actual > high then
             failwithf "Assert.InRange failed: %A not in [%A, %A]" actual low high
 
-    // Only the exception asked for passes, as in xunit, not one derived from
-    // it. A plain Exception is told apart from any other wrong one, since it
-    // is what invalidArg and invalidOp throw until a fix the runner lists ships
+    // Only the exception asked for passes, as in xunit, not one derived from it
     static member inline Throws<'T when 'T :> exn>(testCode: Action) : 'T =
         match Record.Exception testCode with
         | :? 'T as error when emitJsExpr (error, jsConstructor<'T>) "$0.constructor === $1" -> error
         | null -> failwith "Assert.Throws failed: nothing was thrown"
-        | error when emitJsExpr (error, jsConstructor<exn>) "$0.constructor === $1" ->
-            failwithf "Assert.Throws failed: a plain Exception was thrown: %s" error.Message
         | error -> failwithf "Assert.Throws failed: the wrong exception was thrown: %s" error.Message
 
 and Record =
@@ -275,13 +270,6 @@ module PropOperators =
             | failed -> failed
         )
 
-namespace System
-
-// A stand-in until https://github.com/fable-compiler/Fable/pull/5204 ships
-type Convert =
-    static member ToHexString(data: byte array) : string =
-        data |> Array.map (sprintf "%02X") |> String.concat ""
-
 namespace System.Security.Cryptography
 
 type SHA256 =
@@ -382,66 +370,12 @@ module Runner =
     type private Listed = { Fix: string; FailsWith: string; Tests: string list }
 
     let private failsInJavaScript = [
-        // Fable compiles invalidArg and invalidOp to a plain Exception, so
-        // where the library refuses a call with them, an
-        // Assert.Throws<ArgumentException> or
-        // Assert.Throws<InvalidOperationException> is shown one
-        {
-            Fix = "https://github.com/fable-compiler/Fable/pull/5152"
-            FailsWith = "Assert.Throws failed: a plain Exception was thrown"
-            Tests = [
-                "TimelineTests: seating the same name twice is refused"
-                "TimelineTests: seating a player who takes sides four deep is refused, and three deep plays"
-                "TimelineTests: continuing from a state with a repeated name is refused"
-                "TimelineTests: continuing with a seating that is not the table is refused"
-                "TimelineTests: an aim at a player who is not a candidate is refused"
-                "InferenceTests: a study refuses an empty grid, a strategy or policy decided externally, or a policy that takes sides"
-                "InferenceTests: a study continues only at an epsilon above 0 and at most 1"
-                "AimTests: aim evidence folded one aim at a time is the evidence scored at once"
-                "AimTests: carrying evidence into the next game moves only the sides, keeping each with the given probability"
-            ]
-        }
-        // Fable's Array.randomShuffleWith draws other numbers than
-        // FSharp.Core's, so a seed deals another game: its events differ, or
-        // it no longer plays out as its test was found to
-        {
-            Fix = "https://github.com/fable-compiler/Fable/pull/5197"
-            FailsWith = "Assert.Equal failed"
-            Tests = [ "TimelineTests: a seeded game produces exactly the events it always has" ]
-        }
-        {
-            Fix = "https://github.com/fable-compiler/Fable/pull/5197"
-            FailsWith = "Assert.True failed"
-            Tests = [
-                "TimelineTests: once a deal3 ends its target's round, the cards it set aside are discarded, never given out"
-                "AimTests: fitting a handful of games names each targeting, and a player who takes sides"
-                "PropertyTests: a question deep inside a deal3 is shown everything the deal3 has produced"
-            ]
-        }
         // Fable's List.minBy keeps the last of a tie
         {
             Fix = "https://github.com/fable-compiler/Fable/pull/5198"
             FailsWith = "Assert.Equal failed"
             Tests = [
                 "StrategyTests: a second chance goes to the first of the players tied furthest behind"
-            ]
-        }
-        // Under Fable the library writes a float as string does, in
-        // JavaScript's form and -0 as 0, since Fable has no ToString("R").
-        // These pass once a release has it and the library writes with it there
-        // too
-        {
-            Fix = "https://github.com/fable-compiler/Fable/pull/5212"
-            FailsWith = "Assert.Equal failed"
-            Tests = [
-                "StrategyTests: a number is written in the shortest form, with an exponent below 0.0001 and from 1e17"
-            ]
-        }
-        {
-            Fix = "https://github.com/fable-compiler/Fable/pull/5212"
-            FailsWith = "Falsifiable"
-            Tests = [
-                "StrategyTests: any double round-trips through a strategy and a targeting string"
             ]
         }
     ]

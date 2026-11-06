@@ -127,8 +127,8 @@ let ``a draw conserves every card and touches the discards only to reshuffle the
 // A draw takes the card FSharp.Core's Array.randomShuffleWith puts first among
 // the deck's cards laid out in Map order, and makes the calls that shuffle
 // makes: Next(0, n), which picks the card, then Next(i, n) for each i from 1
-// to n - 2. JavaScript deals the same once Fable's shuffle makes those calls
-// too: https://github.com/fable-compiler/Fable/pull/5197
+// to n - 2. Fable's shuffle makes the same calls since Fable 5.27.0, but the
+// calls are logged with a Recording, so the test runs on .NET only
 #if !FABLE_COMPILER
 [<Fact>]
 let ``a draw takes the card FSharp.Core's shuffle puts first, and costs the Random what the shuffle does`` () =

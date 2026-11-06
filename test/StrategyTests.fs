@@ -651,8 +651,7 @@ let ``a number in any form either platform writes parses to its value`` () =
 
 // A float is written as .NET's ToString("R") writes it: in the shortest form,
 // with an exponent of at least two digits below 0.0001 and from 1e17, and -0
-// kept. JavaScript writes its own form until the library writes with "R"
-// there too, which waits on https://github.com/fable-compiler/Fable/pull/5212
+// kept, in JavaScript too
 [<Fact>]
 let ``a number is written in the shortest form, with an exponent below 0.0001 and from 1e17`` () =
     let written = [
