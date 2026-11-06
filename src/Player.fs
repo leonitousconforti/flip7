@@ -7,10 +7,11 @@ module private Decoding =
     /// fraction or a fraction alone, and an optional exponent, or exactly NaN,
     /// Infinity or -Infinity. That covers whatever WriteFloat writes on either
     /// platform, and anything else, spaces and other signs included, is None.
-    /// The characters are checked here, since the platforms' own parsers accept
-    /// different strings, and only then converted with float, which is
-    /// Double.Parse with the invariant culture on .NET and JavaScript's own
-    /// conversion under Fable, both correctly rounded.
+    /// The characters are checked here, since float accepts more, spaces,
+    /// underscores and other spellings of NaN among them, and only then
+    /// converted with float, which is Double.Parse with the invariant culture
+    /// on .NET and JavaScript's own conversion under Fable, both correctly
+    /// rounded.
     /// </summary>
     let internal ReadFloat (text: string) : float option =
         match text with

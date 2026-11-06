@@ -517,7 +517,7 @@ let ``a targeting policy round-trips through its string form`` () =
 // Numbers are read strictly, and the same on .NET and in JavaScript. Each of
 // these floats is refused, a fullwidth one and an infinity sign among them,
 // though .NET's own parser reads "1,5" as 15 and "0.5\n" as a half, and
-// Fable's reads "0x10" as 16 and "1_0" as 10
+// float reads "1_0" as 10 on .NET and under Fable alike
 let private malformedFloats = [
     ""
     "-"
