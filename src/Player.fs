@@ -68,15 +68,10 @@ module private Decoding =
 module private Encoding =
     /// <summary>
     /// A float as a strategy or targeting string writes it, in the shortest
-    /// form that reads back as the same double on the platform writing it,
-    /// except that JavaScript writes -0 as 0.
+    /// form, as ToString("R") does on .NET and under Fable alike.
     /// </summary>
     let internal WriteFloat (value: float) : string =
-#if FABLE_COMPILER
-        string value
-#else
         value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
-#endif
 
 open Decoding
 open Encoding
