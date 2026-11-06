@@ -150,8 +150,9 @@ module public Persistence =
     /// folded into the same message loop, but the frontier read runs as its own
     /// task that the loop polls: a slow instant at the frontier never camps on
     /// the mailbox, so viewer reads take precedence over background tailing.
-    /// Only lightweight metadata is held in memory plus a small cache of
-    /// recently viewed instants: memory stays flat no matter how long the
+    /// Once the game is complete the agent stops looking, and only the viewer
+    /// wakes it. Only lightweight metadata is held in memory plus a small cache
+    /// of recently viewed instants: memory stays flat no matter how long the
     /// timeline grows, and there is no channel to the producer at all - the
     /// disk is the only source. With emitPlayersInSeatedOrder (off by default),
     /// every emitted instant lists its players in the seating order stored by
@@ -166,6 +167,9 @@ module public Persistence =
         let emitPlayersInSeatedOrder = defaultArg emitPlayersInSeatedOrder false
 
         let cts = new CancellationTokenSource()
+        // Taken once: the agent may still start a read with it after Dispose
+        // has disposed of the source
+        let token = cts.Token
 
         let agent =
             MailboxProcessor.Start(
@@ -234,8 +238,18 @@ module public Persistence =
                     }
 
                     while true do
-                        let due = ingestDelayMilliseconds - pacer.ElapsedMilliseconds
-                        let timeout = due |> int |> max 0
+                        // Once the game is complete nothing is left to look
+                        // for, so only the viewer wakes the agent. Until then
+                        // it wakes when the next look is due, at most
+                        // Int32.MaxValue milliseconds away
+                        let timeout =
+                            if isComplete then
+                                Timeout.Infinite
+                            else
+                                ingestDelayMilliseconds - pacer.ElapsedMilliseconds
+                                |> max 0L
+                                |> min (int64 Int32.MaxValue)
+                                |> int
 
                         match! inbox.TryReceive timeout with
                         | Some(Snapshot channel) -> channel.Reply(count, isComplete, roundEnds)
@@ -270,11 +284,11 @@ module public Persistence =
                                 && not isComplete
                                 && Directory.Exists(Path.Join(directory, string count))
                             then
-                                frontier <- Some(Async.StartAsTask(read count, cancellationToken = cts.Token))
+                                frontier <- Some(Async.StartAsTask(read count, cancellationToken = token))
 
                             pacer.Restart()
                 }),
-                cts.Token
+                token
             )
 
         member _.Count = async {
