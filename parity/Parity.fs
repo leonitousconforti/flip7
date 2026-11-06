@@ -42,12 +42,6 @@ let private lineups = [
 
 let private seeds = [ 0..99 ]
 
-// Games that differ in JavaScript until a Fable fix ships. In this one a
-// second chance is passed between players tied furthest behind, and Fable's
-// List.minBy keeps the last of a tie rather than the first:
-// https://github.com/fable-compiler/Fable/pull/5198
-let private leftOut = set [ "eight", 67 ]
-
 let private written (value: float) =
     value.ToString("R", CultureInfo.InvariantCulture)
 
@@ -156,7 +150,7 @@ let private refusals: (string * (unit -> Async<unit>)) list = [
 
 let private report = async {
     for name, lineup in lineups do
-        for seed in seeds |> List.filter (fun seed -> not (leftOut.Contains(name, seed))) do
+        for seed in seeds do
             let! instants = Timeline.SimulateWith (Random seed) lineup |> AsyncSeq.toListAsync
 
             let events =
