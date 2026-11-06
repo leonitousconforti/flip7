@@ -77,13 +77,11 @@ module public Deck =
             (Empty, Empty)
             Full
 
-#if !FABLE_COMPILER
     /// <summary>
     /// A random deck with the corresponding discards.
     /// </summary>
     [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.RandomWith instead")>]
     let public Random: Deck * Deck = RandomWith System.Random.Shared
-#endif
 
     /// <summary>
     /// Parses a deck from the lines Serialize writes: one "Card: Count" line
@@ -226,7 +224,6 @@ module public Deck =
             let lastDecks, lastDrawnCards = DrawWith random (deck', discards) (count - 1u)
             lastDecks, drawnCard :: lastDrawnCards
 
-#if !FABLE_COMPILER
     /// <summary>
     /// Draws a card from the deck, returning the new deck, the new discards,
     /// and the drawn card. If the deck is empty, the discards are shuffled and
@@ -235,7 +232,6 @@ module public Deck =
     [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.DrawWith instead")>]
     let internal Draw (decks: Deck * Deck) (count: uint) : (Deck * Deck) * Card list =
         DrawWith System.Random.Shared decks count
-#endif
 
     /// <summary>
     /// Draws one card from the deck using the given source of randomness,
@@ -247,7 +243,6 @@ module public Deck =
     let public Draw1With (random: System.Random) (decks: Deck * Deck) =
         DrawWith random decks 1u |> fun (decks, cards) -> decks, cards.Head
 
-#if !FABLE_COMPILER
     /// <summary>
     /// Draws one card from the deck, returning the new deck, the new discards,
     /// and the drawn card. If the deck is empty, the discards are shuffled and
@@ -255,7 +250,6 @@ module public Deck =
     /// </summary>
     [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.Draw1With instead")>]
     let public Draw1 (decks: Deck * Deck) = Draw1With System.Random.Shared decks
-#endif
 
     /// <summary>
     /// Draws three cards from the deck using the given source of randomness,
@@ -266,7 +260,6 @@ module public Deck =
     /// </summary>
     let public Draw3With (random: System.Random) (decks: Deck * Deck) = DrawWith random decks 3u
 
-#if !FABLE_COMPILER
     /// <summary>
     /// Draws three cards from the deck, returning the new deck, the new
     /// discards and the drawn cards. If the deck is empty, the discards are
@@ -274,7 +267,6 @@ module public Deck =
     /// </summary>
     [<System.Obsolete("Hidden shared randomness is a footgun: thread a System.Random from the edge of the program into Deck.Draw3With instead")>]
     let public Draw3 (decks: Deck * Deck) = Draw3With System.Random.Shared decks
-#endif
 
     /// <summary>
     /// The probability distribution function of the deck, which maps each card

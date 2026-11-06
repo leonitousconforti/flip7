@@ -7,10 +7,11 @@ module private Decoding =
     /// fraction or a fraction alone, and an optional exponent, or exactly NaN,
     /// Infinity or -Infinity. That covers whatever WriteFloat writes on either
     /// platform, and anything else, spaces and other signs included, is None.
-    /// The characters are checked here, since the platforms' own parsers accept
-    /// different strings, and only then converted with float, which is
-    /// Double.Parse with the invariant culture on .NET and JavaScript's own
-    /// conversion under Fable, both correctly rounded.
+    /// The characters are checked here, since float accepts more, spaces,
+    /// underscores and other spellings of NaN among them, and only then
+    /// converted with float, which is Double.Parse with the invariant culture
+    /// on .NET and JavaScript's own conversion under Fable, both correctly
+    /// rounded.
     /// </summary>
     let internal ReadFloat (text: string) : float option =
         match text with
@@ -68,15 +69,10 @@ module private Decoding =
 module private Encoding =
     /// <summary>
     /// A float as a strategy or targeting string writes it, in the shortest
-    /// form that reads back as the same double on the platform writing it,
-    /// except that JavaScript writes -0 as 0.
+    /// form, as ToString("R") does on .NET and under Fable alike.
     /// </summary>
     let internal WriteFloat (value: float) : string =
-#if FABLE_COMPILER
-        string value
-#else
         value.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
-#endif
 
 open Decoding
 open Encoding
