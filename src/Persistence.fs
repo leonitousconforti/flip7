@@ -166,9 +166,9 @@ module public Persistence =
         let cacheCapacity = defaultArg cacheCapacity 64
         let emitPlayersInSeatedOrder = defaultArg emitPlayersInSeatedOrder false
 
+        // The token is only taken once as the agent may still start a read with
+        // it after Dispose has disposed of the source
         let cts = new CancellationTokenSource()
-        // Taken once: the agent may still start a read with it after Dispose
-        // has disposed of the source
         let token = cts.Token
 
         let agent =
