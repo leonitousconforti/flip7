@@ -5,66 +5,32 @@ module private Decoding =
     /// The float a strategy or targeting string holds, read the same on .NET
     /// and in JavaScript: an optional minus sign, ASCII digits with an optional
     /// fraction or a fraction alone, and an optional exponent, or exactly NaN,
-    /// Infinity or -Infinity. That covers whatever WriteFloat writes on either
-    /// platform, and anything else, spaces and other signs included, is None.
-    /// The characters are checked here, since float accepts more, spaces,
-    /// underscores and other spellings of NaN among them, and only then
-    /// converted with float, which is Double.Parse with the invariant culture
-    /// on .NET and JavaScript's own conversion under Fable, both correctly
-    /// rounded.
+    /// Infinity or -Infinity. That covers whatever WriteFloat writes, and
+    /// anything else, spaces and other signs included, is None. A number is
+    /// read by Double.TryParse with only a sign, a point and an exponent
+    /// allowed, which reads the same on .NET and under Fable, once a plus sign
+    /// and any other character are refused, since it reads +1 and spellings of
+    /// NaN and Infinity such as nan as well.
     /// </summary>
     let internal ReadFloat (text: string) : float option =
+        let styles =
+            System.Globalization.NumberStyles.AllowLeadingSign
+            ||| System.Globalization.NumberStyles.AllowDecimalPoint
+            ||| System.Globalization.NumberStyles.AllowExponent
+
+        let refused =
+            text.StartsWith '+'
+            || text |> Seq.exists (fun c -> "0123456789.eE+-".IndexOf c < 0)
+
         match text with
         | "NaN" -> Some System.Double.NaN
         | "Infinity" -> Some System.Double.PositiveInfinity
         | "-Infinity" -> Some System.Double.NegativeInfinity
+        | _ when refused -> None
         | _ ->
-            // Whether the character at the index is one of these
-            let isAt (index: int) (characters: string) : bool =
-                index < text.Length && characters.IndexOf(text[index]) >= 0
-
-            // The index just past the run of digits from the index
-            let digitsFrom (start: int) : int =
-                let mutable index = start
-
-                while isAt index "0123456789" do
-                    index <- index + 1
-
-                index
-
-            let signed = if isAt 0 "-" then 1 else 0
-            let integerEnd = digitsFrom signed
-
-            let fractionEnd =
-                if isAt integerEnd "." then
-                    digitsFrom (integerEnd + 1)
-                else
-                    integerEnd
-
-            // An exponent without digits is left unread, so the string is
-            // refused for not having been read to its end
-            let exponentEnd =
-                if isAt fractionEnd "eE" then
-                    let digits =
-                        if isAt (fractionEnd + 1) "+-" then
-                            fractionEnd + 2
-                        else
-                            fractionEnd + 1
-
-                    let exponentDigitsEnd = digitsFrom digits
-                    if exponentDigitsEnd > digits then
-                        exponentDigitsEnd
-                    else
-                        fractionEnd
-                else
-                    fractionEnd
-
-            let hasDigits = integerEnd > signed || fractionEnd > integerEnd + 1
-
-            if hasDigits && exponentEnd = text.Length then
-                Some(float text)
-            else
-                None
+            match System.Double.TryParse(text, styles, System.Globalization.CultureInfo.InvariantCulture) with
+            | true, value -> Some value
+            | _ -> None
 
 module private Encoding =
     /// <summary>
