@@ -52,6 +52,6 @@ jobs:
       - name: Compare what JavaScript printed with what .NET printed
         run: |
           if ! diff -q ${{ runner.temp }}/dotnet.txt ${{ runner.temp }}/javascript.txt > /dev/null; then
-            diff ${{ runner.temp }}/dotnet.txt ${{ runner.temp }}/javascript.txt | cut -c1-400 | head -40
+            diff -u ${{ runner.temp }}/dotnet.txt ${{ runner.temp }}/javascript.txt | cut -c1-400 | head -60
             exit 1
           fi

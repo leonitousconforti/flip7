@@ -153,12 +153,11 @@ let private report = async {
         for seed in seeds do
             let! instants = Timeline.SimulateWith (Random seed) lineup |> AsyncSeq.toListAsync
 
-            let events =
-                instants
-                |> List.map (fun instant -> Event.Serialize instant.Event |> String.concat " ")
-                |> String.concat " | "
-
-            printfn $"game {name} {seed}: {events}"
+            // An event to a line, so a game that differs shows the event where
+            // it first does
+            for index, instant in List.indexed instants do
+                let event = Event.Serialize instant.Event |> String.concat " "
+                printfn $"game {name} {seed} event {index}: {event}"
 
     for value in floats do
         let strategy = Strategy.SoftHitUntilScore(20u, value)
