@@ -211,11 +211,6 @@ module public Observation =
         let (Scan(_, _, _, _, last)) = scan
         last
 
-    // Whether an instant seats every player under a name of their own, as the
-    // engine does
-    let private HasDistinctNames (instant: Instant) : bool =
-        instant.Players |> List.distinctBy (fun player -> player.Name) |> List.length = instant.Players.Length
-
     // What the engine did to produce an instant, given the scan of every
     // instant before it, whether the instant's event was its source's own
     // choice rather than a card they set aside during a deal3 being given out,
@@ -546,7 +541,7 @@ module public Observation =
             Possible =
                 asked
                 && placed
-                && HasDistinctNames instant
+                && List.isEmpty (Timeline.DuplicatedNames instant.Players)
                 && drawable
                 && stopped
                 && deck = instant.Deck
@@ -625,7 +620,9 @@ module public Observation =
             | None -> {
                 Instant = instant
                 Steps = []
-                Possible = instant.Event.IsTableSeated && HasDistinctNames instant
+                Possible =
+                    instant.Event.IsTableSeated
+                    && List.isEmpty (Timeline.DuplicatedNames instant.Players)
               }
             | Some last -> Replayed scan voluntary turns' last.Instant instant
 
