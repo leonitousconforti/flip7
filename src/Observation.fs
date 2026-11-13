@@ -93,6 +93,60 @@ module public Observation =
     }
 
     /// <summary>
+    /// A step the engine took to produce an instant, as the scan replays it.
+    /// Every question, answered or not, costs the game's Random a call.
+    /// </summary>
+    [<RequireQualifiedAccess>]
+    type internal Step =
+        /// A hit-or-stand question and its answer, which every turn asks but a
+        /// player's forced first one of a round
+        | Asked of Observation
+        /// A hit-or-stand question the play editor was opened at instead of
+        /// answering it, which the Edited instant names the asker of
+        | Interrupted of Name: string
+        /// A card drawn from its pile: the deck, or the discards once the deck
+        /// ran out and they were shuffled in as the deck
+        | Drawn of Card: Card * Pile: Deck
+        /// An aim and the player it was given to
+        | Aimed of Observation
+
+    /// <summary>
+    /// What the engine did to produce an instant, as the scan replays it from
+    /// the instant before: its steps, in the order the engine took them, and
+    /// whether the engine could have produced the instant by taking them. The
+    /// replay is as lenient as Observe, which gives its observations either
+    /// way: it draws a card whose pile holds no copy and flips every card a
+    /// deal3 records.
+    /// </summary>
+    type internal Replay = {
+        Instant: Instant
+        Steps: Step list
+        /// <summary>
+        /// Whether the engine could have produced the instant from the ones
+        /// before it by taking the steps, which are then the calls it made on
+        /// the game's Random to produce it. A game starts from a TableSeated,
+        /// so the first instant is possible when it is one and no later one
+        /// is, and a Stood that asked no question is not, since a forced first
+        /// turn always hits. An edit is possible whatever table it shows. Every
+        /// instant must seat each player under a name of their own, as the
+        /// engine does, since the replay finds players by name, and seat
+        /// whoever the engine asks a question of where the engine would have
+        /// them: a hit-or-stand at the table, and the drawer of a card at the
+        /// head of the turn order, or the player who set it aside during a
+        /// deal3 anywhere at the table. A deal3 must record just the second
+        /// chances its flips pass on, each to somebody who could take it, every
+        /// card must be drawn from a pile holding a copy of it, a deal3's flips
+        /// must stop just where the engine stops them, and the deck the instant
+        /// shows must be the one its draws leave, and for a deal3 the discards
+        /// too, the only event whose discards the replay follows. Where it is
+        /// not, the steps leave out every question the timeline does not seat
+        /// its player for, and every pass of a deal3 whose recorded passes the
+        /// engine could not have made.
+        /// </summary>
+        Possible: bool
+    }
+
+    /// <summary>
     /// The state of the decision scan partway through a timeline: everything
     /// FromTimeline tracks between instants, opaque to callers, so a caller
     /// receiving instants one at a time can extract observations incrementally
@@ -104,7 +158,7 @@ module public Observation =
             Round: uint *
             Turns: Map<string, uint> *
             Pending: Map<string, int> *
-            Previous: Instant option
+            Last: Replay option
 
     /// <summary>
     /// The scan before any instant: round one, nobody finished, no turns taken.
@@ -118,14 +172,14 @@ module public Observation =
     /// in the round as having taken as many turns as the asker had, as the play
     /// editor's fork continues the game.
     /// </summary>
-    let public TurnsTaken (scan: Scan) : Map<string, uint> =
+    let internal TurnsTaken (scan: Scan) : Map<string, uint> =
         let (Scan(_, _, turns, _, _)) = scan
         turns
 
     /// <summary>
     /// The round the scan is in, counting from one.
     /// </summary>
-    let public RoundOf (scan: Scan) : uint =
+    let internal RoundOf (scan: Scan) : uint =
         let (Scan(_, round, _, _, _)) = scan
         round
 
@@ -148,33 +202,60 @@ module public Observation =
         let (Scan(finished, _, _, _, _)) = scan
         not (Set.contains player.Name finished)
 
-    // The aims an instant reveals, given the scan of every instant before it,
-    // the turns taken counting the instant's own, and the instant before it, in
-    // the order the engine asked for them, each with the question exactly as
-    // the engine put it. The preceding instant is the table the question was
-    // asked at, but for what the card's resolution changed before asking: a
-    // drawn card leaves the deck, a deal3 card goes to the discards, a
-    // set-aside card leaves the hand it was parked in, and a second chance the
-    // target of a deal3 flips but cannot keep is aimed partway through the
-    // flips, which are replayed card by card from the instant before the deal3.
-    // The engine offers a freeze or a deal3 to everyone in the round in turn
-    // order, the drawer moved behind the others, and a second chance to
-    // everyone in it but its holder who has none. The turn order is the
-    // instant's own, but at a RoundEnded the next round starts one seat further
-    // round the table. A second chance passed on during the flips has no
-    // instant of its own, and who took the only one is told by who holds one
-    // after the deal3 and did not before
-    let private Aims (scan: Scan) (turns: Map<string, uint>) (before: Instant) (instant: Instant) : Observation list =
+    /// <summary>
+    /// The replay of the instant the scan took in last, or None before any. The
+    /// first instant has no instant before it to replay from, so its replay
+    /// takes no steps.
+    /// </summary>
+    let internal ReplayOf (scan: Scan) : Replay option =
+        let (Scan(_, _, _, _, last)) = scan
+        last
+
+    // Whether an instant seats every player under a name of their own, as the
+    // engine does
+    let private HasDistinctNames (instant: Instant) : bool =
+        instant.Players |> List.distinctBy (fun player -> player.Name) |> List.length = instant.Players.Length
+
+    // What the engine did to produce an instant, given the scan of every
+    // instant before it, whether the instant's event was its source's own
+    // choice rather than a card they set aside during a deal3 being given out,
+    // the turns taken counting the instant's own, and the instant before it.
+    // Every question comes with the table exactly as the engine put it. The
+    // preceding instant is the table a hit-or-stand question was asked at, and
+    // the one an aim was asked at but for what the card's resolution changed
+    // before asking: a drawn card leaves the deck, a deal3 card goes to the
+    // discards, a set-aside card leaves the hand it was parked in, and a second
+    // chance the target of a deal3 flips but cannot keep is aimed partway
+    // through the flips, which are replayed card by card from the instant
+    // before the deal3. The engine offers a freeze or a deal3 to everyone in
+    // the round in turn order, the drawer moved behind the others, and a second
+    // chance to everyone in it but its holder who has none. The turn order is
+    // the instant's own, but at a RoundEnded the next round starts one seat
+    // further round the table. The steps are built with a hole, None, for every
+    // question the engine asked that the timeline does not seat its player for
+    // where the engine would have them, and for every pass of a deal3 whose
+    // recorded passes the engine could not have made, which leaves the instant
+    // impossible
+    let private Replayed
+        (scan: Scan)
+        (voluntary: bool)
+        (turns: Map<string, uint>)
+        (before: Instant)
+        (instant: Instant)
+        : Replay =
         let secondChance = ActionCard Card.SecondChance
         let holdsSecondChance (player: Player) = List.contains secondChance player.Hand
 
         // Draws a card the way Deck.DrawWith does, shuffling the discards in as
-        // the deck once it is empty
-        let drawn ((deck, discards): Deck * Deck) (card: Card) : Deck * Deck =
-            if Deck.IsEmpty deck then
-                Deck.Decrement discards card, Deck.Empty
-            else
-                Deck.Decrement deck card, discards
+        // the deck once it is empty: the step, and the decks after it
+        let drawn ((deck, discards): Deck * Deck) (card: Card) : Step * (Deck * Deck) =
+            let pile, discards =
+                if Deck.IsEmpty deck then
+                    discards, Deck.Empty
+                else
+                    deck, discards
+
+            Step.Drawn(card, pile), (Deck.Decrement pile card, discards)
 
         let aimed ask (chooser: Player) candidates finished decks target =
             Asked (RoundOf scan) turns (Choice2Of2(ask, target)) chooser candidates finished decks
@@ -194,7 +275,9 @@ module public Observation =
             | _ -> None
 
         // A card a deal3's target set aside is taken out of their hand before
-        // they aim it, wherever they sit now
+        // they aim it, wherever they sit now: who aims it, with the players in
+        // the round and those finished as they aim it, if they sit at the
+        // table at all
         let unparked (source: string) (card: Card) : (Player * Player list * Player list) option =
             let unpark =
                 List.map (fun (player: Player) ->
@@ -209,94 +292,266 @@ module public Observation =
             |> List.tryFind (fun player -> player.Name = source)
             |> Option.map (fun chooser -> chooser, active, finished)
 
-        // The second chance the target of a deal3 passed on during its flips,
-        // if they passed on exactly one, replayed card by card from the table
-        // the deal3 was aimed at. The flips stop at a bust, so the cards the
-        // deal3 records never run past one
-        let passed (rotation: Player list) (finished: Player list) (decks: Deck * Deck) (target: string) cards =
+        // The hit-or-stand question the engine asked before the instant's
+        // event, observed at the table it was asked at. An edit is made at a
+        // question in place of answering it, and a forced first turn asks
+        // none, nor does giving out a set-aside card
+        let question: Step option list =
+            match instant.Event, Decider instant.Event with
+            | Edited asker, _ -> [ Some(Step.Interrupted asker) ]
+            | _, Some(name, choice) when voluntary && Map.find name turns > 1u -> [
+                before.Players
+                |> List.tryFind (fun player -> player.Name = name)
+                |> Option.map (fun actor ->
+                    let others, finishedPlayers =
+                        before.Players
+                        |> List.filter (fun player -> player.Name <> name)
+                        |> List.partition (InRound scan)
+
+                    Step.Asked(Asked (RoundOf scan) turns (Choice1Of2 choice) actor others finishedPlayers decks)
+                )
+              ]
+            | _ -> []
+
+        // The flips of a deal3, replayed card by card as ResolveDeal3 makes
+        // them from the decks it was aimed at, among the players of the
+        // rotation it was aimed in and those finished: each a draw from the
+        // decks as they stand, number and modifier cards reduced into the
+        // target's hand with whatever the reduction removes discarded, a second
+        // chance kept, passed on with an aim while somebody can take one, or
+        // discarded, and freezes and deal3s set aside in the hand, where they
+        // neither score, bust nor count toward a flip7. The engine stops
+        // flipping after the third card, on a bust, or on a flip7. Each second
+        // chance passed on is aimed at the next player the deal3 records as
+        // passed one, among those in the rotation but the target who hold none
+        // and were passed none before it, and is a hole unless every one can
+        // be. Returns the steps, the decks they leave, and whether the engine
+        // flips every card the deal3 records and no more and passes on just
+        // the second chances it records, to whom it records
+        let flipped
+            (rotation: Player list)
+            (finished: Player list)
+            (decks: Deck * Deck)
+            (target: string)
+            (cards: Card list)
+            (passed: string list)
+            : Step option list * (Deck * Deck) * bool =
             let takers =
                 rotation
                 |> List.where (fun player -> player.Name <> target && not (holdsSecondChance player))
 
-            // The target as the flips leave them, the decks, and every second
-            // chance passed on so far, newest first, with the target and the
-            // decks as it was aimed
-            let flip (dealtTo: Player, decks: Deck * Deck, passes: (Player * (Deck * Deck)) list) (card: Card) =
-                let deck, discards = drawn decks card
+            // The cards left flipped from the target as the flips so far left
+            // them, the decks, how many more cards the engine would flip, every
+            // second chance passed on so far, newest first, with the target and
+            // the decks as it was aimed, whether the engine was still flipping
+            // at every card so far, and the steps so far, newest first, each
+            // pass a hole; then the steps, the decks, the passes, oldest first,
+            // and whether the engine flips just these cards. A loop, since a
+            // timeline the engine did not play can record any number of cards
+            let rec flip
+                (dealtTo: Player)
+                (decks: Deck * Deck)
+                (remaining: int)
+                (passes: (Player * (Deck * Deck)) list)
+                (flipping: bool)
+                (steps: Step option list)
+                (cards: Card list)
+                : Step option list * (Deck * Deck) * (Player * (Deck * Deck)) list * bool =
+                let stopped = remaining <= 0 || Hand.HasFlip7Bonus dealtTo.Hand
 
-                match card with
-                | ActionCard Card.SecondChance when holdsSecondChance dealtTo ->
-                    if passes.Length < takers.Length then
-                        dealtTo, (deck, discards), (dealtTo, (deck, discards)) :: passes
-                    else
-                        dealtTo, (deck, Deck.Increment discards card), passes
-                | ActionCard _ -> { dealtTo with Hand = card :: dealtTo.Hand }, (deck, discards), passes
-                | ValueCard _
-                | ModifierCard _ ->
-                    let _, reduced, removed = Hand.Reduce(card :: dealtTo.Hand)
-                    { dealtTo with Hand = reduced }, (deck, List.fold Deck.Increment discards removed), passes
+                match cards with
+                | [] -> List.rev steps, decks, List.rev passes, flipping && stopped
+                | card :: rest ->
+                    let step, (deck, discards) = drawn decks card
 
-            let took =
-                takers
-                |> List.where (fun taker ->
-                    instant.Players
-                    |> List.exists (fun player -> player.Name = taker.Name && holdsSecondChance player)
-                )
+                    let dealtTo', decks', remaining', passes', aims =
+                        match card with
+                        | ActionCard Card.SecondChance when holdsSecondChance dealtTo ->
+                            if passes.Length < takers.Length then
+                                dealtTo,
+                                (deck, discards),
+                                remaining - 1,
+                                (dealtTo, (deck, discards)) :: passes,
+                                [ None ]
+                            else
+                                dealtTo, (deck, Deck.Increment discards card), remaining - 1, passes, []
+                        | ActionCard _ ->
+                            { dealtTo with Hand = card :: dealtTo.Hand }, (deck, discards), remaining - 1, passes, []
+                        | ValueCard _
+                        | ModifierCard _ ->
+                            let isBust, reduced, removed = Hand.Reduce(card :: dealtTo.Hand)
+
+                            { dealtTo with Hand = reduced },
+                            (deck, List.fold Deck.Increment discards removed),
+                            (if isBust then 0 else remaining - 1),
+                            passes,
+                            []
+
+                    flip dealtTo' decks' remaining' passes' (flipping && not stopped) (aims @ Some step :: steps) rest
 
             match rotation |> List.tryFind (fun player -> player.Name = target) with
+            | None -> [], decks, false
             | Some dealtTo ->
-                match List.fold flip (dealtTo, decks, []) cards, took with
-                | (_, _, [ chooser, decks ]), [ taker ] -> [
-                    aimed Strategy.Ask.WhoReceivesSecondChance chooser takers finished decks taker.Name
-                  ]
-                | _ -> []
-            | None -> []
+                let steps, decks', passes, stops = flip dealtTo decks 3 [] true [] cards
 
-        match instant.Event with
-        | Froze(source, target) when Owes scan source = 0 ->
-            drawer source
-            |> Option.map (fun (current, rotation) ->
-                aimed Strategy.Ask.WhoToFreeze current rotation finished (drawn decks (ActionCard Card.Freeze)) target
-            )
-            |> Option.toList
-        | Froze(source, target) ->
-            unparked source (ActionCard Card.Freeze)
-            |> Option.map (fun (chooser, active, finished) ->
-                aimed Strategy.Ask.WhoToFreeze chooser active finished decks target
-            )
-            |> Option.toList
-        | SecondChancePassed(source, target) ->
-            drawer source
-            |> Option.map (fun (current, rotation) ->
-                let takers =
-                    rotation
-                    |> List.where (fun player -> player.Name <> source && not (holdsSecondChance player))
+                // Each pass aimed at whom the deal3 records it went to, among
+                // those who could still take one, or None unless every one is
+                let aims: Observation list option =
+                    if passes.Length <> passed.Length then
+                        None
+                    else
+                        List.zip passes passed
+                        |> List.fold
+                            (fun aims ((passer, decks), recipient) ->
+                                aims
+                                |> Option.bind (fun (aims, offered: Player list) ->
+                                    if offered |> List.exists (fun player -> player.Name = recipient) then
+                                        Some(
+                                            aimed
+                                                Strategy.Ask.WhoReceivesSecondChance
+                                                passer
+                                                offered
+                                                finished
+                                                decks
+                                                recipient
+                                            :: aims,
+                                            offered |> List.where (fun player -> player.Name <> recipient)
+                                        )
+                                    else
+                                        None
+                                )
+                            )
+                            (Some([], takers))
+                        |> Option.map (fst >> List.rev)
 
-                aimed Strategy.Ask.WhoReceivesSecondChance current takers finished (drawn decks secondChance) target
-            )
-            |> Option.toList
-        | Dealt3(source, target, cards, _) ->
-            let deal3 = ActionCard Card.Deal3
+                let steps =
+                    match aims with
+                    | None -> steps
+                    | Some aims ->
+                        steps
+                        |> List.mapFold
+                            (fun aims step ->
+                                match step, aims with
+                                | None, aim :: rest -> Some(Step.Aimed aim), rest
+                                | step, aims -> step, aims
+                            )
+                            aims
+                        |> fst
 
-            let asked =
-                if Owes scan source = 0 then
+                steps, decks', stops && aims.IsSome
+
+        let steps, decks', stopped =
+            match instant.Event with
+            | Drew(_, card)
+            | Busted(_, card) ->
+                let step, decks = drawn decks card
+                [ Some step ], decks, true
+            | SecondChanceDiscarded _ ->
+                let step, decks = drawn decks secondChance
+                [ Some step ], decks, true
+            | SecondChancePassed(source, target) ->
+                let step, decks = drawn decks secondChance
+
+                let aim =
                     drawer source
                     |> Option.map (fun (current, rotation) ->
-                        let deck, discards = drawn decks deal3
-                        current, rotation, finished, (deck, Deck.Increment discards deal3)
-                    )
-                else
-                    unparked source deal3
-                    |> Option.map (fun (chooser, active, finished) ->
-                        chooser, active, finished, (before.Deck, Deck.Increment before.Discards deal3)
+                        let takers =
+                            rotation
+                            |> List.where (fun player -> player.Name <> source && not (holdsSecondChance player))
+
+                        Step.Aimed(aimed Strategy.Ask.WhoReceivesSecondChance current takers finished decks target)
                     )
 
-            match asked with
-            | None -> []
-            | Some(chooser, rotation, finished, decks) ->
-                aimed Strategy.Ask.WhoReceivesDeal3 chooser rotation finished decks target
-                :: passed rotation finished decks target cards
-        | _ -> []
+                [ Some step; aim ], decks, true
+            | Froze(source, target) when voluntary ->
+                let step, decks = drawn decks (ActionCard Card.Freeze)
+
+                let aim =
+                    drawer source
+                    |> Option.map (fun (current, rotation) ->
+                        Step.Aimed(aimed Strategy.Ask.WhoToFreeze current rotation finished decks target)
+                    )
+
+                [ Some step; aim ], decks, true
+            | Froze(source, target) ->
+                let aim =
+                    unparked source (ActionCard Card.Freeze)
+                    |> Option.map (fun (chooser, active, finished) ->
+                        Step.Aimed(aimed Strategy.Ask.WhoToFreeze chooser active finished decks target)
+                    )
+
+                [ aim ], decks, true
+            | Dealt3(source, target, cards, passed) ->
+                let deal3 = ActionCard Card.Deal3
+
+                // The steps up to the aim, who aims the deal3, with the
+                // rotation it is aimed in and those finished, if the timeline
+                // seats them where the engine would have them, and the decks as
+                // it is aimed: a drawn deal3 goes to the discards once drawn,
+                // and a set-aside one once taken out of the hand it was parked
+                // in
+                let drew, aiming, decks =
+                    if voluntary then
+                        let step, (deck, discards) = drawn decks deal3
+
+                        let aiming =
+                            drawer source
+                            |> Option.map (fun (current, rotation) -> current, rotation, finished)
+
+                        [ Some step ], aiming, (deck, Deck.Increment discards deal3)
+                    else
+                        [], unparked source deal3, (before.Deck, Deck.Increment before.Discards deal3)
+
+                match aiming with
+                | None -> drew @ [ None ], decks, true
+                | Some(chooser, rotation, finished) ->
+                    let aim = aimed Strategy.Ask.WhoReceivesDeal3 chooser rotation finished decks target
+                    let flips, decks, stopped = flipped rotation finished decks target cards passed
+                    drew @ Some(Step.Aimed aim) :: flips, decks, stopped
+            | Edited _ -> [], (instant.Deck, instant.Discards), true
+            | TableSeated
+            | Stood _
+            | Flip7Achieved _
+            | RoundEnded _ -> [], decks, true
+
+        let steps = question @ steps
+        let deck, discards = decks'
+
+        // The engine seats the table only where a game starts, and a forced
+        // first turn always hits
+        let asked =
+            match instant.Event with
+            | TableSeated -> false
+            | Stood _ -> not steps.IsEmpty
+            | _ -> true
+
+        // The engine puts every question to a player where the timeline seats
+        // them, and passes every second chance on to somebody who can take it
+        let placed = steps |> List.forall Option.isSome
+        let steps = steps |> List.choose id
+
+        let drawable =
+            steps
+            |> List.forall (fun step ->
+                match step with
+                | Step.Drawn(card, pile) -> pile |> Map.tryFind card |> Option.exists (fun held -> held > 0u)
+                | Step.Asked _
+                | Step.Interrupted _
+                | Step.Aimed _ -> true
+            )
+
+        {
+            Instant = instant
+            Steps = steps
+            Possible =
+                asked
+                && placed
+                && HasDistinctNames instant
+                && drawable
+                && stopped
+                && deck = instant.Deck
+                && (not instant.Event.IsDealt3 || discards = instant.Discards)
+        }
 
     /// <summary>
     /// Advances the scan by one instant, yielding every question the instant
@@ -330,13 +585,12 @@ module public Observation =
     /// out afterwards are aims of theirs, since they choose who receives them,
     /// and so is a forced first hit's card. Every aim the engine asks for is
     /// reconstructed, including those with a single candidate, which say
-    /// nothing about the player, but for the two a deal3's target is asked when
-    /// they pass on two second chances during its flips: who took them is read
-    /// from the hands after the deal3, which do not show which was passed
-    /// first, which decides who could take the second, so neither aim is given.
+    /// nothing about the player, and every second chance a deal3's target
+    /// passes on during its flips, which the deal3 records in the order they
+    /// were passed.
     /// </summary>
     let public Observe (scan: Scan) (instant: Instant) : Scan * Observation list =
-        let (Scan(finished, round, turns, pending, previous)) = scan
+        let (Scan(finished, round, turns, pending, last)) = scan
         let owed = Owes scan
 
         let voluntary =
@@ -366,22 +620,14 @@ module public Observation =
                 turns |> Map.add name (taken + 1u)
             | _ -> turns
 
-        let decided (before: Instant) : Observation option =
-            Decider instant.Event
-            |> Option.filter (fun _ -> voluntary)
-            |> Option.filter (fun (name, _) -> Map.find name turns' > 1u)
-            |> Option.bind (fun (name, choice) ->
-                before.Players
-                |> List.tryFind (fun player -> player.Name = name)
-                |> Option.map (fun actor ->
-                    let others, finishedPlayers =
-                        before.Players
-                        |> List.filter (fun player -> player.Name <> name)
-                        |> List.partition (InRound scan)
-
-                    Asked round turns' (Choice1Of2 choice) actor others finishedPlayers (before.Deck, before.Discards)
-                )
-            )
+        let replayed =
+            match last with
+            | None -> {
+                Instant = instant
+                Steps = []
+                Possible = instant.Event.IsTableSeated && HasDistinctNames instant
+              }
+            | Some last -> Replayed scan voluntary turns' last.Instant instant
 
         let finished', round', turns'', pending'' =
             match instant.Event with
@@ -406,11 +652,16 @@ module public Observation =
             | _ -> finished, round, turns', pending'
 
         let observations =
-            match previous with
-            | None -> []
-            | Some before -> Option.toList (decided before) @ Aims scan turns' before instant
+            replayed.Steps
+            |> List.choose (fun step ->
+                match step with
+                | Step.Asked observation
+                | Step.Aimed observation -> Some observation
+                | Step.Interrupted _
+                | Step.Drawn _ -> None
+            )
 
-        Scan(finished', round', turns'', pending'', Some instant), observations
+        Scan(finished', round', turns'', pending'', Some replayed), observations
 
     /// <summary>
     /// Extracts every question a timeline shows a player was asked, every

@@ -266,3 +266,27 @@ let ``an instant's hit-or-stand decision comes before its aims, each with its ro
         ],
         observationsOf timeline |> List.map asked
     )
+
+// A timeline the engine did not play can record a deal3 of any length, and
+// Observe replays every card of it all the same, without running out of stack.
+// A's forced first hit draws a deal3 for B, whose flips keep the first second
+// chance and would pass the second on to A, though the deal3 records nobody
+// being passed one, so the one question the deal3 shows is A's aim
+[<Fact>]
+let ``a deal3 recording any number of cards is replayed card by card`` () =
+    let secondChance = ActionCard Card.SecondChance
+
+    let timeline = [
+        instant TableSeated [ player "A" []; player "B" [] ]
+        instant (Dealt3("A", "B", List.replicate 100000 secondChance, [])) [
+            player "B" [ secondChance ]
+            player "A" []
+        ]
+    ]
+
+    Assert.Equal<Asked list>(
+        [
+            "A", Choice2Of2(Strategy.Ask.WhoReceivesDeal3, "B"), 1u, 1u, [ "B"; "A" ], []
+        ],
+        observationsOf timeline |> List.map asked
+    )
