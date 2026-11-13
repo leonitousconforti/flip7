@@ -34,7 +34,7 @@ let private decideAt strategy turn player others finished decks =
 // to draw from
 let private decide strategy player = decideAt strategy 1u player [] [] decks
 
-// ---- hit-or-stand strategies ----
+// ---- hit or stand strategies ----
 
 [<Fact>]
 let ``RandomWithProbability is deterministic at the extremes`` () =
@@ -443,7 +443,7 @@ let ``a decider aims the targeting it is taught, passes on the rest, and the def
             $"the {form} form's default refuses ChoosesExternally Other"
         )
 
-// The terminal teaches its aiming and then its hit-or-stand prompt, and the
+// The terminal teaches its aiming and then its hit or stand prompt, and the
 // sage benchmark teaches two targeting names, so each lesson has to keep the
 // ones before it
 [<Fact>]

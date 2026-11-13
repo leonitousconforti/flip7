@@ -39,12 +39,12 @@ let private seven = ValueCard Card.Seven
 let private nine = ValueCard Card.Nine
 let private freeze = ActionCard Card.Freeze
 
-// The hit-or-stand decisions a timeline shows, without its aims
+// The hit or stand decisions a timeline shows, without its aims
 let private decisions (timeline: Instant list) : Observation list =
     observationsOf timeline
     |> List.where (fun observation -> observation.Choice.IsChoice1Of2)
 
-// A hit-or-stand decision, or an aim with what it aimed and at whom
+// A hit or stand decision, or an aim with what it aimed and at whom
 type private Answer = Choice<Strategy.HitOrStand, Strategy.Ask * string>
 
 // A question as these examples pin it: who was asked, their answer, the round
@@ -61,7 +61,7 @@ let private asked (observation: Observation) : Asked =
     names observation.OtherPlayers,
     names observation.FinishedPlayers
 
-// ---- hit-or-stand decisions ----
+// ---- hit or stand decisions ----
 
 [<Fact>]
 let ``a player's first turn of a round is dealt, not decided, even holding cards from a deal3, and every later hit or stand is decided from the hand before it``
@@ -163,7 +163,7 @@ let ``players who busted stay finished after an edit takes their busting cards b
         decisions timeline |> List.map asked
     )
 
-// The play editor forks a game at a hit-or-stand question: an Edited instant
+// The play editor forks a game at a hit or stand question: an Edited instant
 // for the changed table, and the game continued with everyone still in the
 // round counted as having taken one turn fewer than the question's, as
 // Games.playForked continues it. Forked at Bob's second turn, Alice, who sat
@@ -177,7 +177,7 @@ let ``after an edit, everyone still in the round has taken as many turns as the 
         "Carol", Strategy.AlwaysHits, Targeting.ChoosesRandomly
     ]
 
-    // Every hit-or-stand question of the first round: how much of the game it
+    // Every hit or stand question of the first round: how much of the game it
     // showed, whom it asked and on which turn
     let questions = ResizeArray<int * string * uint>()
 

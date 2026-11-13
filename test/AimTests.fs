@@ -101,7 +101,7 @@ let private passedTwice (asked: Asked list) : Asked list =
 
 // Where the questions the timeline reveals disagree with those the engine
 // asked, if anywhere, comparing the two in the order the engine asked them:
-// every hit-or-stand decision, turns and all, and every aim but its turn
+// every hit or stand decision, turns and all, and every aim but its turn
 let private disagreement (timeline: Instant list) (asked: Asked list) : string option =
     let expected = asked |> List.map (fun call -> call.Question)
 
@@ -123,7 +123,7 @@ let private disagreement (timeline: Instant list) (asked: Asked list) : string o
         Some $"the engine asked {expected.Length} questions but {observed.Length} were observed"
     | None -> None
 
-// How many hit-or-stand questions after an edit, in the edited round, went to
+// How many hit or stand questions after an edit, in the edited round, went to
 // a player whose count of turns the edit changed: it counts everyone still in
 // the round as having taken as many turns as the asker had
 let private recounted (timeline: Instant list) (asked: Asked list) : int =
