@@ -11,10 +11,6 @@ type public Event =
     | Froze of Source: string * Target: string
     | SecondChancePassed of Source: string * Target: string
     | SecondChanceDiscarded of Name: string
-    /// A deal3 Source gave Target, who flipped Cards. Passed is whom each
-    /// second chance Target flipped while already holding one went to, in the
-    /// order they were passed on: one that nobody could take was discarded and
-    /// is not in it
     | Dealt3 of Source: string * Target: string * Cards: Card list * Passed: string list
     | Flip7Achieved of Name: string
     | Edited of Name: string
@@ -118,7 +114,6 @@ module public Event =
         | [ "Froze"; source; target ] -> Froze(source, target)
         | [ "SecondChancePassed"; source; target ] -> SecondChancePassed(source, target)
         | [ "SecondChanceDiscarded"; name ] -> SecondChanceDiscarded name
-        // Every card comes before whom any second chance went to
         | "Dealt3" :: source :: target :: rest when rest |> List.skipWhile (passedTo >> not) |> List.forall passedTo ->
             let cards = rest |> List.takeWhile (passedTo >> not)
             let passed = rest |> List.skip cards.Length

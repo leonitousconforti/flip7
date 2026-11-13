@@ -171,8 +171,8 @@ module public Timeline =
 
         // Flips the cards left, given the cards flipped so far, whom each
         // second chance passed on so far went to, the cards set aside, the
-        // active players and the decks. Returns whether the target busted
-        // and all of those as the flips leave them
+        // active players and the decks. Returns whether the target busted and
+        // all of those as the flips leave them
         let rec Flip
             (remaining: uint)
             (flipped: Card list)
