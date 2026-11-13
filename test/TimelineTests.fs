@@ -314,7 +314,7 @@ let ``a round that brings a player to exactly 200 ends the game`` () =
 
     Assert.Equal(195u + 5u, a.FirmScore)
 
-// Where a game stood at a hit-or-stand question, which is everything a
+// Where a game stood at a hit or stand question, which is everything a
 // continuation needs to pick it up there
 type private Fork = {
     // How many instants the game had yielded before the question
@@ -345,7 +345,7 @@ let private throughNextRound (instants: Instant list) : Instant list =
 
 // A continuation is a fork: given the game so far, the seating, the turns
 // everyone has taken, and the Random where it stood, a game continued from any
-// hit-or-stand question plays out exactly as the game it was forked from,
+// hit or stand question plays out exactly as the game it was forked from,
 // through the end of the next round, which the seating deals. Every turn count
 // a fork needs is one a decider can see: everyone still in the round has taken
 // their forced first turn before anyone is asked. The Random is not: a decider

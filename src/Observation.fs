@@ -5,10 +5,10 @@ open FSharp.Control
 /// <summary>
 /// One question a timeline shows a player was asked, with their answer and the
 /// table exactly as the engine put the question to them. Choice is Choice1Of2
-/// for a hit-or-stand decision, and Choice2Of2 for an aim: what was being aimed
+/// for a hit or stand decision, and Choice2Of2 for an aim: what was being aimed
 /// and the name of the player it was given to.
 ///
-/// For a hit-or-stand decision OtherPlayers are the players still in the round
+/// For a hit or stand decision OtherPlayers are the players still in the round
 /// besides the player, and FinishedPlayers those who stood, busted or were
 /// frozen, as the HitOrStandDecider receives them. For an aim OtherPlayers are
 /// the candidates: the legal targets in the order the engine passed them to the
@@ -39,7 +39,7 @@ module public Observation =
     // The player whose choice produced an event, and what that choice was, or
     // None for events not produced by a choice. Drawing a Freeze, SecondChance,
     // or Deal3 still counts as the drawer choosing to hit; how the drawn card
-    // resolves afterwards is not their hit-or-stand decision. Not
+    // resolves afterwards is not their hit or stand decision. Not
     // Event.Actor(), which answers whose state an event changed: for a Froze, a
     // SecondChancePassed, or a Dealt3 that is the target, not the player who
     // chose to hit.
@@ -98,10 +98,10 @@ module public Observation =
     /// </summary>
     [<RequireQualifiedAccess>]
     type internal Step =
-        /// A hit-or-stand question and its answer, which every turn asks but a
+        /// A hit or stand question and its answer, which every turn asks but a
         /// player's forced first one of a round
         | Asked of Observation
-        /// A hit-or-stand question the play editor was opened at instead of
+        /// A hit or stand question the play editor was opened at instead of
         /// answering it, which the Edited instant names the asker of
         | Interrupted of Name: string
         /// A card drawn from its pile: the deck, or the discards once the deck
@@ -131,7 +131,7 @@ module public Observation =
         /// instant must seat each player under a name of their own, as the
         /// engine does, since the replay finds players by name, and seat
         /// whoever the engine asks a question of where the engine would have
-        /// them: a hit-or-stand at the table, and the drawer of a card at the
+        /// them: a hit or stand at the table, and the drawer of a card at the
         /// head of the turn order, or the player who set it aside during a
         /// deal3 anywhere at the table. A deal3 must record just the second
         /// chances its flips pass on, each to somebody who could take it, every
@@ -221,7 +221,7 @@ module public Observation =
     // choice rather than a card they set aside during a deal3 being given out,
     // the turns taken counting the instant's own, and the instant before it.
     // Every question comes with the table exactly as the engine put it. The
-    // preceding instant is the table a hit-or-stand question was asked at, and
+    // preceding instant is the table a hit or stand question was asked at, and
     // the one an aim was asked at but for what the card's resolution changed
     // before asking: a drawn card leaves the deck, a deal3 card goes to the
     // discards, a set-aside card leaves the hand it was parked in, and a second
@@ -292,7 +292,7 @@ module public Observation =
             |> List.tryFind (fun player -> player.Name = source)
             |> Option.map (fun chooser -> chooser, active, finished)
 
-        // The hit-or-stand question the engine asked before the instant's
+        // The hit or stand question the engine asked before the instant's
         // event, observed at the table it was asked at. An edit is made at a
         // question in place of answering it, and a forced first turn asks none,
         // nor does giving out a set-aside card
@@ -555,18 +555,18 @@ module public Observation =
 
     /// <summary>
     /// Advances the scan by one instant, yielding every question the instant
-    /// shows a player was asked, in the order the engine asked them: the
-    /// hit-or-stand decision first, since the card a hit draws is drawn once
-    /// the player has chosen, then the aims the card's resolution asked for.
-    /// Each instant is a snapshot immediately after its event, so the preceding
-    /// instant is the exact state a hit-or-stand decision was made from, and
+    /// shows a player was asked, in the order the engine asked them: the hit or
+    /// stand decision first, since the card a hit draws is drawn once the
+    /// player has chosen, then the aims the card's resolution asked for. Each
+    /// instant is a snapshot immediately after its event, so the preceding
+    /// instant is the exact state a hit or stand decision was made from, and
     /// the table an aim was asked at but for what the card's resolution changed
     /// before asking: the drawn card leaves the deck, a deal3 card goes to the
     /// discards, a set-aside card leaves the hand it was parked in, and a
     /// second chance a deal3's target flips but cannot keep is aimed partway
     /// through the flips. A player's first turn of every round is a forced hit
     /// the engine never asks their strategy about - it is dealing, not a
-    /// decision - and gives no hit-or-stand decision; the turn is reconstructed
+    /// decision - and gives no hit or stand decision; the turn is reconstructed
     /// by counting the player's decision events, which matches the engine's
     /// count because every turn produces exactly one such event, and from an
     /// Edited instant on by counting them from as many turns as the asker had
@@ -575,13 +575,13 @@ module public Observation =
     /// earlier deal3 are the flipper giving out cards they were dealt, not a
     /// voluntary hit, and give none either.
     ///
-    /// The OtherPlayers of a hit-or-stand decision are only the players still
-    /// in the round, matching what the hit-or-stand decider receives: players
+    /// The OtherPlayers of a hit or stand decision are only the players still
+    /// in the round, matching what the hit or stand decider receives: players
     /// who stood, busted or were frozen are recognized by replaying the round's
     /// events, which an edit to their hands does not change, and land in
     /// FinishedPlayers.
     ///
-    /// Unlike for hit-or-stand, the cards a deal3's target set aside and gives
+    /// Unlike for hit or stand, the cards a deal3's target set aside and gives
     /// out afterwards are aims of theirs, since they choose who receives them,
     /// and so is a forced first hit's card. Every aim the engine asks for is
     /// reconstructed, including those with a single candidate, which say
@@ -665,7 +665,7 @@ module public Observation =
 
     /// <summary>
     /// Extracts every question a timeline shows a player was asked, every
-    /// voluntary hit-or-stand decision and every aim, in the order the engine
+    /// voluntary hit or stand decision and every aim, in the order the engine
     /// asked them: the scan applied instant by instant, with Observe's
     /// semantics.
     ///

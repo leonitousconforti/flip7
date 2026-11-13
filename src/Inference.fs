@@ -4,7 +4,7 @@ open FSharp.Control
 
 /// <summary>
 /// A fitted model of one player: a posterior distribution over candidate
-/// strategies given the hit-or-stand decisions they were observed making, and
+/// strategies given the hit or stand decisions they were observed making, and
 /// one over candidate targetings given the aims they were observed making at
 /// one of two or more players. Observations and Aims count those decisions and
 /// aims, and HitRate is the share of the decisions that hit, which is NaN for a
@@ -24,7 +24,7 @@ type public PlayerModel = {
 
 /// <summary>
 /// The evidence a set of observations contributes to a player's model:
-/// per-candidate log-likelihood sums of their hit-or-stand decisions over the
+/// per-candidate log-likelihood sums of their hit or stand decisions over the
 /// candidate strategies and of their aims at one of two or more players over
 /// the candidate targetings, the names the targetings that take sides are over,
 /// in order, and the counts the model reports. Log-likelihoods add, so evidence
@@ -191,7 +191,7 @@ module public Inference =
     // The probability that a targeting gives the card to the target an aim
     // observed among its candidates, judging busts by the chance of busting on
     // one card drawn from the deck and discards the aim was made at, and one
-    // for a hit-or-stand decision
+    // for a hit or stand decision
     let private ProbabilityOfTarget (targeting: Targeting) (observation: Observation) : float =
         let bust (player: Player) : float =
             Simulation.probabilityToBust observation.Deck observation.Discards player.Hand false
@@ -207,7 +207,7 @@ module public Inference =
                 else
                     0.0
 
-    // The probability of a hit-or-stand choice under a strategy, allowing for a
+    // The probability of a hit or stand choice under a strategy, allowing for a
     // player who with probability epsilon ignores their strategy and flips a
     // coin
     let private OfDecision
@@ -252,7 +252,7 @@ module public Inference =
         | Choice2Of2 _ -> OfAim epsilon targeting observation
 
     /// <summary>
-    /// The evidence a player's observations carry: their hit-or-stand decisions
+    /// The evidence a player's observations carry: their hit or stand decisions
     /// over the candidate strategies, and their aims over the candidate
     /// targetings: the given targetings, which are policies that take no sides,
     /// and each of them taking sides every way over the given names and every
@@ -567,7 +567,7 @@ module public Inference =
 
 /// <summary>
 /// What Sage has learnt of the players from games already played: the evidence
-/// each player's choices in them carry, their hit-or-stand decisions over a
+/// each player's choices in them carry, their hit or stand decisions over a
 /// grid of candidate strategies, Inference.DefaultStrategyCandidates unless the
 /// study was given one, and their aims over a grid of targeting policies that
 /// take no sides, Inference.DefaultTargetingCandidates unless the study was

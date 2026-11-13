@@ -41,7 +41,7 @@ let scanOf (instants: Instant list) : Observation.Scan =
     instants
     |> List.fold (fun scan instant -> fst (Observation.Observe scan instant)) Observation.Start
 
-// The table at a hit-or-stand question, as the play editor changes it: the
+// The table at a hit or stand question, as the play editor changes it: the
 // players still in the round, those finished, and the decks
 type Table = Player list * Player list * (Deck * Deck)
 
@@ -106,7 +106,7 @@ let edited (edit: Edit) ((active, finished, (deck, discards)): Table) : Table =
             active, finished, (Deck.Decrement deck card, discards)
     | Dealt _ -> moved ()
 
-// Where to fork a game: at which hit-or-stand question, counted from zero, and
+// Where to fork a game: at which hit or stand question, counted from zero, and
 // what the play editor changes at it, if anything. A generated game's fork
 // names its change as an Edit, and the harness takes the change itself
 type Fork<'edit> = { AtQuestion: int; Edit: 'edit option }
@@ -179,7 +179,7 @@ let private genEdit: Gen<Edit> =
     ]
 
 // A game of two to twelve seats on every kind of targeting, a third of them
-// forked at a hit-or-stand question, with an edit or without. OracleTests and
+// forked at a hit or stand question, with an edit or without. OracleTests and
 // AimTests play the same games
 let genGameWithFork: Gen<int * Lineup * Fork<Edit> option> = gen {
     let! seed = genSeed
@@ -276,7 +276,7 @@ let noRoads: Roads = {
     AimsAfterRotation = 0
 }
 
-// Raised by a decider to stop a game at a hit-or-stand question, with
+// Raised by a decider to stop a game at a hit or stand question, with
 // everything the question showed of it
 exception Forked of
     History: Instant list *
@@ -288,7 +288,7 @@ exception Forked of
     Decks: (Deck * Deck)
 
 // Answers as own does, naming each question's call on the game's Random as it
-// is asked, and forks the game at the given hit-or-stand question, counted
+// is asked, and forks the game at the given hit or stand question, counted
 // from zero
 let private recorded (game: Recording) (forkAt: int option) : Strategy.Decider =
     let asked = ref 0
@@ -308,7 +308,7 @@ let private recorded (game: Recording) (forkAt: int option) : Strategy.Decider =
 
 // Plays a game on a Recording, every question asked of a decider that answers
 // as own does, inside the given wrapper, or when a fork is asked for, plays it
-// up to that hit-or-stand question and continues it on the same stream. Given
+// up to that hit or stand question and continues it on the same stream. Given
 // an edit, it continues as the play editor does: after an Edited instant for
 // the changed table, made in place of the question's answer and so after the
 // call the question drew its seed with, with every active player's turns
