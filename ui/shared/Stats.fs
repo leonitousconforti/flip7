@@ -80,7 +80,7 @@ let public Update (stats: Stats) (instant: Instant) : Stats =
         stats with
             Targeting = tally stats.Targeting round player
       }
-    | Event.Dealt3(player, _target, _cards) -> {
+    | Event.Dealt3(player, _target, _cards, _passed) -> {
         stats with
             Targeting = tally stats.Targeting round player
       }

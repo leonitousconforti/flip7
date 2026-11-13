@@ -74,7 +74,7 @@ let private flipperBustsWithASetAsideLeft (timeline: Instant list) : bool =
     |> List.pairwise
     |> List.exists (fun (outer, nested) ->
         match outer.Event, nested.Event with
-        | Dealt3(_, flipper, cards), Dealt3(source, target, _) when source = flipper && target = flipper ->
+        | Dealt3(_, flipper, cards, _), Dealt3(source, target, _, _) when source = flipper && target = flipper ->
             let setAsides = cards |> List.where isSetAside
 
             List.length setAsides >= 2
@@ -90,7 +90,7 @@ let private targetFlipsSevenWithASetAsideLeft (timeline: Instant list) : bool =
     timeline
     |> List.exists (fun instant ->
         match instant.Event with
-        | Dealt3(_, target, cards) ->
+        | Dealt3(_, target, cards, _) ->
             List.exists isSetAside cards
             && instant.Players
                |> List.exists (fun player -> player.Name = target && Hand.HasFlip7Bonus player.Hand)
@@ -129,7 +129,7 @@ let ``once a deal3 ends its target's round, the cards it set aside are discarded
         let giver =
             match instant.Event with
             | Froze(source, _) -> Some source
-            | Dealt3(source, _, _) -> Some source
+            | Dealt3(source, _, _, _) -> Some source
             | _ -> None
 
         match giver with

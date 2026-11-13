@@ -71,7 +71,7 @@ let ``a player's first turn of a round is dealt, not decided, even holding cards
         instant TableSeated [ player "A" []; player "B" [] ]
         // A's forced first hit draws a deal3 aimed at B, so B holds cards
         // before their own first turn while A holds none after theirs
-        instant (Dealt3("A", "B", [ two; nine ])) [ player "B" [ nine; two ]; player "A" [] ]
+        instant (Dealt3("A", "B", [ two; nine ], [])) [ player "B" [ nine; two ]; player "A" [] ]
         // B's first turn is still a forced hit, not a decision
         instant (Drew("B", five)) [ player "A" []; player "B" [ five; nine; two ] ]
         // A's second turn is a decision even though their hand is empty
@@ -142,7 +142,7 @@ let ``players who busted stay finished after an edit takes their busting cards b
         instant (Drew("C", nine)) [ player "A" [ five ]; player "B" [ two ]; player "C" [ nine ] ]
         instant (Busted("A", five)) [ player "B" [ two ]; player "C" [ nine ]; player "A" [ five; five ] ]
         // B hits, drawing a deal3 aimed at C, who busts on the first flip
-        instant (Dealt3("B", "C", [ nine ])) [
+        instant (Dealt3("B", "C", [ nine ], [])) [
             player "B" [ two ]
             player "C" [ nine; nine ]
             player "A" [ five; five ]
@@ -236,7 +236,7 @@ let ``an instant's hit-or-stand decision comes before its aims, each with its ro
         instant (Drew("B", five)) [ player "A" []; player "B" [ five ]; player "C" [ freeze ] ]
         // A hits on their second turn and draws a deal3, which A gives to B,
         // whose flips set a freeze aside
-        instant (Dealt3("A", "B", [ two; freeze; nine ])) [
+        instant (Dealt3("A", "B", [ two; freeze; nine ], [])) [
             player "B" [ nine; freeze; two; five ]
             player "A" []
             player "C" [ freeze ]
@@ -247,7 +247,7 @@ let ``an instant's hit-or-stand decision comes before its aims, each with its ro
         instant (RoundEnded(Map.ofList [ "A", 0u; "B", 16u; "C", 0u ])) [ player "A" []; player "B" []; player "C" [] ]
         // The second round starts one seat on, with B's forced first hit: a
         // deal3 B gives to A before A's first turn, whose flips set a freeze aside
-        instant (Dealt3("B", "A", [ two; freeze ])) [ player "C" []; player "A" [ freeze; two ]; player "B" [] ]
+        instant (Dealt3("B", "A", [ two; freeze ], [])) [ player "C" []; player "A" [ freeze; two ]; player "B" [] ]
         // ...which A gives to C, having taken no turn this round
         instant (Froze("A", "C")) [ player "C" [ freeze ]; player "A" [ two ]; player "B" [] ]
     ]

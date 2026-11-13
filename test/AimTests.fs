@@ -91,7 +91,7 @@ let private recording (asked: ResizeArray<Asked>) (decider: Strategy.Decider) : 
 // The second chances the target of a deal3 passed on during its flips are
 // asked of their decider with the game as it stood before the deal3, so two of
 // them in one deal3 are shown as much of the game as each other and no other
-// second chance is. Those are the aims the timeline cannot order
+// second chance is. Those are the aims Observe does not give
 let private ambiguous (asked: Asked list) : Asked list =
     asked
     |> List.where (asks Strategy.Ask.WhoReceivesSecondChance)
@@ -125,7 +125,7 @@ let private disagreement (timeline: Instant list) (asked: Asked list) : string o
     | Some index -> Some $"question {index} was asked as %A{expected[index]} but observed as %A{observed[index]}"
     | None when expected.Length <> observed.Length ->
         Some
-            $"the engine asked {expected.Length} questions besides {skipped.Length} aims it cannot order, but {observed.Length} were observed"
+            $"the engine asked {expected.Length} questions besides {skipped.Length} aims Observe does not give, but {observed.Length} were observed"
     | None -> None
 
 // How many hit-or-stand questions after an edit, in the edited round, went to
@@ -233,7 +233,7 @@ let private roadsOf (timeline: Instant list) (asked: Asked list) : Roads =
                     && (aims |> List.where (fun other -> passedInFlips other && other.Seen = call.Seen)).Length = 1
                     && List.contains secondChance dealtTo.Hand
                     && match timeline[call.Seen].Event with
-                       | Dealt3(_, _, cards) -> (cards |> List.where ((=) secondChance)).Length = 2
+                       | Dealt3(_, _, cards, _) -> (cards |> List.where ((=) secondChance)).Length = 2
                        | _ -> false
                 )
             AimsPassedTwice = (ambiguous asked).Length

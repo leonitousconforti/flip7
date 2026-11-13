@@ -143,7 +143,8 @@ module public Timeline =
     // toward the three: number and modifier cards join the target's hand
     // (stopping early on a bust or a flip7, so the remaining cards are never
     // drawn), second chances are kept by the target or passed along per the
-    // usual rules (and can save a later bust within the same deal3), and freeze
+    // usual rules (and can save a later bust within the same deal3), the
+    // deal3's event recording whom each one passed along went to, and freeze
     // and deal3 cards are set aside until the flips finish. Set-asides are
     // parked in the target's hand while pending: that keeps every card
     // accounted for at every instant and, unlike parking them in the discards,
@@ -168,17 +169,22 @@ module public Timeline =
         let dealtTo = List.item targetIndex active
         let targetName = dealtTo.Name
 
+        // Flips the cards left, given the cards flipped so far, whom each
+        // second chance passed on so far went to, the cards set aside, the
+        // active players and the decks. Returns whether the target busted
+        // and all of those as the flips leave them
         let rec Flip
             (remaining: uint)
             (flipped: Card list)
+            (passed: string list)
             (setAsides: Card list)
             (active: Player list)
             (decks: Deck * Deck)
-            : Async<bool * Card list * Card list * Player list * (Deck * Deck)> = async {
+            : Async<bool * Card list * string list * Card list * Player list * (Deck * Deck)> = async {
             let target = List.item targetIndex active
 
             if remaining = 0u || Hand.HasFlip7Bonus target.Hand then
-                return false, flipped, setAsides, active, decks
+                return false, flipped, passed, setAsides, active, decks
             else
 
             let decks', card = Deck.Draw1With random decks
@@ -191,16 +197,16 @@ module public Timeline =
             | ActionCard Card.Freeze
             | ActionCard Card.Deal3 ->
                 let active' = List.updateAt targetIndex (WithCard card target) active
-                return! Flip (remaining - 1u) flipped' (setAsides @ [ card ]) active' decks'
+                return! Flip (remaining - 1u) flipped' passed (setAsides @ [ card ]) active' decks'
 
             | ActionCard Card.SecondChance when not (HasSecondChance target) ->
                 let active' = List.updateAt targetIndex (WithCard card target) active
-                return! Flip (remaining - 1u) flipped' setAsides active' decks'
+                return! Flip (remaining - 1u) flipped' passed setAsides active' decks'
 
             | ActionCard Card.SecondChance ->
-                let! _, active', decks'' =
+                let! recipient, active', decks'' =
                     GiveAwaySecondChance decide history card target active finished decks'
-                return! Flip (remaining - 1u) flipped' setAsides active' decks''
+                return! Flip (remaining - 1u) flipped' (passed @ Option.toList recipient) setAsides active' decks''
 
             | ValueCard _
             | ModifierCard _ ->
@@ -209,13 +215,14 @@ module public Timeline =
                 let active' = List.updateAt targetIndex { target with Hand = reducedHand } active
 
                 if isBust then
-                    return true, flipped', setAsides, active', decks''
+                    return true, flipped', passed, setAsides, active', decks''
                 else
-                    return! Flip (remaining - 1u) flipped' setAsides active' decks''
+                    return! Flip (remaining - 1u) flipped' passed setAsides active' decks''
         }
 
-        let! isBust, flipped, setAsides, active', decks' = Flip 3u [] [] active decks
-        let event = Dealt3(source, targetName, flipped)
+        let! isBust, flipped, passed, setAsides, active', decks' =
+            Flip 3u [] [] [] active decks
+        let event = Dealt3(source, targetName, flipped, passed)
 
         if isBust then
             let target' = List.item targetIndex active'

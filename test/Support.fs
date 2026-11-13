@@ -338,7 +338,12 @@ let genEvent: Gen<Event> =
         Gen.map2 (fun source target -> Froze(source, target)) genName genName
         Gen.map2 (fun source target -> SecondChancePassed(source, target)) genName genName
         Gen.map SecondChanceDiscarded genName
-        Gen.map3 (fun source target cards -> Dealt3(source, target, cards)) genName genName (Gen.listOf genCard)
+        Gen.map4
+            (fun source target cards passed -> Dealt3(source, target, cards, passed))
+            genName
+            genName
+            (Gen.listOf genCard)
+            (Gen.listOf genName)
         Gen.map Flip7Achieved genName
         Gen.map Edited genName
         Gen.map2 (fun name score -> name, score) genName genUint
