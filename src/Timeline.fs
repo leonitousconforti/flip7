@@ -478,21 +478,27 @@ module public Timeline =
                             decks''
             }
 
-    // Names are the engine's identity key: turn counts, round scores, unparking
-    // a set-aside card during a deal3, and matching a targeting decider's
-    // answer back to a seat are all done by name, and a duplicate corrupts all
-    // four quietly rather than failing. Checked where a game or a continuation
-    // is set up, and eagerly rather than inside the timeline, so the error
-    // lands where the lineup was written instead of wherever it first came to
-    // be enumerated.
-    let private EnsureDistinctNames (players: Player list) : unit =
-        let duplicated =
-            players
-            |> List.countBy (fun player -> player.Name)
-            |> List.where (fun (_, seats) -> seats > 1)
-            |> List.map fst
+    /// <summary>
+    /// The names seated more than once among the players, which the engine
+    /// refuses to play. Names are the engine's identity key: turn counts, round
+    /// scores, unparking a set-aside card during a deal3, and matching a
+    /// targeting decider's answer back to a seat are all done by name, and a
+    /// duplicate corrupts all four quietly rather than failing.
+    /// </summary>
+    let internal DuplicatedNames (players: Player list) : string list =
+        players
+        |> List.countBy (fun player -> player.Name)
+        |> List.where (fun (_, seats) -> seats > 1)
+        |> List.map fst
 
-        if not (List.isEmpty duplicated) then
+    // Refuses players seated under a name more than once. Checked where a game
+    // or a continuation is set up, and eagerly rather than inside the timeline,
+    // so the error lands where the lineup was written instead of wherever it
+    // first came to be enumerated.
+    let private EnsureDistinctNames (players: Player list) : unit =
+        match DuplicatedNames players with
+        | [] -> ()
+        | duplicated ->
             let duplicated = String.concat ", " duplicated
 
             invalidArg
