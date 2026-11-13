@@ -125,9 +125,9 @@ module public Observation =
         /// Whether the engine could have produced the instant from the ones
         /// before it by taking the steps, which are then the calls it made on
         /// the game's Random to produce it. A game starts from a TableSeated,
-        /// so the first instant is possible when it is one and no later one
-        /// is, and a Stood that asked no question is not, since a forced first
-        /// turn always hits. An edit is possible whatever table it shows. Every
+        /// so the first instant is possible when it is one and no later one is,
+        /// and a Stood that asked no question is not, since a forced first turn
+        /// always hits. An edit is possible whatever table it shows. Every
         /// instant must seat each player under a name of their own, as the
         /// engine does, since the replay finds players by name, and seat
         /// whoever the engine asks a question of where the engine would have
@@ -276,8 +276,8 @@ module public Observation =
 
         // A card a deal3's target set aside is taken out of their hand before
         // they aim it, wherever they sit now: who aims it, with the players in
-        // the round and those finished as they aim it, if they sit at the
-        // table at all
+        // the round and those finished as they aim it, if they sit at the table
+        // at all
         let unparked (source: string) (card: Card) : (Player * Player list * Player list) option =
             let unpark =
                 List.map (fun (player: Player) ->
@@ -294,8 +294,8 @@ module public Observation =
 
         // The hit-or-stand question the engine asked before the instant's
         // event, observed at the table it was asked at. An edit is made at a
-        // question in place of answering it, and a forced first turn asks
-        // none, nor does giving out a set-aside card
+        // question in place of answering it, and a forced first turn asks none,
+        // nor does giving out a set-aside card
         let question: Step option list =
             match instant.Event, Decider instant.Event with
             | Edited asker, _ -> [ Some(Step.Interrupted asker) ]
@@ -326,8 +326,8 @@ module public Observation =
         // passed one, among those in the rotation but the target who hold none
         // and were passed none before it, and is a hole unless every one can
         // be. Returns the steps, the decks they leave, and whether the engine
-        // flips every card the deal3 records and no more and passes on just
-        // the second chances it records, to whom it records
+        // flips every card the deal3 records and no more and passes on just the
+        // second chances it records, to whom it records
         let flipped
             (rotation: Player list)
             (finished: Player list)
