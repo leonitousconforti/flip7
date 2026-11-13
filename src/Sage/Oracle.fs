@@ -33,22 +33,27 @@ type public Seeds =
 
 /// <summary>
 /// Seed recovery partway through a timeline: everything an oracle has learnt
-/// from the instants it has followed, opaque to callers. It is immutable, so a
+/// from the instants it has observed, opaque to callers. It is immutable, so a
 /// caller handed the game so far at every question can keep the latest one and
-/// follow only the instants since.
+/// observe only the instants since.
 /// </summary>
 [<NoComparison; NoEquality>]
 type public Oracle =
     private
-    // Either way, how many values the game's Random has drawn by the last
-    // instant followed, and how many seeds the draws so far are expected to
-    // leave, which once they are listed is how many would agree by chance with
-    // a game no seed dealt. Until few enough are expected to list them, the
-    // draws themselves; after, every seed left with its class, and the affine
-    // forms as far as the draws reach. A timeline the oracle cannot follow
-    // lists no seed
-    | Gathering of Calls: int * Expected: float * Draws: KnuthSubtractiveGenerator.Constraint list
+    // Either way, the scan of every instant observed, how many values the
+    // game's Random has drawn by the last of them, and how many seeds the draws
+    // so far are expected to leave, which once they are listed is how many
+    // would agree by chance with a game no seed dealt. Until few enough are
+    // expected to list them, the draws themselves; after, every seed left with
+    // its class, and the affine forms as far as the draws reach. A timeline the
+    // oracle cannot follow lists no seed
+    | Gathering of
+        Scan: Observation.Scan *
+        Calls: int *
+        Expected: float *
+        Draws: KnuthSubtractiveGenerator.Constraint list
     | Listed of
+        Scan: Observation.Scan *
         Calls: int *
         Expected: float *
         Survivors: struct (int * KnuthSubtractiveGenerator.Class) array *
@@ -83,53 +88,43 @@ let private Margin = 1e-3
 /// <summary>
 /// The oracle before any instant: every seed still agrees.
 /// </summary>
-let public Start: Oracle = Gathering(0, 2147483648.0, [])
+let public Start: Oracle = Gathering(Observation.Start, 0, 2147483648.0, [])
 
 /// <summary>
-/// Advances the oracle by the instant a scan took in last, given the scan,
-/// which must have taken in, from Observation.Start and in order, every instant
-/// the oracle has followed and then this one. The scan's replay of the instant
-/// tells exactly which calls the engine made on the game's Random to produce
-/// it, and every card drawn from two or more says which values the call that
-/// picked it could have returned, which only some seeds give. Until few enough
-/// seeds are expected to agree for them to be listed, the draws are only
-/// gathered, and the step costs a few microseconds; the step that lists them
-/// takes some tens of milliseconds across every core, and each step after it
-/// checks every seed left against the new draws, at a few nanoseconds a seed.
-/// Every draw is checked even once one seed is left, and a seed that fails one
-/// is dropped, which leaves none. The first instant must be a TableSeated, from
-/// which the game's Random is taken to be fresh from its seed, and an instant
-/// the engine could not have produced from the ones before it, as the scan's
-/// replay of it tells, leaves no seed.
+/// Advances the oracle by the instant a scan took in last, given the scan:
+/// what Observe does, for a caller that scans the game anyway, so that each
+/// instant is scanned once. The scan must have taken in, from
+/// Observation.Start and in order, every instant the oracle has observed and
+/// then this one, and the oracle keeps it to go on from.
 /// </summary>
-let public Follow (oracle: Oracle) (scan: Observation.Scan) : Oracle =
+let internal Follow (oracle: Oracle) (scan: Observation.Scan) : Oracle =
     let reach (draws: KnuthSubtractiveGenerator.Constraint list) =
         draws
         |> List.fold (fun reach (drawn: KnuthSubtractiveGenerator.Constraint) -> max reach (drawn.Position + 1)) 0
 
     match oracle, Observation.ReplayOf scan with
-    | Listed(_, _, [||], _), _ -> oracle
-    | (Gathering(calls, _, _) | Listed(calls, _, _, _)), Some replay when replay.Possible ->
+    | Listed(_, calls, expected, [||], forms), _ -> Listed(scan, calls, expected, [||], forms)
+    | (Gathering(_, calls, _, _) | Listed(_, calls, _, _, _)), Some replay when replay.Possible ->
         let draws = Interpreter.Constraints calls replay.Steps
         let calls = calls + List.sumBy Interpreter.Values replay.Steps
 
         match oracle, draws with
-        | Gathering(_, expected, gathered), [] -> Gathering(calls, expected, gathered)
-        | Listed(_, expected, survivors, forms), [] -> Listed(calls, expected, survivors, forms)
-        | Gathering(_, _, gathered), draws ->
+        | Gathering(_, _, expected, gathered), [] -> Gathering(scan, calls, expected, gathered)
+        | Listed(_, _, expected, survivors, forms), [] -> Listed(scan, calls, expected, survivors, forms)
+        | Gathering(_, _, _, gathered), draws ->
             let gathered = draws @ gathered
             let expected = KnuthSubtractiveGenerator.Expected gathered
 
             if expected > Threshold then
-                Gathering(calls, expected, gathered)
+                Gathering(scan, calls, expected, gathered)
             else
                 let forms = KnuthSubtractiveGenerator.AffineForms(2 * reach gathered)
-                Listed(calls, expected, KnuthSubtractiveGenerator.Enumerate forms gathered, forms)
+                Listed(scan, calls, expected, KnuthSubtractiveGenerator.Enumerate forms gathered, forms)
         // A later instant's draws are at positions no earlier draw took, so
         // they scale the expected count on their own, and the affine forms are
         // recomputed at twice the length whenever they fall short, so a whole
         // game's cost no more than twice the last
-        | Listed(_, expected, survivors, forms), draws ->
+        | Listed(_, _, expected, survivors, forms), draws ->
             let forms =
                 if reach draws <= forms.Length then
                     forms
@@ -137,28 +132,50 @@ let public Follow (oracle: Oracle) (scan: Observation.Scan) : Oracle =
                     KnuthSubtractiveGenerator.AffineForms(max (reach draws) (2 * forms.Length))
 
             Listed(
+                scan,
                 calls,
                 expected * KnuthSubtractiveGenerator.Expected draws / 2147483648.0,
                 KnuthSubtractiveGenerator.Filter forms draws survivors,
                 forms
             )
-    | _ -> Listed(0, 0.0, [||], [||])
+    | _ -> Listed(scan, 0, 0.0, [||], [||])
+
+/// <summary>
+/// Advances the oracle by one instant. The instant and those before it tell
+/// exactly which calls the engine made on the game's Random to produce it, and
+/// every card drawn from two or more says which values the call that picked it
+/// could have returned, which only some seeds give. Until few enough seeds are
+/// expected to agree for them to be listed, the draws are only gathered, and
+/// the step costs a few microseconds; the step that lists them takes some tens
+/// of milliseconds across every core, and each step after it checks every seed
+/// left against the new draws, at a few nanoseconds a seed. Every draw is
+/// checked even once one seed is left, and a seed that fails one is dropped,
+/// which leaves none. The first instant must be a TableSeated, from which the
+/// game's Random is taken to be fresh from its seed, and an instant the engine
+/// could not have produced from the ones before it leaves no seed, after which
+/// later instants are not even scanned.
+/// </summary>
+let public Observe (oracle: Oracle) (instant: Instant) : Oracle =
+    match oracle with
+    | Listed(_, _, _, [||], _) -> oracle
+    | Gathering(scan, _, _, _)
+    | Listed(scan, _, _, _, _) -> Follow oracle (fst (Observation.Observe scan instant))
 
 /// <summary>
 /// What the oracle knows of the seed.
 /// </summary>
 let public SeedsOf (oracle: Oracle) : Seeds =
     match oracle with
-    | Gathering(_, expected, _) -> Seeds.Unlisted expected
-    | Listed(_, _, [||], _) -> Seeds.NoneAgree
-    | Listed(_, expected, [| struct (seed, _) |], _) when expected <= Margin -> Seeds.Pinned seed
-    | Listed(_, _, survivors, _) -> Seeds.Agreeing(survivors |> Array.map (fun struct (seed, _) -> seed))
+    | Gathering(_, _, expected, _) -> Seeds.Unlisted expected
+    | Listed(_, _, _, [||], _) -> Seeds.NoneAgree
+    | Listed(_, _, expected, [| struct (seed, _) |], _) when expected <= Margin -> Seeds.Pinned seed
+    | Listed(_, _, _, survivors, _) -> Seeds.Agreeing(survivors |> Array.map (fun struct (seed, _) -> seed))
 
 /// <summary>
 /// Once the seed is pinned, a System.Random fresh from it and wound on by every
-/// call the game's Random had made by the last instant followed, which
+/// call the game's Random had made by the last instant observed, which
 /// therefore draws what the game's draws next; a new one each time it is asked
-/// for. Given a hit-or-stand question's game so far, that is one call short of
+/// for. Given a hit or stand question's game so far, that is one call short of
 /// the game's own Random when the question was asked, which had already drawn
 /// the question's seed: Timeline.ContinueWith from the question, given that
 /// history, this Random and the same decider, asks the question again with the
@@ -168,7 +185,7 @@ let public SeedsOf (oracle: Oracle) : Seeds =
 /// </summary>
 let public RandomOf (oracle: Oracle) : System.Random option =
     match oracle, SeedsOf oracle with
-    | Listed(calls, _, _, _), Seeds.Pinned seed ->
+    | Listed(_, calls, _, _, _), Seeds.Pinned seed ->
         let random = System.Random seed
 
         for _ in 1..calls do
