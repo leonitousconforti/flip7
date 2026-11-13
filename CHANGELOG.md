@@ -1,4 +1,55 @@
 # Changelog
+## 0.2.0 (2026-11-13)
+
+### Breaking Changes
+
+#### Record whom a deal3's second chances are passed on to
+
+`Event.Dealt3` has a fourth field, `Passed`: whom each second chance the target
+flipped while already holding one was passed on to, in the order they were
+passed. A second chance nobody could take is discarded and not listed. The
+engine fills it in, so a timeline now shows which of two second chances passed
+during one deal3 went first, which decides who could take the second.
+
+A deal3's caption ends with whom its second chances went to, as in "passing
+SecondChance to Carol then Dave". A saved deal3 lists its cards as before, then
+a `passed: <name>` line for each second chance passed on. A deal3 saved by an
+earlier version reads back as passing none on.
+
+#### Observe both second chances a deal3 passes on, and make the scan's turn and round internal
+
+`Observation.Observe` now gives the aims of both second chances a deal3's
+target passes on during its flips, read from the deal3's `Passed`, where it
+used to give neither. A single pass is read from `Passed` too, instead of from
+who holds a second chance after the deal3, so a deal3 saved by an earlier
+version, which records no passes, gives no aim for a second chance passed
+during its flips.
+
+`Observation.TurnsTaken` and `Observation.RoundOf` are now internal.
+
+### Features
+
+#### Write floats and draw from `System.Random.Shared` under Fable as on .NET
+
+Under Fable, strategy and targeting strings now write their floats as .NET's
+`ToString("R")` does, -0 and exponents included, and the obsolete helpers that
+draw from `System.Random.Shared` compile too. Compiling the package with Fable
+needs Fable 5.27.0 or later.
+
+### Fixes
+
+#### A complete `TimelineStore` with no ingest delay goes idle
+
+A `TimelineStore` with no ingest delay, such as the one the terminal app opens
+at `--pace 0`, no longer keeps a core busy once the game it tails is complete.
+It used to keep waking as fast as it could for as long as it was open, with
+nothing left to ingest; once it has ingested the instant that ends the game it
+now waits, and only the viewer wakes it. While the game is still unfinished it
+looks for the next instant as fast as it can, as before. A store whose ingest
+delay is longer than `Int32.MaxValue` milliseconds no longer keeps a core busy
+either, and disposing a store as it starts a read no longer raises
+`ObjectDisposedException` in its agent.
+
 ## 0.1.2 (2026-10-21)
 
 ### Features
