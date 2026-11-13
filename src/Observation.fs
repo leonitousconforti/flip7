@@ -50,7 +50,7 @@ module public Observation =
         | SecondChanceDiscarded name -> Some(name, Strategy.Hit)
         | Froze(source, _) -> Some(source, Strategy.Hit)
         | SecondChancePassed(source, _) -> Some(source, Strategy.Hit)
-        | Dealt3(source, _, _) -> Some(source, Strategy.Hit)
+        | Dealt3(source, _, _, _) -> Some(source, Strategy.Hit)
         | Stood name -> Some(name, Strategy.Stand)
         | TableSeated -> None
         | Edited _ -> None
@@ -161,9 +161,9 @@ module public Observation =
     // order, the drawer moved behind the others, and a second chance to
     // everyone in it but its holder who has none. The turn order is the
     // instant's own, but at a RoundEnded the next round starts one seat further
-    // round the table. A second chance passed on during the flips is silent in
-    // the timeline, and who took the only one is told by who holds one after
-    // the deal3 and did not before
+    // round the table. A second chance passed on during the flips has no
+    // instant of its own, and who took the only one is told by who holds one
+    // after the deal3 and did not before
     let private Aims (scan: Scan) (turns: Map<string, uint>) (before: Instant) (instant: Instant) : Observation list =
         let secondChance = ActionCard Card.SecondChance
         let holdsSecondChance (player: Player) = List.contains secondChance player.Hand
@@ -275,7 +275,7 @@ module public Observation =
                 aimed Strategy.Ask.WhoReceivesSecondChance current takers finished (drawn decks secondChance) target
             )
             |> Option.toList
-        | Dealt3(source, target, cards) ->
+        | Dealt3(source, target, cards, _) ->
             let deal3 = ActionCard Card.Deal3
 
             let asked =
@@ -331,9 +331,9 @@ module public Observation =
     /// and so is a forced first hit's card. Every aim the engine asks for is
     /// reconstructed, including those with a single candidate, which say
     /// nothing about the player, but for the two a deal3's target is asked when
-    /// they pass on two second chances during its flips: the timeline shows who
-    /// took them but not which was passed first, which decides who could take
-    /// the second, so neither aim is given.
+    /// they pass on two second chances during its flips: who took them is read
+    /// from the hands after the deal3, which do not show which was passed
+    /// first, which decides who could take the second, so neither aim is given.
     /// </summary>
     let public Observe (scan: Scan) (instant: Instant) : Scan * Observation list =
         let (Scan(finished, round, turns, pending, previous)) = scan
@@ -342,13 +342,13 @@ module public Observation =
         let voluntary =
             match instant.Event with
             | Froze(source, _)
-            | Dealt3(source, _, _) -> owed source = 0
+            | Dealt3(source, _, _, _) -> owed source = 0
             | _ -> true
 
         let pending' =
             match instant.Event with
             | Froze(source, _) when not voluntary -> pending |> Map.add source (owed source - 1)
-            | Dealt3(source, target, cards) ->
+            | Dealt3(source, target, cards, _) ->
                 let spent =
                     if voluntary then
                         pending
@@ -388,7 +388,7 @@ module public Observation =
             | Stood name
             | Busted(name, _) -> Set.add name finished, round, turns', pending'
             | Froze(_, target) -> Set.add target finished, round, turns', pending'
-            | Dealt3(_, target, _) when
+            | Dealt3(_, target, _, _) when
                 instant.Players
                 |> List.exists (fun player -> player.Name = target && Hand.IsBust player.Hand)
                 ->

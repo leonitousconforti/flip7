@@ -11,7 +11,11 @@ type public Event =
     | Froze of Source: string * Target: string
     | SecondChancePassed of Source: string * Target: string
     | SecondChanceDiscarded of Name: string
-    | Dealt3 of Source: string * Target: string * Cards: Card list
+    /// A deal3 Source gave Target, who flipped Cards. Passed is whom each
+    /// second chance Target flipped while already holding one went to, in the
+    /// order they were passed on: one that nobody could take was discarded and
+    /// is not in it
+    | Dealt3 of Source: string * Target: string * Cards: Card list * Passed: string list
     | Flip7Achieved of Name: string
     | Edited of Name: string
     | RoundEnded of Scores: Map<string, uint>
@@ -26,9 +30,15 @@ type public Event =
         | Froze(source, target) -> $"{source} drew Freeze and froze {target}"
         | SecondChancePassed(source, target) -> $"{source} passed a SecondChance to {target}"
         | SecondChanceDiscarded name -> $"{name} discarded a duplicate SecondChance"
-        | Dealt3(source, target, cards) ->
+        | Dealt3(source, target, cards, passed) ->
             let cards = cards |> List.map string |> String.concat ", "
-            $"{source} drew Deal3, dealing {target}: {cards}"
+
+            let passing =
+                match passed with
+                | [] -> ""
+                | passed -> passed |> String.concat " then " |> sprintf ", passing SecondChance to %s"
+
+            $"{source} drew Deal3, dealing {target}: {cards}{passing}"
         | Flip7Achieved name -> $"{name} flipped 7 and ended the round!"
         | Edited name -> $"{name} edited the table"
         | RoundEnded scores ->
@@ -49,15 +59,22 @@ type public Event =
         | Flip7Achieved name -> Some name
         | Froze(_, target) -> Some target
         | SecondChancePassed(_, target) -> Some target
-        | Dealt3(_, target, _) -> Some target
+        | Dealt3(_, target, _, _) -> Some target
         | TableSeated -> None
         | Edited _ -> None
         | RoundEnded _ -> None
 
 module public Event =
+    // What starts the line of a deal3's that names whom a second chance passed
+    // on during its flips went to, which no card's line starts with
+    [<Literal>]
+    let private PassedTo = "passed: "
+
     /// <summary>
     /// Converts an event to an array of lines: the event kind followed by its
-    /// fields, one per line.
+    /// fields, one per line, a deal3's cards each on a line of their own and
+    /// then whom each second chance passed on during its flips went to, each
+    /// after "passed: ".
     /// </summary>
     let public Serialize (event: Event) : string array =
         match event with
@@ -68,7 +85,13 @@ module public Event =
         | Froze(source, target) -> [| "Froze"; source; target |]
         | SecondChancePassed(source, target) -> [| "SecondChancePassed"; source; target |]
         | SecondChanceDiscarded name -> [| "SecondChanceDiscarded"; name |]
-        | Dealt3(source, target, cards) -> [| "Dealt3"; source; target; yield! cards |> List.map string |]
+        | Dealt3(source, target, cards, passed) -> [|
+            "Dealt3"
+            source
+            target
+            yield! cards |> List.map string
+            yield! passed |> List.map (fun name -> PassedTo + name)
+          |]
         | Flip7Achieved name -> [| "Flip7Achieved"; name |]
         | Edited name -> [| "Edited"; name |]
         | RoundEnded scores -> [|
@@ -78,9 +101,15 @@ module public Event =
 
     /// <summary>
     /// Parses an event from a sequence of lines: the event kind followed by its
-    /// fields, one per line.
+    /// fields, one per line, a deal3's cards each on a line of their own and
+    /// then whom each second chance passed on during its flips went to, each
+    /// after "passed: ". A deal3 saved before those were recorded reads back as
+    /// passing none on.
     /// </summary>
     let public Deserialize (lines: string seq) : Event =
+        let passedTo (line: string) =
+            line.StartsWith(PassedTo, System.StringComparison.Ordinal)
+
         match lines |> Seq.toList with
         | [ "TableSeated" ] -> TableSeated
         | [ "Drew"; name; card ] -> Drew(name, Card.Parse card)
@@ -89,7 +118,17 @@ module public Event =
         | [ "Froze"; source; target ] -> Froze(source, target)
         | [ "SecondChancePassed"; source; target ] -> SecondChancePassed(source, target)
         | [ "SecondChanceDiscarded"; name ] -> SecondChanceDiscarded name
-        | "Dealt3" :: source :: target :: cards -> Dealt3(source, target, cards |> List.map Card.Parse)
+        // Every card comes before whom any second chance went to
+        | "Dealt3" :: source :: target :: rest when rest |> List.skipWhile (passedTo >> not) |> List.forall passedTo ->
+            let cards = rest |> List.takeWhile (passedTo >> not)
+            let passed = rest |> List.skip cards.Length
+
+            Dealt3(
+                source,
+                target,
+                cards |> List.map Card.Parse,
+                passed |> List.map (fun line -> line.Substring PassedTo.Length)
+            )
         | [ "Flip7Achieved"; name ] -> Flip7Achieved name
         | [ "Edited"; name ] -> Edited name
         | "RoundEnded" :: scores ->
