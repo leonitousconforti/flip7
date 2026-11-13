@@ -348,8 +348,7 @@ let ``until the seed is pinned the solved seats answer unaided, and Sage searche
     // How many instants the oracle had seen when it pinned the seed: the
     // scan's first state is the oracle before any instant
     let pinned =
-        timeline
-        |> List.scan Oracle.Observe Oracle.Start
+        Games.oraclesOf timeline
         |> List.findIndex (fun oracle -> (Oracle.SeedsOf oracle).IsPinned)
 
     let before, after =

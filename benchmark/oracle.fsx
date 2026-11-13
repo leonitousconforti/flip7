@@ -91,6 +91,7 @@ let solve (seed: int) (lineup: (string * Strategy * Targeting) list) : Game opti
         |> Async.RunSynchronously
 
     let steps = ResizeArray<float>()
+    let mutable scan = Observation.Start
     let mutable oracle = Oracle.Start
     let mutable listing = None
     let mutable pinned = None
@@ -99,7 +100,8 @@ let solve (seed: int) (lineup: (string * Strategy * Targeting) list) : Game opti
         let unlisted = (Oracle.SeedsOf oracle).IsUnlisted
         let allocated = System.GC.GetTotalAllocatedBytes true
         let watch = System.Diagnostics.Stopwatch.StartNew()
-        oracle <- Oracle.Observe oracle instant
+        scan <- fst (Observation.Observe scan instant)
+        oracle <- Oracle.Follow oracle scan
         let seconds = watch.Elapsed.TotalSeconds
         let seeds = Oracle.SeedsOf oracle
 
@@ -136,7 +138,9 @@ let pinnedByChance (seed: int) (lineup: (string * Strategy * Targeting) list) : 
     Timeline.SimulateWith random lineup
     |> AsyncSeq.toArrayAsync
     |> Async.RunSynchronously
-    |> Array.scan Oracle.Observe Oracle.Start
+    |> Array.scan (fun scan instant -> fst (Observation.Observe scan instant)) Observation.Start
+    |> Array.tail
+    |> Array.scan Oracle.Follow Oracle.Start
     |> Array.exists (fun oracle -> (Oracle.SeedsOf oracle).IsPinned)
 
 let percentile (fraction: float) (values: float array) =

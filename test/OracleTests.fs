@@ -913,7 +913,7 @@ let ``the oracle pins the true seed and its Random plays the rest of the game ag
         |> AsyncSeq.toArrayAsync
         |> Async.RunSynchronously
 
-    let oracles = timeline |> Array.scan Oracle.Observe Oracle.Start |> Array.tail
+    let oracles = oraclesOf timeline |> List.tail |> Array.ofList
 
     // The true seed agrees after every instant, and is all that is left by the
     // end, with every call of the game accounted for. Seeds are listed only
@@ -930,7 +930,7 @@ let ``the oracle pins the true seed and its Random plays the rest of the game ag
         | Seeds.NoneAgree -> Assert.Fail "the true seed was dropped"
 
     Assert.Equal(Seeds.Pinned(canonical seed), Oracle.SeedsOf(Array.last oracles))
-    Assert.Equal(Some game.Calls, Oracle.CallsOf(Array.last oracles))
+    Assert.Equal(game.Next(), (Oracle.RandomOf(Array.last oracles)).Value.Next())
 
     // From the first hit-or-stand question once the seed is pinned, the game
     // plays out again exactly, given what led to the question
@@ -973,7 +973,7 @@ let ``a lone seed agreeing by chance is never pinned nor handed out as a Random`
         let oracles =
             Timeline.SimulateWithDecider (usedOnce seed) own mixedTable
             |> played
-            |> List.scan Oracle.Observe Oracle.Start
+            |> oraclesOf
 
         for oracle in oracles do
             match Oracle.SeedsOf oracle with
@@ -983,9 +983,7 @@ let ``a lone seed agreeing by chance is never pinned nor handed out as a Random`
 
             Assert.True((Oracle.RandomOf oracle).IsNone, "an oracle that had not pinned the seed handed out a Random")
 
-        let oracle = List.last oracles
-        Assert.Equal(Seeds.NoneAgree, Oracle.SeedsOf oracle)
-        Assert.True((Oracle.CallsOf oracle).IsSome, "the oracle stopped following a game the engine played")
+        Assert.Equal(Seeds.NoneAgree, Oracle.SeedsOf(List.last oracles))
 
     Assert.True(alone > 0, "no seed was ever left alone by chance in these games: pick a new seed")
 
@@ -1035,9 +1033,7 @@ let ``a timeline whose decks the draws could not have left, or whose deal3 recor
         let tampered = List.updateAt index altered timeline
         Assert.Equal(Error index, interpreted tampered |> Result.map ignore)
 
-        let oracle = Oracle.FromInstants(List.take (index + 1) tampered)
-        Assert.Equal(Seeds.NoneAgree, Oracle.SeedsOf oracle)
-        Assert.True((Oracle.CallsOf oracle).IsNone, "the oracle still follows a timeline it could not read")
+        Assert.Equal(Seeds.NoneAgree, Oracle.SeedsOf(List.last (oraclesOf (List.take (index + 1) tampered))))
 
 // The engine seats every player under a name of their own, and the replay
 // finds them by name, so a table that seats two under one is not read: one
@@ -1052,9 +1048,7 @@ let ``a table that seats two players under one name is not read`` () =
             Players = instant.Players |> List.map (fun player -> { player with Name = "Twin" })
     }
 
-    let seated = Oracle.FromInstants [ twins (List.head timeline) ]
-    Assert.Equal(Seeds.NoneAgree, Oracle.SeedsOf seated)
-    Assert.True((Oracle.CallsOf seated).IsNone, "the oracle followed a table seating two players under one name")
+    Assert.Equal(Seeds.NoneAgree, Oracle.SeedsOf(List.last (oraclesOf [ twins (List.head timeline) ])))
 
     let drew = timeline |> List.findIndex (fun instant -> instant.Event.IsDrew)
     Assert.True((interpreted timeline).IsOk, "the interpreter could not read the game as the engine played it")
@@ -1069,16 +1063,10 @@ let ``before any instant every seed agrees, seating draws nothing, and a timelin
     ()
     =
     Assert.Equal(Seeds.Unlisted everySeed, Oracle.SeedsOf Oracle.Start)
-    Assert.True((Oracle.CallsOf Oracle.Start).IsNone, "the oracle counted calls before any instant")
 
     let timeline = Timeline.SimulateWithDecider (Random 1) own twoSeats |> played
-
-    let seated = Oracle.FromInstants [ List.head timeline ]
-    Assert.Equal(Seeds.Unlisted everySeed, Oracle.SeedsOf seated)
-    Assert.Equal(Some 0, Oracle.CallsOf seated)
+    Assert.Equal(Seeds.Unlisted everySeed, Oracle.SeedsOf(List.last (oraclesOf [ List.head timeline ])))
 
     // The oracle takes the game's Random to be fresh from its seed at the
     // TableSeated, so without one it cannot tell how many calls came before
-    let unseated = Oracle.FromInstants(List.tail timeline)
-    Assert.Equal(Seeds.NoneAgree, Oracle.SeedsOf unseated)
-    Assert.True((Oracle.CallsOf unseated).IsNone, "the oracle followed a timeline that skips its TableSeated")
+    Assert.Equal(Seeds.NoneAgree, Oracle.SeedsOf(List.last (oraclesOf (List.tail timeline))))

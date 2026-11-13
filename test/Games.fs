@@ -41,6 +41,15 @@ let scanOf (instants: Instant list) : Observation.Scan =
     instants
     |> List.fold (fun scan instant -> fst (Observation.Observe scan instant)) Observation.Start
 
+// What an oracle following the instants has worked out before any of them and
+// after each, so one more than there are instants
+let oraclesOf (instants: Instant seq) : Oracle.Oracle list =
+    instants
+    |> Seq.scan (fun scan instant -> fst (Observation.Observe scan instant)) Observation.Start
+    |> Seq.tail
+    |> Seq.scan Oracle.Follow Oracle.Start
+    |> List.ofSeq
+
 // The table at a hit or stand question, as the play editor changes it: the
 // players still in the round, those finished, and the decks
 type Table = Player list * Player list * (Deck * Deck)
