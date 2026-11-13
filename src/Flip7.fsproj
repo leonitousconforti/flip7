@@ -43,6 +43,10 @@
     <Compile Include="Persistence.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
     <Compile Include="Observation.fs" />
     <Compile Include="Inference.fs" />
+    <Compile Include="Sage/KnuthSubtractiveGenerator.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
+    <Compile Include="Sage/Interpreter.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
+    <Compile Include="Sage/Oracle.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
+    <Compile Include="Sage/Sage.fs" Condition="'$(FABLE_COMPILER)' != 'true'" />
   </ItemGroup>
 
   <ItemGroup>
