@@ -91,8 +91,9 @@ let private recording (asked: ResizeArray<Asked>) (decider: Strategy.Decider) : 
 // The second chances the target of a deal3 passed on during its flips are
 // asked of their decider with the game as it stood before the deal3, so two of
 // them in one deal3 are shown as much of the game as each other and no other
-// second chance is. Those are the aims Observe does not give
-let private ambiguous (asked: Asked list) : Asked list =
+// second chance is. The deal3 records whom each went to, in order, which
+// tells who could take the second
+let private passedTwice (asked: Asked list) : Asked list =
     asked
     |> List.where (asks Strategy.Ask.WhoReceivesSecondChance)
     |> List.groupBy (fun call -> call.Seen)
@@ -102,12 +103,7 @@ let private ambiguous (asked: Asked list) : Asked list =
 // asked, if anywhere, comparing the two in the order the engine asked them:
 // every hit-or-stand decision, turns and all, and every aim but its turn
 let private disagreement (timeline: Instant list) (asked: Asked list) : string option =
-    let skipped = ambiguous asked
-
-    let expected =
-        asked
-        |> List.where (fun call -> not (List.contains call skipped))
-        |> List.map (fun call -> call.Question)
+    let expected = asked |> List.map (fun call -> call.Question)
 
     let observed =
         observationsOf timeline
@@ -124,8 +120,7 @@ let private disagreement (timeline: Instant list) (asked: Asked list) : string o
     with
     | Some index -> Some $"question {index} was asked as %A{expected[index]} but observed as %A{observed[index]}"
     | None when expected.Length <> observed.Length ->
-        Some
-            $"the engine asked {expected.Length} questions besides {skipped.Length} aims Observe does not give, but {observed.Length} were observed"
+        Some $"the engine asked {expected.Length} questions but {observed.Length} were observed"
     | None -> None
 
 // How many hit-or-stand questions after an edit, in the edited round, went to
@@ -236,7 +231,7 @@ let private roadsOf (timeline: Instant list) (asked: Asked list) : Roads =
                        | Dealt3(_, _, cards, _) -> (cards |> List.where ((=) secondChance)).Length = 2
                        | _ -> false
                 )
-            AimsPassedTwice = (ambiguous asked).Length
+            AimsPassedTwice = (passedTwice asked).Length
             ForcedAims = count (fun call -> call.Question.OtherPlayers.Length = 1)
             AimsAfterRotation =
                 count (fun call ->
