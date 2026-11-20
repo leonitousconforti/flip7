@@ -224,6 +224,8 @@ type Roads = {
     SetAsideDeal3s: int
     // A deal3 during whose flips a second chance was passed on
     PassedInFlips: int
+    // One during whose flips two were passed on
+    PassedTwiceInFlips: int
     // Flips cut short by a flip7
     CutShortByFlip7: int
     // The deck running out during the flips
@@ -261,6 +263,7 @@ let noRoads: Roads = {
     SetAsideFreezes = 0
     SetAsideDeal3s = 0
     PassedInFlips = 0
+    PassedTwiceInFlips = 0
     CutShortByFlip7 = 0
     ReshuffledInFlips = 0
     ReshuffledInSetAside = 0
