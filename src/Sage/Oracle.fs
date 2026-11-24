@@ -8,8 +8,6 @@
 /// </summary>
 module public Flip7.Oracle
 
-open Flip7.Sage
-
 /// <summary>
 /// What an oracle has worked out about the seed of the System.Random that dealt
 /// a game. Seeds run from 0 to Int32.MaxValue: Random(s) deals the same game as
