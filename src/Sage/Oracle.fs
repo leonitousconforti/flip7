@@ -8,6 +8,8 @@
 /// </summary>
 module public Flip7.Oracle
 
+open Flip7.Sage
+
 /// <summary>
 /// What an oracle has worked out about the seed of the System.Random that dealt
 /// a game. Seeds run from 0 to Int32.MaxValue: Random(s) deals the same game as
@@ -91,11 +93,11 @@ let private Margin = 1e-3
 let public Start: Oracle = Gathering(Observation.Start, 0, 2147483648.0, [])
 
 /// <summary>
-/// Advances the oracle by the instant a scan took in last, given the scan:
-/// what Observe does, for a caller that scans the game anyway, so that each
-/// instant is scanned once. The scan must have taken in, from
-/// Observation.Start and in order, every instant the oracle has observed and
-/// then this one, and the oracle keeps it to go on from.
+/// Advances the oracle by the instant a scan took in last, given the scan: what
+/// Observe does, for a caller that scans the game anyway, so that each instant
+/// is scanned once. The scan must have taken in, from Observation.Start and in
+/// order, every instant the oracle has observed and then this one, and the
+/// oracle keeps it to go on from.
 /// </summary>
 let internal Follow (oracle: Oracle) (scan: Observation.Scan) : Oracle =
     let reach (draws: KnuthSubtractiveGenerator.Constraint list) =

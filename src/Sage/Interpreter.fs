@@ -3,7 +3,9 @@
 /// the calls the engine made on the game's Random: how many values each step
 /// takes, and what the draws among them say about the seed.
 /// </summary>
-module internal Flip7.Interpreter
+module internal Flip7.Sage.Interpreter
+
+open Flip7
 
 // A draw of a card from a pile as the Random sees it, laid out in Map order
 // with the copies of a card side by side: how many cards the pile holds, how

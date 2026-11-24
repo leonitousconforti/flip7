@@ -7,7 +7,7 @@
 /// a known index confines the seed to a few arithmetic progressions, and a
 /// handful of calls leave few enough seeds to list instead of 2^31 to try.
 /// </summary>
-module internal Flip7.KnuthSubtractiveGenerator
+module internal Flip7.Sage.KnuthSubtractiveGenerator
 
 // The modulus every value of the generator is reduced by
 [<Literal>]

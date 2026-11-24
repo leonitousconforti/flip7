@@ -43,6 +43,7 @@
 #load "../src/Sage/KnuthSubtractiveGenerator.fs"
 #load "../src/Sage/Interpreter.fs"
 #load "../src/Sage/Oracle.fs"
+#load "../src/Sage/Solver.fs"
 #load "../src/Sage/Sage.fs"
 
 open Flip7

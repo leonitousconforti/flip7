@@ -1,72 +1,5 @@
 namespace Flip7
 
-open FSharp.Control
-
-/// <summary>
-/// One answer a solved seat gives the game: whether it hits or stands holding a
-/// hand on a turn of a round, or who it aims an action card at. The question
-/// travels with the answer, so whoever plays a plan can tell when the game asks
-/// something the plan does not expect.
-/// </summary>
-[<RequireQualifiedAccess>]
-type public Answer =
-    | HitOrStand of Seat: string * Round: uint * Turn: uint * Hand: Hand * Choice: Strategy.HitOrStand
-    | Aim of Seat: string * Ask: Strategy.Ask * Target: string
-
-    member self.Seat: string =
-        match self with
-        | HitOrStand(seat, _, _, _, _)
-        | Aim(seat, _, _) -> seat
-
-    override self.ToString() : string =
-        let showing (hand: Hand) =
-            if List.isEmpty hand then
-                "nothing"
-            else
-                hand |> Hand.Serialize |> String.concat ", "
-
-        match self with
-        | HitOrStand(seat, round, turn, hand, Strategy.Hit) ->
-            $"{seat} hits holding {showing hand} on turn {turn} of round {round}"
-        | HitOrStand(seat, round, turn, hand, Strategy.Stand) ->
-            $"{seat} stands holding {showing hand} on turn {turn} of round {round}"
-        | Aim(seat, ask, target) -> $"{seat} answers {ask} with {target}"
-
-/// <summary>
-/// A line of play from the moment a solved seat was asked to hit or stand:
-/// every answer the solved seats give from then on, in the order the game asks
-/// for them, and how the protagonist finishes when they are given and everyone
-/// else plays as Sage modelled them.
-/// </summary>
-[<RequireQualifiedAccess>]
-type public Plan = {
-    /// Every answer the solved seats give, in the order the game asks for them,
-    /// starting with the question the search was made at
-    Answers: Answer list
-    /// Every event the game produces from the question the search was made at
-    /// on, as the plan's replay played it. Sage plays the plan for only as long
-    /// as the game goes this way
-    Foresees: Event list
-    /// The protagonist's final score less the best of everyone else's: positive
-    /// when the protagonist wins outright
-    Margin: int
-    /// Where in the answers the plan departs from what the solved seats would
-    /// answer unaided, counted from zero
-    Departures: int list
-    /// How many games the search replayed before it stopped
-    Replays: int
-    /// How many of the answers, from the first, Sage has played so far. It plays
-    /// them for as long as the game goes as the plan foresaw and none of the rest
-    /// once the game leaves the plan, though the game can also leave it after its
-    /// last answer, with every answer played
-    Played: int
-} with
-
-    /// <summary>
-    /// Whether the protagonist wins outright. A tie for the top is not a win.
-    /// </summary>
-    member self.Won: bool = self.Margin > 0
-
 module internal Replayed =
     // How a player other than the solved seats aims in Sage's replays, given
     // the evidence of them and what they declared. The engine plays a declared
@@ -130,33 +63,6 @@ type internal Followed = {
     Evidence: Map<string, PlayerEvidence>
 }
 
-// Where a search starts: the table as a solved seat is asked to hit or stand,
-// with every other player seated to play and aim as Sage models them, what led
-// to it, and the oracle that pinned the game's seed, which winds a Random to
-// where the game's stood for every game replayed from there
-[<NoComparison; NoEquality>]
-type internal Fork = {
-    Oracle: Oracle.Oracle
-    History: Instant seq
-    Seating: string list
-    Round: uint
-    Turns: Map<string, uint>
-    Active: Player list
-    Finished: Player list
-    Decks: Deck * Deck
-}
-
-// A replayed game: the line it followed, which seat each of the solved seats'
-// questions was asked of, how many answers each allowed, and the protagonist's
-// margin
-[<NoComparison; NoEquality>]
-type internal Replay = {
-    Line: Map<int, int>
-    Seats: string array
-    Choices: int array
-    Margin: int
-}
-
 /// <summary>
 /// Plays one game for a protagonist and any supporters, its seats. A table
 /// seats each of them as Strategy.Custom and Targeting.ChoosesExternally under
@@ -193,18 +99,16 @@ type internal Replay = {
 /// replay's dice. The engine's own decider answers for them, seated as Sage
 /// models them, never the table's, which may be people at the terminal.
 /// Starting from what the solved seats would answer unaided, the search departs
-/// from those answers one question at a time, replaying the rest of the game
-/// for each line it tries, and keeps the lines whose games went best for the
-/// protagonist to depart from further. The first line whose game the
-/// protagonist wins outright is the plan, or the best line once the budget is
-/// spent or every line has been tried, and Sage gives its answers for as long
-/// as the game goes as the line's replay did and asks what the line expects,
-/// searching again at the next hit-or-stand question once it does not. With
-/// supporters, each search spends the first half of its budget on the
-/// protagonist's own questions alone, and departs at the supporters' too only
-/// in a game the protagonist cannot win that way. Replays run in parallel, but
-/// their results are taken in the order one at a time would take them, so a
-/// plan never depends on how they were scheduled.
+/// from those answers along one line after another, replaying the rest of the
+/// game for each. The first line whose game the protagonist wins outright is
+/// the plan, or the best line once the budget is spent or every line has been
+/// tried, and Sage gives its answers for as long as the game goes as the line's
+/// replay did and asks what the line expects, searching again at the next hit
+/// or stand question once it does not. With supporters, each search spends the
+/// first half of its budget on the protagonist's own questions alone, and
+/// departs at the supporters' too only in a game the protagonist cannot win
+/// that way. A plan never depends on how the search's replays, which run in
+/// parallel, were scheduled.
 ///
 /// Until the seed is pinned, or in a game that does not start at its
 /// TableSeated or that no seed dealt, the solved seats answer unaided: they
@@ -230,7 +134,7 @@ type internal Replay = {
 ///
 /// An edit changes the cards the seed would have dealt, so an Edited instant
 /// ends the plan being played, and Sage searches the edited game at the next
-/// hit-or-stand question a solved seat is asked. After an Edited instant the
+/// hit or stand question a solved seat is asked. After an Edited instant the
 /// play editor's fork counts every active player's turns as one fewer than the
 /// edited question's turn, whatever each had taken, and Observation counts them
 /// as the engine does, so Sage's replays number turns as the live game does and
@@ -246,12 +150,11 @@ type internal Replay = {
 /// since two games of a lineup start with equal TableSeated instants: a
 /// question whose game so far does not start with the very instant the game
 /// Sage was following started with, or no longer passes through the last
-/// instant Sage saw of it, the last that one of its seats' questions showed
-/// it, starts a new game, which forgets the old game's plans and what it
-/// showed of the players but keeps what Sage studied. A game continued from
-/// after that instant stays the same game, plans and all, even where it drops
-/// instants the table produced since. Cancelling the game cancels any search
-/// under way.
+/// instant Sage saw of it, the last that one of its seats' questions showed it,
+/// starts a new game, which forgets the old game's plans and what it showed of
+/// the players but keeps what Sage studied. A game continued from after that
+/// instant stays the same game, plans and all, even where it drops instants the
+/// table produced since. Cancelling the game cancels any search under way.
 /// </summary>
 type public Sage(protagonist: string, ?supporters: string list, ?study: Study, ?budget: int, ?progress: string -> unit)
     =
@@ -262,14 +165,14 @@ type public Sage(protagonist: string, ?supporters: string list, ?study: Study, ?
     // rather than a limit, since a search either wins within a few dozen
     // replays or runs out of lines to try first. At the terminal app's five
     // seats, Sage beside two people who roll dice of their own and two of the
-    // app's bots, 60 games made 508 searches, which took 2 ms at the median, 20
-    // ms at the 99th percentile and under 80 ms at most, and replayed at most
-    // 130 games, the same searches whatever the budget from 2000 to
+    // app's bots, 60 games made 508 searches, which took 2 ms at the median,
+    // 20 ms at the 99th percentile and under 80 ms at most, and replayed at
+    // most 130 games, the same searches whatever the budget from 2000 to
     // 50000. At twelve seats the slowest of 91 took 0.3 s. Seated at nothing
-    //        against bots already at 100 or 150, so that few lines win, a
-    //        search replayed at most 978 games. A whole game of five replays in
-    //        some 0.26 ms ten at a time on ten cores, so even a search that
-    //        spends the whole budget from the first round takes about 1.3 s
+    // against bots already at 100 or 150, so that few lines win, a search
+    // replayed at most 978 games. A whole game of five replays in some 0.26 ms
+    // ten at a time on ten cores, so even a search that spends the whole
+    // budget from the first round takes about 1.3 s
     let budget = defaultArg budget 5000
     let report = defaultArg progress ignore
     let solved = Set.ofList (protagonist :: supporters)
@@ -289,6 +192,24 @@ type public Sage(protagonist: string, ?supporters: string list, ?study: Study, ?
 
     let unaidedTarget (random: System.Random) : Strategy.TargetDecider =
         Strategy.Decider.Default.Target random Targeting.PlaysSpitefully
+
+    // How everyone answers in Sage's replays unless a plan departs: the solved
+    // seats unaided, and everyone else as the engine plays the strategy and
+    // targeting Sage seats them with
+    let unaided: Strategy.Decider = {
+        HitOrStand =
+            fun random strategy history round turn player others finished decks ->
+                if solved.Contains player.Name then
+                    unaidedHitOrStand random history round turn player others finished decks
+                else
+                    Strategy.Decider.Default.HitOrStand random strategy history round turn player others finished decks
+        Target =
+            fun random targeting history ask chooser candidates finished decks ->
+                if solved.Contains chooser.Name then
+                    unaidedTarget random history ask chooser candidates finished decks
+                else
+                    Strategy.Decider.Default.Target random targeting history ask chooser candidates finished decks
+    }
 
     // The game being followed, the answers of the plan being played that the
     // game has yet to ask for, the events the plan foresees and how many
@@ -478,237 +399,6 @@ type public Sage(protagonist: string, ?supporters: string list, ?study: Study, ?
 
         game
 
-    // Replays the rest of the game from a fork along a line: the questions the
-    // solved seats are asked, counted from zero in the order the game asks
-    // them, mapped to the answer taken there instead of the unaided one. The
-    // alternatives at a question are the unaided answer first and then every
-    // other legal answer, so one is the first departure. Every question in a
-    // replay comes with the Random the engine derives from the game's, which
-    // the replay winds to where the game's stood, so a line replays its
-    // parent's game exactly up to its newest departure. Each replay also gives
-    // the answers and the events of its game
-    let replay (fork: Fork) (departures: Map<int, int>) : Async<Replay * (Answer array * Event array)> = async {
-        let engine = Strategy.Decider.Default
-        let answers = ResizeArray<Answer>()
-        let choices = ResizeArray<int>()
-
-        let pick (alternatives: int) : int =
-            let question = choices.Count
-            choices.Add alternatives
-            departures |> Map.tryFind question |> Option.defaultValue 0
-
-        let decider: Strategy.Decider = {
-            HitOrStand =
-                fun random strategy history round turn player others finished decks ->
-                    if solved.Contains player.Name then
-                        async {
-                            let! preferred =
-                                unaidedHitOrStand random history round turn player others finished decks
-
-                            let choice =
-                                match pick 2, preferred with
-                                | 0, _ -> preferred
-                                | _, Strategy.Hit -> Strategy.Stand
-                                | _, Strategy.Stand -> Strategy.Hit
-
-                            answers.Add(Answer.HitOrStand(player.Name, round, turn, player.Hand, choice))
-                            return choice
-                        }
-                    else
-                        engine.HitOrStand random strategy history round turn player others finished decks
-            Target =
-                fun random targeting history ask chooser candidates finished decks ->
-                    if solved.Contains chooser.Name then
-                        async {
-                            let! preferred = unaidedTarget random history ask chooser candidates finished decks
-
-                            let alternatives =
-                                preferred
-                                :: (candidates |> List.where (fun candidate -> candidate.Name <> preferred.Name))
-
-                            let target = List.item (pick alternatives.Length) alternatives
-                            answers.Add(Answer.Aim(chooser.Name, ask, target.Name))
-                            return target
-                        }
-                    else
-                        engine.Target random targeting history ask chooser candidates finished decks
-        }
-
-        let random =
-            match Oracle.RandomOf fork.Oracle with
-            | Some random -> random
-            | None -> invalidOp "a game can only be replayed once its seed is pinned"
-
-        // The last instant is the RoundEnded where someone first reaches 200
-        let rest =
-            Timeline.ContinueWith
-                random
-                decider
-                fork.History
-                fork.Seating
-                fork.Round
-                fork.Turns
-                fork.Active
-                fork.Finished
-                fork.Decks
-
-        let! instants = AsyncSeq.toArrayAsync rest
-
-        match Array.tryLast instants with
-        | None -> return invalidOp "the game ended before it was searched"
-        | Some final ->
-            let score (player: Player) = int player.FirmScore
-
-            let protagonists, others =
-                final.Players |> List.partition (fun player -> player.Name = protagonist)
-
-            let answers = answers.ToArray()
-
-            let replayed = {
-                Line = departures
-                Seats = answers |> Array.map (fun answer -> answer.Seat)
-                Choices = choices.ToArray()
-                Margin =
-                    (protagonists |> List.exactlyOne |> score)
-                    - (others |> List.map score |> List.fold max 0)
-            }
-
-            return replayed, (answers, instants |> Array.map (fun instant -> instant.Event))
-    }
-
-    // Every line that departs once more than this one does, at a question one
-    // of the departing seats is asked after its newest departure, earliest
-    // first, so that no line is reached twice. A line's game is its parent's
-    // game up to that newest departure, so the parent's replay already shows
-    // which questions come after it and what each allows
-    let children (departs: string -> bool) (parent: Replay) : Map<int, int> list =
-        let newest =
-            if parent.Line.IsEmpty then
-                -1
-            else
-                fst (Map.maxKeyValue parent.Line)
-
-        [
-            for question in newest + 1 .. parent.Choices.Length - 1 do
-                if departs parent.Seats[question] then
-                    for alternative in 1 .. parent.Choices[question] - 1 do
-                        Map.add question alternative parent.Line
-        ]
-
-    // Searches the rest of the game from a fork
-    let solve (fork: Fork) : Async<Plan> =
-        let cores = System.Environment.ProcessorCount
-
-        // Best first: of every line replayed but not yet departed from, the one
-        // whose game the protagonist finished best in, then the one with the
-        // fewest departures, then the one replayed first. Its departures are
-        // replayed in turn, and the search stops at the first win, at the
-        // limit, or once every line has been tried, returning the best game it
-        // saw, with its answers, and the replays so far. Departures are
-        // replayed a batch at a time, the batches growing from one to as many
-        // as there are cores, and taken in order: the replays a batch made
-        // after its first win are never counted, so the search returns what it
-        // would replaying one at a time, and a search that wins at once spends
-        // little more
-        let rec search
-            (limit: int)
-            (departs: string -> bool)
-            (frontier: Set<int * int * int>)
-            (replayed: Map<int, Replay>)
-            (pending: Map<int, int> list)
-            (width: int)
-            (replays: int)
-            (best: Replay * (Answer array * Event array))
-            : Async<(Replay * (Answer array * Event array)) * int> = async {
-            if (fst best).Margin > 0 || replays >= limit then
-                return best, replays
-            else
-
-            match pending with
-            | [] when frontier.IsEmpty -> return best, replays
-            | [] ->
-                let (_, _, id) as top = frontier.MinimumElement
-                let parent = replayed[id]
-                report $"replay {replays}: departing from a line with margin {parent.Margin}"
-
-                return!
-                    search
-                        limit
-                        departs
-                        (frontier.Remove top)
-                        (Map.remove id replayed)
-                        (children departs parent)
-                        width
-                        replays
-                        best
-            | pending ->
-                let batch = pending |> List.truncate (min width (limit - replays))
-
-                let! games =
-                    Async.Parallel(batch |> List.map (replay fork), maxDegreeOfParallelism = cores)
-
-                let rec take (index: int) frontier replayed replays (best: Replay * (Answer array * Event array)) =
-                    if index = games.Length || (fst best).Margin > 0 then
-                        frontier, replayed, replays, best
-                    else
-                        let game, _ = games[index]
-                        let best =
-                            if game.Margin > (fst best).Margin then
-                                games[index]
-                            else
-                                best
-                        let frontier = Set.add (-game.Margin, game.Line.Count, replays) frontier
-                        take (index + 1) frontier (Map.add replays game replayed) (replays + 1) best
-
-                let frontier, replayed, replays, best = take 0 frontier replayed replays best
-
-                return!
-                    search
-                        limit
-                        departs
-                        frontier
-                        replayed
-                        (List.skip batch.Length pending)
-                        (min cores (2 * width))
-                        replays
-                        best
-        }
-
-        async {
-            let! root = replay fork Map.empty
-            let frontier = Set.singleton (-(fst root).Margin, 0, 0)
-            let replayed = Map.add 0 (fst root) Map.empty
-
-            // The protagonist's own departures first, with half the budget when
-            // there are supporters. A supporter's departure only helps through
-            // the protagonist's game, and searching every seat's at once spends
-            // the budget on lines the protagonist did not need, so the
-            // supporters depart only in the games the protagonist cannot win
-            // alone
-            let alone =
-                if List.isEmpty supporters then
-                    budget
-                else
-                    max 1 (budget / 2)
-
-            let! best, replays = search alone ((=) protagonist) frontier replayed [] 1 1 root
-
-            let! (best, (answers, events)), replays =
-                if (fst best).Margin > 0 || List.isEmpty supporters then
-                    async.Return(best, replays)
-                else
-                    search budget (fun _ -> true) frontier replayed [] 1 replays best
-
-            return {
-                Answers = List.ofArray answers
-                Foresees = List.ofArray events
-                Margin = best.Margin
-                Departures = best.Line |> Map.keys |> List.ofSeq
-                Replays = replays
-                Played = 0
-            }
-        }
-
     // What Sage answers when the named seat of its own is asked to hit or
     // stand, once it has taken in the game so far
     let hitOrStandFor (name: string) (random: System.Random) : Strategy.HitOrStandDecider =
@@ -776,9 +466,17 @@ type public Sage(protagonist: string, ?supporters: string list, ?study: Study, ?
                     | Some(strategy, targeting) -> { seat with Strategy = strategy; Targeting = targeting }
                     | None -> seat
 
+                // The oracle winds a fresh Random to where the game's stands
+                // for every game the search replays
+                let wound () =
+                    match Oracle.RandomOf followed.Oracle with
+                    | Some random -> random
+                    | None -> invalidOp "a game can only be replayed once its seed is pinned"
+
                 let! plan =
-                    solve {
-                        Oracle = followed.Oracle
+                    Solver.Solve protagonist supporters budget report {
+                        Random = wound
+                        Decider = unaided
                         History = history
                         Seating = seating
                         Round = round
@@ -849,7 +547,7 @@ type public Sage(protagonist: string, ?supporters: string list, ?study: Study, ?
 
     /// <summary>
     /// What Sage answers for each of its seats, the protagonist and every
-    /// supporter, by name: the seat's hit-or-stand and targeting
+    /// supporter, by name: the seat's hit or stand and targeting
     /// implementations, each handed the Random its question comes with. A table
     /// seats each of them as Strategy.Custom and Targeting.ChoosesExternally
     /// under their name, as Sage requires at the start of every game, and
