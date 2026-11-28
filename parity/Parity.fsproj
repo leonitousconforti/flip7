@@ -5,7 +5,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <!-- Check the library against the FSharp.Core its package is built against. The SDK's
          FSharp.Core 11 adds an Async module whose map AsyncSeq's sources then call, and Fable
-         supports none of that module yet -->
+         supports none of that module yet (fable-compiler/Fable#5359) -->
     <FSharpCoreImplicitPackageVersion>10.0.100</FSharpCoreImplicitPackageVersion>
   </PropertyGroup>
 
