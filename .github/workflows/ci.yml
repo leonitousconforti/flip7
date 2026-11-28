@@ -59,7 +59,7 @@ jobs:
   # Compiled to Python, it must print the same again, all but the games and
   # decks a seeded Random deals: Fable's Python library seeds System.Random with
   # Python's own generator rather than .NET's, so those differ from the first
-  # card until it seeds it as .NET does
+  # card until it seeds it as .NET does (fable-compiler/Fable#5357)
   python:
     runs-on: ubuntu-latest
     steps:
