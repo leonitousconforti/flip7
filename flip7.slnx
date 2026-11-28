@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/parity/">
+    <Project Path="parity/Parity.fsproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Flip7.fsproj" />
   </Folder>
