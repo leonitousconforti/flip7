@@ -1,10 +1,11 @@
-// What the library does, printed the same way from .NET and from JavaScript:
-// CI runs this program on .NET and, compiled by Fable, on Node, and fails when
-// the two print anything different. Whole seeded games cover the deal, every
-// strategy and targeting policy and the engine itself, and the rest covers the
-// string forms, decks and the exceptions bad input raises. Only what both
-// platforms can print exactly is printed: floats as ToString("R") writes them,
-// and an exception by the type a match finds, since Fable cannot name a type.
+// What the library does, printed the same way from .NET, JavaScript and Python:
+// CI runs this program on .NET and, compiled by Fable, on Node and on CPython,
+// and fails when one prints anything different. Whole seeded games cover the
+// deal, every strategy and targeting policy and the engine itself, and the rest
+// covers the string forms, decks and the exceptions bad input raises. Only what
+// every platform can print exactly is printed: floats as ToString("R") writes
+// them, and an exception by the type a match finds, since Fable cannot name a
+// type.
 module Parity
 
 open System
@@ -196,8 +197,10 @@ let private report = async {
         | Choice2Of2 error -> printfn $"refused {name}: {kind error}: {error.Message}"
 }
 
-// Fable has no Async.RunSynchronously, and Node runs until the report is done
-#if FABLE_COMPILER
+// Fable has no Async.RunSynchronously in JavaScript, and Node runs until the
+// report is done. Python has it, and needs it: started immediately outside an
+// event loop, Python's trampoline never unwinds the stack
+#if FABLE_COMPILER_JAVASCRIPT
 Async.StartImmediate report
 #else
 Async.RunSynchronously report

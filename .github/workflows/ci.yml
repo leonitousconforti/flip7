@@ -55,3 +55,34 @@ jobs:
             diff -u ${{ runner.temp }}/dotnet.txt ${{ runner.temp }}/javascript.txt | cut -c1-400 | head -60
             exit 1
           fi
+
+  # Compiled to Python, it must print the same again, all but the games and
+  # decks a seeded Random deals: Fable's Python library seeds System.Random with
+  # Python's own generator rather than .NET's, so those differ from the first
+  # card until it seeds it as .NET does
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.14'
+      - run: dotnet tool restore
+      - run: dotnet fable parity/Parity.fsproj --lang python --outDir ${{ runner.temp }}/parity
+      - name: Install the Python library of the same Fable release
+        run: pip install "fable-library==$(jq -r '.tools.fable.version' dotnet-tools.json)"
+      - name: Run it on Python
+        run: python ${{ runner.temp }}/parity/parity.py > ${{ runner.temp }}/python.txt
+      - run: dotnet run --project parity/Parity.fsproj -c Release > ${{ runner.temp }}/dotnet.txt
+      - name: Compare what Python printed with what .NET printed
+        run: |
+          cd ${{ runner.temp }}
+          grep -vE '^(game|deck random) ' dotnet.txt > dotnet-unseeded.txt
+          grep -vE '^(game|deck random) ' python.txt > python-unseeded.txt
+          if ! diff -q dotnet-unseeded.txt python-unseeded.txt > /dev/null; then
+            diff -u dotnet-unseeded.txt python-unseeded.txt | cut -c1-400 | head -60
+            exit 1
+          fi
