@@ -256,13 +256,13 @@ let private everyQuestionIsShownThePast (given: Instant list) (play: Strategy.De
                 && beginsTheTimeline question.Seen
                 && match aim.Ask, timeline[question.Seen.Length].Event with
                    | Strategy.Ask.WhoToFreeze, Froze(source, target)
-                   | Strategy.Ask.WhoReceivesDeal3, Dealt3(source, target, _)
+                   | Strategy.Ask.WhoReceivesDeal3, Dealt3(source, target, _, _)
                    | Strategy.Ask.WhoReceivesSecondChance, SecondChancePassed(source, target) ->
                        source = aim.Chooser && target = aim.Target
                    // Passed on during a deal3's flips, before the deal3 has an
                    // instant of its own to record it in
-                   | Strategy.Ask.WhoReceivesSecondChance, Dealt3(_, target, cards) ->
-                       target = aim.Chooser && List.contains (ActionCard Card.SecondChance) cards
+                   | Strategy.Ask.WhoReceivesSecondChance, Dealt3(_, target, _, passed) ->
+                       target = aim.Chooser && List.contains aim.Target passed
                    | _ -> false
 
         let described =
@@ -434,7 +434,7 @@ let ``a question deep inside a deal3 is shown everything the deal3 has produced`
             showing.Ahead
             |> List.exists (fun aim ->
                 match (List.head aim.Pending).Event with
-                | Dealt3(_, target, _) -> aim.Chooser <> target
+                | Dealt3(_, target, _, _) -> aim.Chooser <> target
                 | _ -> false
             ),
             $"seed {seed} {game} no longer reaches an aim inside a deal3 that a set-aside deal3 started; pick a new seed"

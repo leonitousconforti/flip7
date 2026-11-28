@@ -91,8 +91,9 @@ let private recording (asked: ResizeArray<Asked>) (decider: Strategy.Decider) : 
 // The second chances the target of a deal3 passed on during its flips are
 // asked of their decider with the game as it stood before the deal3, so two of
 // them in one deal3 are shown as much of the game as each other and no other
-// second chance is. Those are the aims the timeline cannot order
-let private ambiguous (asked: Asked list) : Asked list =
+// second chance is. The deal3 records whom each went to, in order, which
+// tells who could take the second
+let private passedTwice (asked: Asked list) : Asked list =
     asked
     |> List.where (asks Strategy.Ask.WhoReceivesSecondChance)
     |> List.groupBy (fun call -> call.Seen)
@@ -100,14 +101,9 @@ let private ambiguous (asked: Asked list) : Asked list =
 
 // Where the questions the timeline reveals disagree with those the engine
 // asked, if anywhere, comparing the two in the order the engine asked them:
-// every hit-or-stand decision, turns and all, and every aim but its turn
+// every hit or stand decision, turns and all, and every aim but its turn
 let private disagreement (timeline: Instant list) (asked: Asked list) : string option =
-    let skipped = ambiguous asked
-
-    let expected =
-        asked
-        |> List.where (fun call -> not (List.contains call skipped))
-        |> List.map (fun call -> call.Question)
+    let expected = asked |> List.map (fun call -> call.Question)
 
     let observed =
         observationsOf timeline
@@ -124,11 +120,10 @@ let private disagreement (timeline: Instant list) (asked: Asked list) : string o
     with
     | Some index -> Some $"question {index} was asked as %A{expected[index]} but observed as %A{observed[index]}"
     | None when expected.Length <> observed.Length ->
-        Some
-            $"the engine asked {expected.Length} questions besides {skipped.Length} aims it cannot order, but {observed.Length} were observed"
+        Some $"the engine asked {expected.Length} questions but {observed.Length} were observed"
     | None -> None
 
-// How many hit-or-stand questions after an edit, in the edited round, went to
+// How many hit or stand questions after an edit, in the edited round, went to
 // a player whose count of turns the edit changed: it counts everyone still in
 // the round as having taken as many turns as the asker had
 let private recounted (timeline: Instant list) (asked: Asked list) : int =
@@ -233,10 +228,10 @@ let private roadsOf (timeline: Instant list) (asked: Asked list) : Roads =
                     && (aims |> List.where (fun other -> passedInFlips other && other.Seen = call.Seen)).Length = 1
                     && List.contains secondChance dealtTo.Hand
                     && match timeline[call.Seen].Event with
-                       | Dealt3(_, _, cards) -> (cards |> List.where ((=) secondChance)).Length = 2
+                       | Dealt3(_, _, cards, _) -> (cards |> List.where ((=) secondChance)).Length = 2
                        | _ -> false
                 )
-            AimsPassedTwice = (ambiguous asked).Length
+            AimsPassedTwice = (passedTwice asked).Length
             ForcedAims = count (fun call -> call.Question.OtherPlayers.Length = 1)
             AimsAfterRotation =
                 count (fun call ->

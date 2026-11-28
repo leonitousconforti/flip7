@@ -21,7 +21,7 @@ module public rec Strategy =
         | WhoReceivesSecondChance
 
     /// <summary>
-    /// Decides hit-or-stand for one player: given the player's declared
+    /// Decides hit or stand for one player: given the player's declared
     /// strategy, the game so far, the round, the turn, the player, the other
     /// active players, the players who already stood, busted, or were frozen
     /// this round, and the decks. The game so far is every instant the game

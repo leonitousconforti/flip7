@@ -39,12 +39,12 @@ let private seven = ValueCard Card.Seven
 let private nine = ValueCard Card.Nine
 let private freeze = ActionCard Card.Freeze
 
-// The hit-or-stand decisions a timeline shows, without its aims
+// The hit or stand decisions a timeline shows, without its aims
 let private decisions (timeline: Instant list) : Observation list =
     observationsOf timeline
     |> List.where (fun observation -> observation.Choice.IsChoice1Of2)
 
-// A hit-or-stand decision, or an aim with what it aimed and at whom
+// A hit or stand decision, or an aim with what it aimed and at whom
 type private Answer = Choice<Strategy.HitOrStand, Strategy.Ask * string>
 
 // A question as these examples pin it: who was asked, their answer, the round
@@ -61,7 +61,7 @@ let private asked (observation: Observation) : Asked =
     names observation.OtherPlayers,
     names observation.FinishedPlayers
 
-// ---- hit-or-stand decisions ----
+// ---- hit or stand decisions ----
 
 [<Fact>]
 let ``a player's first turn of a round is dealt, not decided, even holding cards from a deal3, and every later hit or stand is decided from the hand before it``
@@ -71,7 +71,7 @@ let ``a player's first turn of a round is dealt, not decided, even holding cards
         instant TableSeated [ player "A" []; player "B" [] ]
         // A's forced first hit draws a deal3 aimed at B, so B holds cards
         // before their own first turn while A holds none after theirs
-        instant (Dealt3("A", "B", [ two; nine ])) [ player "B" [ nine; two ]; player "A" [] ]
+        instant (Dealt3("A", "B", [ two; nine ], [])) [ player "B" [ nine; two ]; player "A" [] ]
         // B's first turn is still a forced hit, not a decision
         instant (Drew("B", five)) [ player "A" []; player "B" [ five; nine; two ] ]
         // A's second turn is a decision even though their hand is empty
@@ -142,7 +142,7 @@ let ``players who busted stay finished after an edit takes their busting cards b
         instant (Drew("C", nine)) [ player "A" [ five ]; player "B" [ two ]; player "C" [ nine ] ]
         instant (Busted("A", five)) [ player "B" [ two ]; player "C" [ nine ]; player "A" [ five; five ] ]
         // B hits, drawing a deal3 aimed at C, who busts on the first flip
-        instant (Dealt3("B", "C", [ nine ])) [
+        instant (Dealt3("B", "C", [ nine ], [])) [
             player "B" [ two ]
             player "C" [ nine; nine ]
             player "A" [ five; five ]
@@ -163,7 +163,7 @@ let ``players who busted stay finished after an edit takes their busting cards b
         decisions timeline |> List.map asked
     )
 
-// The play editor forks a game at a hit-or-stand question: an Edited instant
+// The play editor forks a game at a hit or stand question: an Edited instant
 // for the changed table, and the game continued with everyone still in the
 // round counted as having taken one turn fewer than the question's, as
 // Games.playForked continues it. Forked at Bob's second turn, Alice, who sat
@@ -177,7 +177,7 @@ let ``after an edit, everyone still in the round has taken as many turns as the 
         "Carol", Strategy.AlwaysHits, Targeting.ChoosesRandomly
     ]
 
-    // Every hit-or-stand question of the first round: how much of the game it
+    // Every hit or stand question of the first round: how much of the game it
     // showed, whom it asked and on which turn
     let questions = ResizeArray<int * string * uint>()
 
@@ -236,7 +236,7 @@ let ``an instant's hit-or-stand decision comes before its aims, each with its ro
         instant (Drew("B", five)) [ player "A" []; player "B" [ five ]; player "C" [ freeze ] ]
         // A hits on their second turn and draws a deal3, which A gives to B,
         // whose flips set a freeze aside
-        instant (Dealt3("A", "B", [ two; freeze; nine ])) [
+        instant (Dealt3("A", "B", [ two; freeze; nine ], [])) [
             player "B" [ nine; freeze; two; five ]
             player "A" []
             player "C" [ freeze ]
@@ -247,7 +247,7 @@ let ``an instant's hit-or-stand decision comes before its aims, each with its ro
         instant (RoundEnded(Map.ofList [ "A", 0u; "B", 16u; "C", 0u ])) [ player "A" []; player "B" []; player "C" [] ]
         // The second round starts one seat on, with B's forced first hit: a
         // deal3 B gives to A before A's first turn, whose flips set a freeze aside
-        instant (Dealt3("B", "A", [ two; freeze ])) [ player "C" []; player "A" [ freeze; two ]; player "B" [] ]
+        instant (Dealt3("B", "A", [ two; freeze ], [])) [ player "C" []; player "A" [ freeze; two ]; player "B" [] ]
         // ...which A gives to C, having taken no turn this round
         instant (Froze("A", "C")) [ player "C" [ freeze ]; player "A" [ two ]; player "B" [] ]
     ]
@@ -263,6 +263,30 @@ let ``an instant's hit-or-stand decision comes before its aims, each with its ro
             "B", Choice1Of2 Strategy.Stand, 1u, 2u, [], [ "A"; "C" ]
             "B", Choice2Of2(Strategy.Ask.WhoReceivesDeal3, "A"), 2u, 1u, [ "C"; "A"; "B" ], []
             "A", Choice2Of2(Strategy.Ask.WhoToFreeze, "C"), 2u, 0u, [ "C"; "A"; "B" ], []
+        ],
+        observationsOf timeline |> List.map asked
+    )
+
+// A timeline the engine did not play can record a deal3 of any length, and
+// Observe replays every card of it all the same, without running out of stack.
+// A's forced first hit draws a deal3 for B, whose flips keep the first second
+// chance and would pass the second on to A, though the deal3 records nobody
+// being passed one, so the one question the deal3 shows is A's aim
+[<Fact>]
+let ``a deal3 recording any number of cards is replayed card by card`` () =
+    let secondChance = ActionCard Card.SecondChance
+
+    let timeline = [
+        instant TableSeated [ player "A" []; player "B" [] ]
+        instant (Dealt3("A", "B", List.replicate 100000 secondChance, [])) [
+            player "B" [ secondChance ]
+            player "A" []
+        ]
+    ]
+
+    Assert.Equal<Asked list>(
+        [
+            "A", Choice2Of2(Strategy.Ask.WhoReceivesDeal3, "B"), 1u, 1u, [ "B"; "A" ], []
         ],
         observationsOf timeline |> List.map asked
     )
