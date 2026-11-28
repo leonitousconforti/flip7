@@ -319,6 +319,52 @@ let ``a store that reads an instant before ingesting it still caches the instant
     )
 
 [<Fact>]
+let ``a store over functions that throw asks again whether an instant exists and reports one it cannot read`` () =
+    let game = gameOf 42 |> played
+
+    let roundEndedAt =
+        game
+        |> List.indexed
+        |> List.filter (fun (_, instant) -> instant.Event.IsRoundEnded)
+        |> List.map fst
+
+    // Asked whether the first round's end exists, the storage throws once,
+    // and reading the instant after the opening one always throws
+    let hasThrown = ref false
+
+    let exists (index: int) : Async<bool> = async {
+        if index = roundEndedAt.Head && not hasThrown.Value then
+            hasThrown.Value <- true
+            failwith "the storage went away"
+
+        return index < game.Length
+    }
+
+    let read (index: int) : Async<Result<Instant, exn>> = async {
+        if index = 1 then
+            failwith "a torn instant"
+
+        return Ok game[index]
+    }
+
+    use store =
+        new Persistence.TimelineStore(exists, read, ingestDelayMilliseconds = 0L)
+
+    // Had the store skipped the first round's end as unreadable rather than
+    // asking again, it would be missing from the round ends
+    let count, _, roundEnds = awaitSnapshot store (fun (_, isComplete, _) -> isComplete)
+
+    Assert.True(hasThrown.Value)
+    Assert.Equal(game.Length, count)
+    Assert.Equal<int list>(roundEndedAt, roundEnds)
+
+    match answered (store.Read 1) with
+    | Ok instant -> failwith $"read {instant.Event} through a read that throws"
+    | Error error -> Assert.Equal("a torn instant", error.Message)
+
+    Assert.Equal(Ok game[2], answered (store.Read 2))
+
+[<Fact>]
 let ``round navigation counts a RoundEnded in the round it closes and moves strictly past the cursor`` () =
     // Rounds end at instants 4 and 9, and 12 is the newest instant known
     let roundEnds = [ 4; 9 ]
