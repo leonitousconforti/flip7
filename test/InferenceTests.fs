@@ -13,7 +13,7 @@ let private observationsOfGame (seed: int) (lineup: Lineup) : Observation list =
     |> Observation.FromTimeline
     |> played
 
-// Whether an observation is of a hit-or-stand decision rather than an aim
+// Whether an observation is of a hit or stand decision rather than an aim
 let private decides (observation: Observation) : bool = observation.Choice.IsChoice1Of2
 
 // ---- likelihoods ----
@@ -266,7 +266,7 @@ let ``the default grids hold every strategy and targeting the engine can evaluat
 
 // ---- evidence ----
 
-// Three seats whose game mixes hit-or-stand decisions with aims at more than
+// Three seats whose game mixes hit or stand decisions with aims at more than
 // one candidate
 let private threeSeats: Lineup = [
     "Ann", Strategy.AlwaysHits, Targeting.PlaysSpitefully
@@ -306,7 +306,7 @@ let ``evidence folded one decision at a time is the evidence scored at once`` ()
         atOnce.StrategyLogLikelihoods
     )
 
-// FromTimeline hands Inference a game's aims among its hit-or-stand
+// FromTimeline hands Inference a game's aims among its hit or stand
 // decisions. A decision says nothing about how a player aims, nor an aim about
 // how they hit or stand, so each part of a player's evidence and model is what
 // their observations of its kind alone make it, and a player seen only aiming

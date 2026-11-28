@@ -3,14 +3,14 @@
   "isRoot": true,
   "tools": {
     "fantomas": {
-      "version": "8.1.0",
+      "version": "8.1.3",
       "commands": [
         "fantomas"
       ],
       "rollForward": false
     },
     "dotnet-fsharplint": {
-      "version": "0.27.0",
+      "version": "0.27.2",
       "commands": [
         "dotnet-fsharplint"
       ],
@@ -24,14 +24,14 @@
       "rollForward": false
     },
     "csharpier": {
-      "version": "1.3.0",
+      "version": "1.4.2",
       "commands": [
         "csharpier"
       ],
       "rollForward": false
     },
     "fable": {
-      "version": "5.23.0",
+      "version": "5.28.0",
       "commands": [
         "fable"
       ],
