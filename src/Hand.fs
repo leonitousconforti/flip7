@@ -42,20 +42,17 @@ module public Hand =
     /// determine if a hand is a bust and to produce a reduced hand with the
     /// duplicates and SecondChance cards removed.
     /// </summary>
-    let public IsBust (hand: Hand) : bool =
-        let rec IsBust' (hand: Hand) (seen: Set<Card.ValueCard>) (busts: int) : bool =
-            match hand with
-            | [] -> busts > 0
-            | ActionCard(Card.SecondChance) :: tail -> IsBust' tail seen (busts - 1)
-            | ActionCard(_) :: tail -> IsBust' tail seen busts
-            | ModifierCard(_) :: tail -> IsBust' tail seen busts
-            | ValueCard(vc) :: tail ->
-                let seen' = Set.add vc seen
-                let busts' = busts + if Set.contains vc seen then 1 else 0
-                IsBust' tail seen' busts'
-
-        in
-        IsBust' hand Set.empty 0
+    let public IsBust: (Hand) -> bool =
+        List.fold
+            (fun (seen, dups, scs) card ->
+                match card with
+                | ActionCard(Card.SecondChance) -> seen, dups, scs + 1
+                | ValueCard(vc: Card.ValueCard) when Set.contains vc seen -> seen, dups + 1, scs
+                | ValueCard(vc: Card.ValueCard) -> Set.add vc seen, dups, scs
+                | _ -> seen, dups, scs
+            )
+            (Set.empty, 0, 0)
+        >> fun (_seen, dups, scs) -> dups - scs > 0
 
     /// <summary>
     /// The Reduce function takes a hand and produces a reduced hand with
