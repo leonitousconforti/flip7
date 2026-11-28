@@ -193,8 +193,7 @@ module public Deck =
         // forever. A draw of more cards than the piles hold ends up here too
         if IsEmpty deck && IsEmpty discards then
             invalidOp "Cannot draw a card: the deck and the discards are both empty"
-
-        if IsEmpty deck then
+        elif IsEmpty deck then
             DrawWith random (discards, Empty) count
         else
 

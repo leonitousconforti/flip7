@@ -20,7 +20,9 @@
     <Compile Include="ObservationTests.fs" />
     <Compile Include="InferenceTests.fs" />
     <Compile Include="LookaheadTests.fs" />
+    <Compile Include="OracleTests.fs" />
     <Compile Include="AimTests.fs" />
+    <Compile Include="SageTests.fs" />
     <Compile Include="PropertyTests.fs" />
   </ItemGroup>
 
@@ -30,8 +32,8 @@
 
   <ItemGroup>
     <PackageReference Include="FsCheck" Version="3.6.0" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
-    <PackageReference Include="xunit.v3" Version="4.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
+    <PackageReference Include="xunit.v3" Version="4.0.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" />
   </ItemGroup>
 
