@@ -377,7 +377,7 @@ module public Persistence =
         /// </summary>
         new(directory: string, ?ingestDelayMilliseconds: int64, ?cacheCapacity: int, ?emitPlayersInSeatedOrder: bool)
             =
-            TimelineStore(
+            new TimelineStore(
                 (fun (index: int) -> async { return Directory.Exists(Path.Join(directory, string index)) }),
                 (fun (index: int) -> ReadInstantAsync(Path.Join(directory, string index))),
                 ?ingestDelayMilliseconds = ingestDelayMilliseconds,
