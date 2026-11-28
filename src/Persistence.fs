@@ -9,6 +9,133 @@ module public Persistence =
 
     open FSharp.Control
 
+#if !FABLE_COMPILER
+    let public WriteInstantAsync (directory: string) (instant: Instant) : Async<Instant> = async {
+        let path = Directory.CreateDirectory directory
+        let toDirectory = fun file -> Path.Join(path.FullName, file)
+        let write (file: string) (lines: string seq) : Async<unit> =
+            File.WriteAllLinesAsync(toDirectory file, lines) |> Async.AwaitTask
+
+        let! writeDeckTask =
+            instant.Deck |> Deck.Serialize |> write "deck.txt" |> Async.StartChild
+        let! writeDiscardsTask =
+            instant.Discards |> Deck.Serialize |> write "discards.txt" |> Async.StartChild
+        let! writeEventTask =
+            instant.Event |> Event.Serialize |> write "event.txt" |> Async.StartChild
+
+        let! writePlayerTasks =
+            instant.Players
+            |> List.indexed
+            |> List.map (fun (index, player) ->
+                write $"player{index}.txt" [|
+                    string player.Name
+                    string player.Strategy
+                    string player.Targeting
+                    string player.FirmScore
+                    String.Empty
+                    yield! Hand.Serialize player.Hand
+                |]
+            )
+            |> Async.Parallel
+            |> Async.Ignore
+            |> Async.StartChild
+
+        do! writeDeckTask
+        do! writeDiscardsTask
+        do! writeEventTask
+        do! writePlayerTasks
+
+        return instant
+    }
+
+    let public ReadInstantAsync (directory: string) : Async<Result<Instant, exn>> = async {
+        try
+            let toDirectory = fun file -> Path.Join(directory, file)
+            let read = fun file -> File.ReadAllLinesAsync(toDirectory file) |> Async.AwaitTask
+
+            let playerFiles =
+                Directory.GetFiles(directory, "player*.txt")
+                |> Array.sortBy (fun file -> int (Path.GetFileNameWithoutExtension file).[6..])
+
+            let! readDeckTask = read "deck.txt" |> Async.StartChild
+            let! readDiscardsTask = read "discards.txt" |> Async.StartChild
+            let! readEventTask = read "event.txt" |> Async.StartChild
+
+            let! readPlayerTasks =
+                playerFiles
+                |> Array.map (fun file -> async {
+                    let! lines = File.ReadAllLinesAsync file |> Async.AwaitTask
+                    return {
+                        Name = lines[0]
+                        Strategy = lines[1] |> Strategy.Parse
+                        Targeting = lines[2] |> Targeting.Parse
+                        FirmScore = lines[3] |> uint
+                        Hand = lines |> Seq.skip 5 |> Hand.Deserialize
+                    }
+                })
+                |> Async.Parallel
+                |> Async.StartChild
+
+            let! deck = readDeckTask
+            let! discards = readDiscardsTask
+            let! event = readEventTask
+            let! players = readPlayerTasks
+
+            return
+                Ok {
+                    Event = event |> Event.Deserialize
+                    Players = players |> List.ofArray
+                    Deck = deck |> Deck.Deserialize
+                    Discards = discards |> Deck.Deserialize
+                }
+        with exn ->
+            return Error exn
+    }
+
+    let public WriteTimelineLazyFrom (directory: string) (startIndex: int) (timeline: Timeline) : Timeline = asyncSeq {
+        let stagingDirectory = Path.Join(directory, ".staging")
+        let mutable index = startIndex
+
+        if Directory.Exists stagingDirectory then
+            Directory.Delete(stagingDirectory, true)
+
+        for instant in timeline do
+            let instantDirectory = Path.Join(directory, string index)
+            let! written = WriteInstantAsync stagingDirectory instant
+            Directory.Move(stagingDirectory, instantDirectory)
+            index <- index + 1
+            yield written
+    }
+
+    let public WriteTimelineLazy (directory: string) (timeline: Timeline) : Timeline =
+        WriteTimelineLazyFrom directory 0 timeline
+
+    let public WriteTimelineEager (directory: string) (timeline: Timeline) : Timeline =
+        // The cache lives outside the sequence so re-enumeration replays it
+        // rather than re-pulling the source and re-writing the files
+        let written = timeline |> WriteTimelineLazy directory |> AsyncSeq.cache
+
+        asyncSeq {
+            do! written |> AsyncSeq.iter ignore
+            yield! written
+        }
+
+    let public ReadTimeline (directory: string) : Timeline = asyncSeq {
+        let instantDirectories =
+            Directory.GetDirectories directory
+            |> Array.choose (fun dir ->
+                match Int32.TryParse(Path.GetFileName dir) with
+                | true, index -> Some(index, dir)
+                | false, _ -> None
+            )
+            |> Array.sortBy fst
+
+        for _, instantDirectory in instantDirectories do
+            let! maybeInstant = ReadInstantAsync instantDirectory
+            yield maybeInstant |> Result.defaultWith (fun exn -> raise exn)
+    }
+#endif
+
     type private TimelineStoreMessage =
         | Read of index: int * reply: AsyncReplyChannel<Result<Instant, exn>>
         | Snapshot of reply: AsyncReplyChannel<int * bool * int list>
@@ -199,6 +326,23 @@ module public Persistence =
                 token
             )
 
+#if !FABLE_COMPILER
+        /// <summary>
+        /// A store over a timeline directory as the timeline writers fill it:
+        /// each instant is staged and then renamed into place, so once
+        /// {directory}/{index} exists its contents are complete.
+        /// </summary>
+        new(directory: string, ?ingestDelayMilliseconds: int64, ?cacheCapacity: int, ?emitPlayersInSeatedOrder: bool)
+            =
+            new TimelineStore(
+                (fun (index: int) -> async { return Directory.Exists(Path.Join(directory, string index)) }),
+                (fun (index: int) -> ReadInstantAsync(Path.Join(directory, string index))),
+                ?ingestDelayMilliseconds = ingestDelayMilliseconds,
+                ?cacheCapacity = cacheCapacity,
+                ?emitPlayersInSeatedOrder = emitPlayersInSeatedOrder
+            )
+#endif
+
         member _.Count = async {
             let! count, _, _ = agent.PostAndAsyncReply Snapshot
             return count
@@ -242,146 +386,3 @@ module public Persistence =
             roundEnds
             |> List.tryFindBack (fun index -> index < cursor)
             |> Option.defaultValue 0
-
-#if !FABLE_COMPILER
-    let public WriteInstantAsync (directory: string) (instant: Instant) : Async<Instant> = async {
-        let path = Directory.CreateDirectory directory
-        let toDirectory = fun file -> Path.Join(path.FullName, file)
-        let write (file: string) (lines: string seq) : Async<unit> =
-            File.WriteAllLinesAsync(toDirectory file, lines) |> Async.AwaitTask
-
-        let! writeDeckTask =
-            instant.Deck |> Deck.Serialize |> write "deck.txt" |> Async.StartChild
-        let! writeDiscardsTask =
-            instant.Discards |> Deck.Serialize |> write "discards.txt" |> Async.StartChild
-        let! writeEventTask =
-            instant.Event |> Event.Serialize |> write "event.txt" |> Async.StartChild
-
-        let! writePlayerTasks =
-            instant.Players
-            |> List.indexed
-            |> List.map (fun (index, player) ->
-                write $"player{index}.txt" [|
-                    string player.Name
-                    string player.Strategy
-                    string player.Targeting
-                    string player.FirmScore
-                    String.Empty
-                    yield! Hand.Serialize player.Hand
-                |]
-            )
-            |> Async.Parallel
-            |> Async.Ignore
-            |> Async.StartChild
-
-        do! writeDeckTask
-        do! writeDiscardsTask
-        do! writeEventTask
-        do! writePlayerTasks
-
-        return instant
-    }
-
-    let public ReadInstantAsync (directory: string) : Async<Result<Instant, exn>> = async {
-        try
-            let toDirectory = fun file -> Path.Join(directory, file)
-            let read = fun file -> File.ReadAllLinesAsync(toDirectory file) |> Async.AwaitTask
-
-            let playerFiles =
-                Directory.GetFiles(directory, "player*.txt")
-                |> Array.sortBy (fun file -> int (Path.GetFileNameWithoutExtension file).[6..])
-
-            let! readDeckTask = read "deck.txt" |> Async.StartChild
-            let! readDiscardsTask = read "discards.txt" |> Async.StartChild
-            let! readEventTask = read "event.txt" |> Async.StartChild
-
-            let! readPlayerTasks =
-                playerFiles
-                |> Array.map (fun file -> async {
-                    let! lines = File.ReadAllLinesAsync file |> Async.AwaitTask
-                    return {
-                        Name = lines[0]
-                        Strategy = lines[1] |> Strategy.Parse
-                        Targeting = lines[2] |> Targeting.Parse
-                        FirmScore = lines[3] |> uint
-                        Hand = lines |> Seq.skip 5 |> Hand.Deserialize
-                    }
-                })
-                |> Async.Parallel
-                |> Async.StartChild
-
-            let! deck = readDeckTask
-            let! discards = readDiscardsTask
-            let! event = readEventTask
-            let! players = readPlayerTasks
-
-            return
-                Ok {
-                    Event = event |> Event.Deserialize
-                    Players = players |> List.ofArray
-                    Deck = deck |> Deck.Deserialize
-                    Discards = discards |> Deck.Deserialize
-                }
-        with exn ->
-            return Error exn
-    }
-
-    let public WriteTimelineLazyFrom (directory: string) (startIndex: int) (timeline: Timeline) : Timeline = asyncSeq {
-        let stagingDirectory = Path.Join(directory, ".staging")
-        let mutable index = startIndex
-
-        if Directory.Exists stagingDirectory then
-            Directory.Delete(stagingDirectory, true)
-
-        for instant in timeline do
-            let instantDirectory = Path.Join(directory, string index)
-            let! written = WriteInstantAsync stagingDirectory instant
-            Directory.Move(stagingDirectory, instantDirectory)
-            index <- index + 1
-            yield written
-    }
-
-    let public WriteTimelineLazy (directory: string) (timeline: Timeline) : Timeline =
-        WriteTimelineLazyFrom directory 0 timeline
-
-    let public WriteTimelineEager (directory: string) (timeline: Timeline) : Timeline =
-        // The cache lives outside the sequence so re-enumeration replays it
-        // rather than re-pulling the source and re-writing the files
-        let written = timeline |> WriteTimelineLazy directory |> AsyncSeq.cache
-
-        asyncSeq {
-            do! written |> AsyncSeq.iter ignore
-            yield! written
-        }
-
-    let public ReadTimeline (directory: string) : Timeline = asyncSeq {
-        let instantDirectories =
-            Directory.GetDirectories directory
-            |> Array.choose (fun dir ->
-                match Int32.TryParse(Path.GetFileName dir) with
-                | true, index -> Some(index, dir)
-                | false, _ -> None
-            )
-            |> Array.sortBy fst
-
-        for _, instantDirectory in instantDirectories do
-            let! maybeInstant = ReadInstantAsync instantDirectory
-            yield maybeInstant |> Result.defaultWith (fun exn -> raise exn)
-    }
-
-    type TimelineStore with
-        /// <summary>
-        /// A store over a timeline directory as the timeline writers fill it:
-        /// each instant is staged and then renamed into place, so once
-        /// {directory}/{index} exists its contents are complete.
-        /// </summary>
-        new(directory: string, ?ingestDelayMilliseconds: int64, ?cacheCapacity: int, ?emitPlayersInSeatedOrder: bool)
-            =
-            new TimelineStore(
-                (fun (index: int) -> async { return Directory.Exists(Path.Join(directory, string index)) }),
-                (fun (index: int) -> ReadInstantAsync(Path.Join(directory, string index))),
-                ?ingestDelayMilliseconds = ingestDelayMilliseconds,
-                ?cacheCapacity = cacheCapacity,
-                ?emitPlayersInSeatedOrder = emitPlayersInSeatedOrder
-            )
-#endif
