@@ -252,7 +252,15 @@ module internal Solver =
         : Async<Plan> =
         let solved = Set.ofList (protagonist :: supporters)
         let replay = Play protagonist solved
-        let cores = System.Environment.ProcessorCount
+
+        // Under Fable the replays run one at a time, so a batch of more would
+        // only spend replays after its first win
+        let cores =
+#if FABLE_COMPILER
+            1
+#else
+            System.Environment.ProcessorCount
+#endif
 
         // Best first: of every line replayed but not yet departed from, the one
         // whose game the protagonist finished best in, then the one with the
