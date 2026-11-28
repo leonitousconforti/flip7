@@ -6,10 +6,244 @@ module public Persistence =
     open System.Diagnostics
     open System.IO
     open System.Threading
-    open System.Threading.Tasks
 
     open FSharp.Control
 
+    type private TimelineStoreMessage =
+        | Read of index: int * reply: AsyncReplyChannel<Result<Instant, exn>>
+        | Snapshot of reply: AsyncReplyChannel<int * bool * int list>
+        | Frontier of found: Result<Instant, exn> option
+
+    /// <summary>
+    /// A view of a timeline as it fills, read through two functions: exists
+    /// says whether the instant at an index has been published yet, and read
+    /// reads it. Instants must be published atomically, so once exists finds
+    /// an index its instant is complete and the store can tail the timeline
+    /// for growth. Built on a MailboxProcessor: a single agent owns all of the
+    /// mutable state - the frontier, the seating, the round ends, and the LRU
+    /// cache - and every operation arrives as a message, so nothing is locked
+    /// because nothing is shared. Ingestion is folded into the same message
+    /// loop, but the look at the frontier runs on its own and posts what it
+    /// found back to the loop: a slow instant at the frontier never camps on
+    /// the mailbox, so viewer reads take precedence over background tailing.
+    /// Once the game is complete the agent stops looking, and only the viewer
+    /// wakes it. Only lightweight metadata is held in memory plus a small cache
+    /// of recently viewed instants: memory stays flat no matter how long the
+    /// timeline grows, and there is no channel to the producer at all - the
+    /// storage behind exists and read is the only source. With
+    /// emitPlayersInSeatedOrder (off by default), every emitted instant lists
+    /// its players in the seating order stored by the TableSeated instant that
+    /// opens the timeline, rather than the stored rotation order. Dispose stops
+    /// the agent.
+    /// </summary>
+    type public TimelineStore
+        (
+            exists: int -> Async<bool>,
+            read: int -> Async<Result<Instant, exn>>,
+            ?ingestDelayMilliseconds: int64,
+            ?cacheCapacity: int,
+            ?emitPlayersInSeatedOrder: bool
+        )
+        =
+        let ingestDelayMilliseconds = defaultArg ingestDelayMilliseconds 100L
+        let cacheCapacity = defaultArg cacheCapacity 64
+        let emitPlayersInSeatedOrder = defaultArg emitPlayersInSeatedOrder false
+
+        // The token is only taken once as the agent may still start a look
+        // with it after Dispose has disposed of the source
+        let cts = new CancellationTokenSource()
+        let token = cts.Token
+
+        let agent =
+            MailboxProcessor.Start(
+                (fun (inbox: MailboxProcessor<TimelineStoreMessage>) -> async {
+                    // Confined to the agent: only the loop below ever touches
+                    // any of this, so no lock guards it
+                    let recency = LinkedList<int * Instant>()
+                    let cache = Dictionary<int, LinkedListNode<int * Instant>>(cacheCapacity)
+                    let pacer = Stopwatch.StartNew()
+
+                    // The look at the frontier runs on its own so a slow
+                    // instant never camps on the mailbox: scrubbing reads are
+                    // served the moment they arrive, and the loop folds the
+                    // frontier in when the look posts what it found. The
+                    // viewer can never request the frontier itself (a cursor
+                    // stays below Count), so nothing ever waits on a look but
+                    // the loop.
+                    let mutable isLooking = false
+
+                    let mutable count = 0
+                    let mutable isComplete = false
+                    let mutable roundEnds: int list = []
+                    let mutable seating: string list option = None
+
+                    let seatPlayers (instant: Instant) : Instant =
+                        match seating with
+                        | None -> instant
+                        | Some seating -> {
+                            instant with
+                                Players =
+                                    seating
+                                    |> List.choose (fun name ->
+                                        instant.Players |> List.tryFind (fun player -> player.Name = name)
+                                    )
+                          }
+
+                    // The functions may throw, and the agent must outlive
+                    // them: an exists that throws is asked again at the next
+                    // look, and a read that throws is an instant that cannot
+                    // be read
+                    let exists (index: int) : Async<bool> = async {
+                        try
+                            return! exists index
+                        with _ ->
+                            return false
+                    }
+
+                    let read (index: int) : Async<Result<Instant, exn>> = async {
+                        try
+                            return! read index
+                        with exn ->
+                            return Error exn
+                    }
+
+                    let look (index: int) : unit =
+                        Async.Start(
+                            async {
+                                let! isPublished = exists index
+
+                                if isPublished then
+                                    let! instant = read index
+                                    inbox.Post(Frontier(Some instant))
+                                else
+                                    inbox.Post(Frontier None)
+                            },
+                            token
+                        )
+
+                    // An index read before it was ingested is remembered again
+                    // when it is, so its old node goes first: left in the list,
+                    // it would hold the cache past its capacity and, once
+                    // evicted, take the index's live entry with it
+                    let remember (index: int) (instant: Instant) : unit =
+                        match cache.TryGetValue index with
+                        | true, node -> recency.Remove node
+                        | _ -> ()
+
+                        cache[index] <- recency.AddFirst((index, instant))
+                        if cache.Count > cacheCapacity then
+                            cache.Remove(fst recency.Last.Value) |> ignore
+                            recency.RemoveLast()
+
+                    let lookup (index: int) : Async<Result<Instant, exn>> = async {
+                        match cache.TryGetValue index with
+                        | true, node ->
+                            recency.Remove node
+                            recency.AddFirst node
+                            return node.Value |> snd |> Ok
+                        | _ ->
+                            let! maybeInstant = read index
+                            match maybeInstant with
+                            | Error _ -> ()
+                            | Ok instant -> remember index instant
+
+                            return maybeInstant
+                    }
+
+                    while true do
+                        // Once the game is complete nothing is left to look
+                        // for, so only the viewer wakes the agent. Until then
+                        // it wakes when the next look is due, at most
+                        // Int32.MaxValue milliseconds away
+                        let timeout =
+                            if isComplete then
+                                Timeout.Infinite
+                            else
+                                ingestDelayMilliseconds - pacer.ElapsedMilliseconds
+                                |> max 0L
+                                |> min (int64 Int32.MaxValue)
+                                |> int
+
+                        match! inbox.TryReceive timeout with
+                        | Some(Snapshot channel) -> channel.Reply(count, isComplete, roundEnds)
+                        | Some(Read(index, channel)) ->
+                            let! instant = lookup index
+                            instant |> Result.map seatPlayers |> channel.Reply
+                        | Some(Frontier found) ->
+                            isLooking <- false
+
+                            match found with
+                            | None -> ()
+                            | Some(Error _) -> count <- count + 1
+                            | Some(Ok instant) ->
+                                remember count instant
+
+                                if count = 0 && emitPlayersInSeatedOrder then
+                                    seating <- Some(instant.Players |> List.map (fun player -> player.Name))
+
+                                if instant.Event.IsRoundEnded then
+                                    roundEnds <- roundEnds @ [ count ]
+                                    if instant.Players |> List.exists (fun player -> player.FirmScore >= 200u) then
+                                        isComplete <- true
+
+                                count <- count + 1
+                        | None -> ()
+
+                        if pacer.ElapsedMilliseconds >= ingestDelayMilliseconds then
+                            if not isLooking && not isComplete then
+                                isLooking <- true
+                                look count
+
+                            pacer.Restart()
+                }),
+                token
+            )
+
+        member _.Count = async {
+            let! count, _, _ = agent.PostAndAsyncReply Snapshot
+            return count
+        }
+
+        member _.IsComplete = async {
+            let! _, isComplete, _ = agent.PostAndAsyncReply Snapshot
+            return isComplete
+        }
+
+        member _.RoundEnds = async {
+            let! _, _, roundEnds = agent.PostAndAsyncReply Snapshot
+            return roundEnds
+        }
+
+        member _.Snapshot: Async<int * bool * int list> = agent.PostAndAsyncReply Snapshot
+        member _.Read(index: int) : Async<Result<Instant, exn>> =
+            agent.PostAndAsyncReply(fun channel -> Read(index, channel))
+
+        interface IDisposable with
+            member _.Dispose() =
+                cts.Cancel()
+                cts.Dispose()
+
+        // The round number (starting at 1) of the instant at the cursor, given
+        // the ascending indices of the RoundEnded instants seen so far. A
+        // RoundEnded instant belongs to the round it closes.
+        static member inline public RoundOf (roundEnds: int list) (cursor: int) : int =
+            1 + (roundEnds |> List.filter (fun index -> index < cursor) |> List.length)
+
+        // The index of the nearest RoundEnded instant strictly after the
+        // cursor, or the newest known index when that round has not ended yet
+        static member inline public NextRoundEnded (roundEnds: int list) (newest: int) (cursor: int) : int =
+            roundEnds
+            |> List.tryFind (fun index -> index > cursor)
+            |> Option.defaultValue newest
+
+        // The index of the nearest RoundEnded instant strictly before the
+        // cursor, or the start of the timeline when there is none
+        static member inline public PrevRoundEnded (roundEnds: int list) (cursor: int) : int =
+            roundEnds
+            |> List.tryFindBack (fun index -> index < cursor)
+            |> Option.defaultValue 0
+
+#if !FABLE_COMPILER
     let public WriteInstantAsync (directory: string) (instant: Instant) : Async<Instant> = async {
         let path = Directory.CreateDirectory directory
         let toDirectory = fun file -> Path.Join(path.FullName, file)
@@ -135,202 +369,19 @@ module public Persistence =
             yield maybeInstant |> Result.defaultWith (fun exn -> raise exn)
     }
 
-    type private TimelineStoreMessage =
-        | Read of index: int * reply: AsyncReplyChannel<Result<Instant, exn>>
-        | Snapshot of reply: AsyncReplyChannel<int * bool * int list>
-
-    /// <summary>
-    /// A view of a timeline directory as it fills: instants are published
-    /// atomically (staged then renamed by the writer), so once
-    /// {directory}/{index} exists its contents are complete and the store can
-    /// tail the directory for growth. Built on a MailboxProcessor: a single
-    /// agent owns all of the mutable state - the frontier, the seating, the
-    /// round ends, and the LRU cache - and every operation arrives as a
-    /// message, so nothing is locked because nothing is shared. Ingestion is
-    /// folded into the same message loop, but the frontier read runs as its own
-    /// task that the loop polls: a slow instant at the frontier never camps on
-    /// the mailbox, so viewer reads take precedence over background tailing.
-    /// Once the game is complete the agent stops looking, and only the viewer
-    /// wakes it. Only lightweight metadata is held in memory plus a small cache
-    /// of recently viewed instants: memory stays flat no matter how long the
-    /// timeline grows, and there is no channel to the producer at all - the
-    /// disk is the only source. With emitPlayersInSeatedOrder (off by default),
-    /// every emitted instant lists its players in the seating order stored by
-    /// the TableSeated instant that opens the timeline, rather than the stored
-    /// rotation order. Dispose stops the agent.
-    /// </summary>
-    type public TimelineStore
-        (directory: string, ?ingestDelayMilliseconds: int64, ?cacheCapacity: int, ?emitPlayersInSeatedOrder: bool)
-        =
-        let ingestDelayMilliseconds = defaultArg ingestDelayMilliseconds 100L
-        let cacheCapacity = defaultArg cacheCapacity 64
-        let emitPlayersInSeatedOrder = defaultArg emitPlayersInSeatedOrder false
-
-        // The token is only taken once as the agent may still start a read with
-        // it after Dispose has disposed of the source
-        let cts = new CancellationTokenSource()
-        let token = cts.Token
-
-        let agent =
-            MailboxProcessor.Start(
-                (fun (inbox: MailboxProcessor<TimelineStoreMessage>) -> async {
-                    // Confined to the agent: only the loop below ever touches
-                    // any of this, so no lock guards it
-                    let recency = LinkedList<int * Instant>()
-                    let cache = Dictionary<int, LinkedListNode<int * Instant>>(cacheCapacity)
-                    let pacer = Stopwatch.StartNew()
-
-                    // The frontier read runs as its own task so a slow instant
-                    // never camps on the mailbox: scrubbing reads are served
-                    // the moment they arrive, and the loop folds the frontier
-                    // in when its read lands. The viewer can never request the
-                    // frontier itself (a cursor stays below Count), so nothing
-                    // ever waits on this task but the loop.
-                    let mutable frontier: Task<Result<Instant, exn>> option = None
-
-                    let mutable count = 0
-                    let mutable isComplete = false
-                    let mutable roundEnds: int list = []
-                    let mutable seating: string list option = None
-
-                    let seatPlayers (instant: Instant) : Instant =
-                        match seating with
-                        | None -> instant
-                        | Some seating -> {
-                            instant with
-                                Players =
-                                    seating
-                                    |> List.choose (fun name ->
-                                        instant.Players |> List.tryFind (fun player -> player.Name = name)
-                                    )
-                          }
-
-                    let read (index: int) : Async<Result<Instant, exn>> =
-                        ReadInstantAsync(Path.Join(directory, string index))
-
-                    // An index read before it was ingested is remembered again
-                    // when it is, so its old node goes first: left in the list,
-                    // it would hold the cache past its capacity and, once
-                    // evicted, take the index's live entry with it
-                    let remember (index: int) (instant: Instant) : unit =
-                        match cache.TryGetValue index with
-                        | true, node -> recency.Remove node
-                        | _ -> ()
-
-                        cache[index] <- recency.AddFirst((index, instant))
-                        if cache.Count > cacheCapacity then
-                            cache.Remove(fst recency.Last.Value) |> ignore
-                            recency.RemoveLast()
-
-                    let lookup (index: int) : Async<Result<Instant, exn>> = async {
-                        match cache.TryGetValue index with
-                        | true, node ->
-                            recency.Remove node
-                            recency.AddFirst node
-                            return node.Value |> snd |> Ok
-                        | _ ->
-                            let! maybeInstant = read index
-                            match maybeInstant with
-                            | Error _ -> ()
-                            | Ok instant -> remember index instant
-
-                            return maybeInstant
-                    }
-
-                    while true do
-                        // Once the game is complete nothing is left to look
-                        // for, so only the viewer wakes the agent. Until then
-                        // it wakes when the next look is due, at most
-                        // Int32.MaxValue milliseconds away
-                        let timeout =
-                            if isComplete then
-                                Timeout.Infinite
-                            else
-                                ingestDelayMilliseconds - pacer.ElapsedMilliseconds
-                                |> max 0L
-                                |> min (int64 Int32.MaxValue)
-                                |> int
-
-                        match! inbox.TryReceive timeout with
-                        | Some(Snapshot channel) -> channel.Reply(count, isComplete, roundEnds)
-                        | Some(Read(index, channel)) ->
-                            let! instant = lookup index
-                            instant |> Result.map seatPlayers |> channel.Reply
-                        | None -> ()
-
-                        match frontier with
-                        | Some frontierTask when frontierTask.IsCompletedSuccessfully ->
-                            frontier <- None
-
-                            match frontierTask.Result with
-                            | Error _ -> count <- count + 1
-                            | Ok instant ->
-                                remember count instant
-
-                                if count = 0 && emitPlayersInSeatedOrder then
-                                    seating <- Some(instant.Players |> List.map (fun player -> player.Name))
-
-                                if instant.Event.IsRoundEnded then
-                                    roundEnds <- roundEnds @ [ count ]
-                                    if instant.Players |> List.exists (fun player -> player.FirmScore >= 200u) then
-                                        isComplete <- true
-
-                                count <- count + 1
-                        | _ -> ()
-
-                        if pacer.ElapsedMilliseconds >= ingestDelayMilliseconds then
-                            if
-                                frontier.IsNone
-                                && not isComplete
-                                && Directory.Exists(Path.Join(directory, string count))
-                            then
-                                frontier <- Some(Async.StartAsTask(read count, cancellationToken = token))
-
-                            pacer.Restart()
-                }),
-                token
+    type TimelineStore with
+        /// <summary>
+        /// A store over a timeline directory as the timeline writers fill it:
+        /// each instant is staged and then renamed into place, so once
+        /// {directory}/{index} exists its contents are complete.
+        /// </summary>
+        new(directory: string, ?ingestDelayMilliseconds: int64, ?cacheCapacity: int, ?emitPlayersInSeatedOrder: bool)
+            =
+            TimelineStore(
+                (fun (index: int) -> async { return Directory.Exists(Path.Join(directory, string index)) }),
+                (fun (index: int) -> ReadInstantAsync(Path.Join(directory, string index))),
+                ?ingestDelayMilliseconds = ingestDelayMilliseconds,
+                ?cacheCapacity = cacheCapacity,
+                ?emitPlayersInSeatedOrder = emitPlayersInSeatedOrder
             )
-
-        member _.Count = async {
-            let! count, _, _ = agent.PostAndAsyncReply Snapshot
-            return count
-        }
-
-        member _.IsComplete = async {
-            let! _, isComplete, _ = agent.PostAndAsyncReply Snapshot
-            return isComplete
-        }
-
-        member _.RoundEnds = async {
-            let! _, _, roundEnds = agent.PostAndAsyncReply Snapshot
-            return roundEnds
-        }
-
-        member _.Snapshot: Async<int * bool * int list> = agent.PostAndAsyncReply Snapshot
-        member _.Read(index: int) : Async<Result<Instant, exn>> =
-            agent.PostAndAsyncReply(fun channel -> Read(index, channel))
-
-        interface IDisposable with
-            member _.Dispose() =
-                cts.Cancel()
-                cts.Dispose()
-
-        // The round number (starting at 1) of the instant at the cursor, given
-        // the ascending indices of the RoundEnded instants seen so far. A
-        // RoundEnded instant belongs to the round it closes.
-        static member inline public RoundOf (roundEnds: int list) (cursor: int) : int =
-            1 + (roundEnds |> List.filter (fun index -> index < cursor) |> List.length)
-
-        // The index of the nearest RoundEnded instant strictly after the
-        // cursor, or the newest known index when that round has not ended yet
-        static member inline public NextRoundEnded (roundEnds: int list) (newest: int) (cursor: int) : int =
-            roundEnds
-            |> List.tryFind (fun index -> index > cursor)
-            |> Option.defaultValue newest
-
-        // The index of the nearest RoundEnded instant strictly before the
-        // cursor, or the start of the timeline when there is none
-        static member inline public PrevRoundEnded (roundEnds: int list) (cursor: int) : int =
-            roundEnds
-            |> List.tryFindBack (fun index -> index < cursor)
-            |> Option.defaultValue 0
+#endif
