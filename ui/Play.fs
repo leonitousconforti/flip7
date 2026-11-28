@@ -405,11 +405,12 @@ let private view (directory: string) (model: Model) : unit =
             RenderPlay round instant prompting aimedAt footer
 
 // Plays a game at the terminal, returning what to print once the terminal is
-// restored, since anything printed while the game is on screen is cleared with it
+// restored, since anything printed while the game is on screen is cleared with
+// it
 let public Run (humanNames: string list) (seed: int option) (pace: int option) : Async<string list> = async {
     // A name is shown padded to its column, so spaces around it cannot be seen
-    // and only the name inside them is kept, and names that differ only in
-    // case look alike at the table, so they count as one name
+    // and only the name inside them is kept, and names that differ only in case
+    // look alike at the table, so they count as one name
     let humanNames = humanNames |> List.map (fun name -> name.Trim())
     let folded (name: string) = name.ToUpperInvariant()
 
@@ -489,8 +490,8 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
     // every game played here seats a person on a Custom strategy, and a
     // simulated game that declares one stops at the first question it asks of
     // that seat. Reading takes some 50 ms a game, so a long history keeps the
-    // screen blank for seconds, and a line says why until the first frame
-    // draws over it
+    // screen blank for seconds, and a line says why until the first frame draws
+    // over it
     let studies (seated: Instant) : bool =
         seated.Players |> List.exists (fun player -> player.Strategy.IsCustom)
         && seated.Players
@@ -677,8 +678,8 @@ let public Run (humanNames: string list) (seed: int option) (pace: int option) :
             | None -> decider dispatch
 
         // Every instant drained so far, newest first, so that a game continued
-        // after an edit shows its deciders the whole game rather than only
-        // what came after the edit
+        // after an edit shows its deciders the whole game rather than only what
+        // came after the edit
         let mutable drained: Instant list = []
 
         let rec drain (timeline: Timeline) : Async<unit> = async {
