@@ -436,13 +436,17 @@ let public Enumerate (forms: Form array) (constraints: Constraint seq) : struct 
         let filterForms =
             filters |> Array.map (fun struct (position, _, _) -> forms[position])
 
-        let filterLow = filters |> Array.map (fun struct (_, low, _) -> int64 low)
-        let filterHigh = filters |> Array.map (fun struct (_, _, high) -> int64 high)
+        let filterLow = filters |> Array.map (fun struct (_, low, _) -> low)
+        let filterHigh = filters |> Array.map (fun struct (_, _, high) -> high)
 
         // As the walked value rises by one the seed rises by the inverse, and
         // the first filter's value by a fixed step, so the walk keeps both with
         // an addition and reaches for a multiplication only when the first
-        // filter passes, which it rarely does
+        // filter passes, which it rarely does. It keeps them as ints, which
+        // every residue fits, and adds a residue as a subtraction of P less it,
+        // with P added back below zero, which never leaves int range. Under
+        // Fable an int64 is a BigInt, which would make the walk dozens of times
+        // slower
         let step =
             if Array.isEmpty filters then
                 0L
@@ -474,15 +478,18 @@ let public Enumerate (forms: Form array) (constraints: Constraint seq) : struct 
                 if Array.contains own members then
                     found.Add(struct (seed, own))
 
-            let mutable seed = inverse * ((first - gamma + P) % P) % P
+            let seedBack = int (P - inverse)
+            let firstFilterBack = int (P - step)
+            let last = int last
+            let mutable seed = int (inverse * ((first - gamma + P) % P) % P)
 
             let mutable firstFilter =
                 if Array.isEmpty filters then
-                    0L
+                    0
                 else
-                    (filterForms[0].Alpha * seed + filterForms[0].Gamma c) % P
+                    int ((filterForms[0].Alpha * int64 seed + filterForms[0].Gamma c) % P)
 
-            let mutable value = first
+            let mutable value = int first
 
             while value <= last do
                 if
@@ -493,28 +500,30 @@ let public Enumerate (forms: Form array) (constraints: Constraint seq) : struct 
                     let mutable filter = 1
 
                     while consistent && filter < filters.Length do
-                        let filtered = (filterForms[filter].Alpha * seed + filterForms[filter].Gamma c) % P
+                        let filtered =
+                            int ((filterForms[filter].Alpha * int64 seed + filterForms[filter].Gamma c) % P)
+
                         consistent <- filtered >= filterLow[filter] && filtered <= filterHigh[filter]
                         filter <- filter + 1
 
                     if consistent then
-                        if seed = 0L then
+                        if seed = 0 then
                             keep 0
                             keep System.Int32.MaxValue
                         else
-                            keep (int seed)
+                            keep seed
 
-                seed <- seed + inverse
+                seed <- seed - seedBack
 
-                if seed >= P then
-                    seed <- seed - P
+                if seed < 0 then
+                    seed <- seed + System.Int32.MaxValue
 
-                firstFilter <- firstFilter + step
+                firstFilter <- firstFilter - firstFilterBack
 
-                if firstFilter >= P then
-                    firstFilter <- firstFilter - P
+                if firstFilter < 0 then
+                    firstFilter <- firstFilter + System.Int32.MaxValue
 
-                value <- value + 1L
+                value <- value + 1
 
             found.ToArray()
 

@@ -3,8 +3,9 @@
 /// timeline alone, instant by instant: neither the lineup's strategies nor
 /// their answers are needed, since every question costs the game's Random one
 /// call whatever is answered. Once it has pinned the seed, a Random wound to
-/// where the game's stands plays the rest of the game again. Like Lookahead, it
-/// is .NET only, since it relies on how .NET's seeded System.Random draws.
+/// where the game's stands plays the rest of the game again. It relies on how
+/// .NET's seeded System.Random draws, which Fable's System.Random reproduces in
+/// JavaScript but not yet in Python.
 /// </summary>
 module public Flip7.Oracle
 
