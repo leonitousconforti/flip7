@@ -1,4 +1,84 @@
 # Changelog
+## 0.2.0 (2026-11-28)
+
+### Breaking Changes
+
+#### Record whom a deal3's second chances are passed on to
+
+`Event.Dealt3` has a fourth field, `Passed`: whom each second chance the target
+flipped while already holding one was passed on to, in the order they were
+passed. A second chance nobody could take is discarded and not listed. The
+engine fills it in, so a timeline now shows which of two second chances passed
+during one deal3 went first, which decides who could take the second.
+
+A deal3's caption ends with whom its second chances went to, as in "passing
+SecondChance to Carol then Dave". A saved deal3 lists its cards as before, then
+a `passed: <name>` line for each second chance passed on. A deal3 saved by an
+earlier version reads back as passing none on.
+
+#### Observe both second chances a deal3 passes on, and make the scan's turn and round internal
+
+`Observation.Observe` now gives the aims of both second chances a deal3's
+target passes on during its flips, read from the deal3's `Passed`, where it
+used to give neither. A single pass is read from `Passed` too, instead of from
+who holds a second chance after the deal3, so a deal3 saved by an earlier
+version, which records no passes, gives no aim for a second chance passed
+during its flips.
+
+`Observation.TurnsTaken` and `Observation.RoundOf` are now internal.
+
+### Features
+
+#### Write floats and draw from `System.Random.Shared` under Fable as on .NET
+
+Under Fable, strategy and targeting strings now write their floats as .NET's
+`ToString("R")` does, -0 and exponents included, and the obsolete helpers that
+draw from `System.Random.Shared` compile too. Compiling the package with Fable
+needs Fable 5.27.0 or later.
+
+#### Add `Oracle` and `Sage`
+
+`Oracle` recovers the seed of the `System.Random` a game was dealt with from its
+timeline alone, usually within the first dozen cards, without knowing anyone's
+strategy. It is immutable and takes one instant at a time, and once it has
+pinned the seed it gives a `Random` wound to where the game stands, from which
+`Timeline.ContinueWith` plays the rest of the game again.
+
+`Sage` plays one game for a protagonist and any supporters, answering for their
+seats, which a table seats as `Custom` and `ChoosesExternally` under their names
+and registers from `Sage.Strategies` with `Strategy.addHitOrStandStrategy` and
+`addTargetingStrategy`. It models every player by name, from a `Study` of
+earlier timelines that any number of Sages can share and from every decision and
+aim the game shows it, and recovers the game's seed with an `Oracle` as it goes.
+Once the seed is pinned it replays the rest of the game with everyone on their
+most likely strategy and aim, searches for answers that win it, and plays them
+for as long as the game goes as the replay did. It follows the game only
+through the game so far its seats' questions come with. A Sage carries what it
+studied into its game as the next of the study's sitting, and scores its game
+over the study's grids. Like `Lookahead`, `Oracle` and `Sage` are .NET only.
+
+The terminal app seats Sage in the first seat the humans leave open and bots in
+the rest, each of which always plays the same strategy under the same name, so
+that studying by name learns each bot. Before the game Sage studies the games
+under `timelines/` in the order they were played, a day at a time, concluding
+every day before today, and when the game ends it prints what it made of how
+each person plays and aims. Every game is dealt from a `Random` fresh from its
+seed; without `--seed`, one is drawn and printed at the end.
+
+### Fixes
+
+#### A complete `TimelineStore` with no ingest delay goes idle
+
+A `TimelineStore` with no ingest delay, such as the one the terminal app opens
+at `--pace 0`, no longer keeps a core busy once the game it tails is complete.
+It used to keep waking as fast as it could for as long as it was open, with
+nothing left to ingest; once it has ingested the instant that ends the game it
+now waits, and only the viewer wakes it. While the game is still unfinished it
+looks for the next instant as fast as it can, as before. A store whose ingest
+delay is longer than `Int32.MaxValue` milliseconds no longer keeps a core busy
+either, and disposing a store as it starts a read no longer raises
+`ObjectDisposedException` in its agent.
+
 ## 0.1.2 (2026-10-21)
 
 ### Features
